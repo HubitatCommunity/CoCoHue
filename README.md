@@ -1,5 +1,5 @@
 # CoCoHue
-CoCoHue: <b>Co</b>mmunity <b>Co</b>llection of <b>Hue</b> Bridge Apps and Drivers
+CoCoHue: <b>Co</b>mmunity <b>Co</b>llection of <b>Hue</b> Bridge Apps and Drivers for Hubitat
 
 (Hue Bridge Integration App for Hubitat)
 
