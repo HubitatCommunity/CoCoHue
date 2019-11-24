@@ -25,7 +25,7 @@
 //import groovy.json.JsonBuilder
 
 metadata {
-    definition (name: "CoCoHue RGBW Bulb", namespace: "RMoRobert", author: "Robert Morris") {
+    definition (name: "CoCoHue RGBW Bulb", namespace: "RMoRobert", author: "Robert Morris", importURL: "https://raw.githubusercontent.com/RMoRobert/CoCoHue/master/drivers/cocohue-rgbw-bulb-driver.groovy") {
         capability "Actuator"
         capability "Color Control"
         capability "Color Temperature"

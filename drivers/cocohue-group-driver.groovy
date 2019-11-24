@@ -25,7 +25,7 @@
 //import groovy.json.JsonBuilder
 
 metadata {
-    definition (name: "CoCoHue Group", namespace: "RMoRobert", author: "Robert Morris") {
+    definition (name: "CoCoHue Group", namespace: "RMoRobert", author: "Robert Morris", importURL: "https://raw.githubusercontent.com/RMoRobert/CoCoHue/master/drivers/cocohue-group-driver.groovy") {
         capability "Actuator"
         capability "Color Control"
         capability "Color Temperature"
