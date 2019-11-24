@@ -8,6 +8,7 @@ CoCoHue: Community Collection of Hue Bridge Apps and Drivers (Hue Bridge Integra
 
 3. Install the app: go to Apps > Add User App > CoCoHue, and follow the prompts.
 
+## Documentation
 More documentation coming soon.
 
 For discussion, visit the Hubitat Community forum thread (link coming soon).
