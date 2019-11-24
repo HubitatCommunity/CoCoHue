@@ -1,5 +1,6 @@
 # CoCoHue
-CoCoHue: Community Collection of Hue Bridge Apps and Drivers (Hue Bridge Integration App for Hubitat)
+CoCoHue: <b>Co</b>mmunity <b>Co</b>llection of <b>Hue</b> Bridge Apps and Drivers
+(Hue Bridge Integration App for Hubitat)
 
 ## To Install
 1. Install the parent and child apps from the "apps" folder in this repository into the "Apps Code" section of Hubitat.
