@@ -14,8 +14,8 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2019-11-23
- * 
+ *  Last modified: 2019-11-25
+ *
  *  Changelog:
  * 
  *  v1.0 - Initial Release
@@ -207,6 +207,7 @@ def parseGroupStates(resp, data) {
     groupStates.each { id, val ->
         def device = parent.getChildDevice("${device.deviceNetworkId}/Group/${id}")
         if (device) {
+            device.createEventsFromMap(val.action, true)
             device.createEventsFromMap(val.state, true)
         }
     }
