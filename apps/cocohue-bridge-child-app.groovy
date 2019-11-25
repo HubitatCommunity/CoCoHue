@@ -28,6 +28,9 @@
  *
  */ 
 
+ // TODO: App doesn't fully install if user navigates away before clicking Done, even if already
+ // added bulbs, etc.
+
 definition(
     name: "CoCoHue (Bridge Instance Child App)",
     namespace: "RMoRobert",

@@ -138,15 +138,12 @@ def setLevel(value, rate) {
     def scaledRate = (rate * 10).toInteger()
     addToNextBridgeCommand(["bri": newLevel, "transitiontime": scaledRate], !(levelStaging || colorStaging))
     def isOn = device.currentValue("switch") == "on"    
-    if (isOn) {
-        sendBridgeCommand()
-    } else if (levelStaging) {
-        state["lastLevel"] = device.currentValue("level")
-        createEventsFromMap()
-    } else {
-        // Must also turn on if prestaging disabled (Hue won't automatically and doesn't accept changes if off)  
+    if (!levelStaging || isOn) {
         addToNextBridgeCommand(["on": true])
         sendBridgeCommand()
+    } else {
+        state["lastLevel"] = device.currentValue("level")
+        createEventsFromMap()
     }
 }
 
@@ -161,15 +158,12 @@ def setColorTemperature(value) {
     def scaledRate = ((transitionTime != null ? transitionTime.toBigDecimal() : 1000) / 100).toInteger()
     addToNextBridgeCommand(["ct": newCT, "transitiontime": scaledRate], !(levelStaging || colorStaging))
     def isOn = device.currentValue("switch") == "on"    
-    if (isOn) {
-        sendBridgeCommand()
-    } else if (colorStaging) {
-        state["lastCT"] = device.currentValue("colorTemperature")
-        createEventsFromMap()
-    } else {  
-        log.warn "turning on and sending..."
+    if (!colorStaging || isOn) {
         addToNextBridgeCommand(["on": true])
         sendBridgeCommand()
+    } else {
+        state["lastCT"] = device.currentValue("colorTemperature")
+        createEventsFromMap()
     }
 }
 
@@ -190,18 +184,16 @@ def setColor(value) {
     addToNextBridgeCommand(["hue": newHue, "sat": newSat, "transitiontime": scaledRate], , !(levelStaging || colorStaging))
     if (newBri) addToNextBridgeCommand(["bri": newBri])
     def isOn = device.currentValue("switch") == "on"    
-    if (isOn) {
+    if (!colorStaging || isOn) {
+        addToNextBridgeCommand(["on": true])
+        if (newBri) addToNextBridgeCommand(["bri": newBri])
         sendBridgeCommand()
-    } else if (colorStaging){
+    } else {
         state["lastHue"] = device.currentValue("hue")
         state["lastSat"] = device.currentValue("saturation")
         if (newBri) state["lastLevel"] = device.currentValue("level")
         createEventsFromMap()
-    } else {         
-        addToNextBridgeCommand(["on": true])
-        if (newBri) addToNextBridgeCommand(["bri": newBri])
-        sendBridgeCommand()
-    }
+    } 
 }
 
 def setHue(value) {
@@ -212,14 +204,12 @@ def setHue(value) {
     def scaledRate = ((transitionTime != null ? transitionTime.toBigDecimal() : 1000) / 100).toInteger()    
     addToNextBridgeCommand(["hue": newHue, "transitiontime": scaledRate], , !(levelStaging || colorStaging))
     def isOn = device.currentValue("switch") == "on"    
-    if (isOn) {
-        sendBridgeCommand()
-    } else if (colorStaging){
-        state["lastHue"] = device.currentValue("hue")
-        createEventsFromMap()
-    } else {      
+    if (!colorStaging || isOn) {
         addToNextBridgeCommand(["on": true])
         sendBridgeCommand()
+    } else {
+        state["lastHue"] = device.currentValue("hue")
+        createEventsFromMap()
     }
 }
 
@@ -231,14 +221,12 @@ def setSaturation(value) {
     def scaledRate = ((transitionTime != null ? transitionTime.toBigDecimal() : 1000) / 100).toInteger()
     addToNextBridgeCommand(["sat": newSat, "transitiontime": scaledRate], !(levelStaging || colorStaging))
     def isOn = device.currentValue("switch") == "on"    
-    if (isOn) {
-        sendBridgeCommand()
-    } else if (colorStaging){
-        state["lastSat"] = device.currentValue("saturation")
-        createEventsFromMap()
-    } else {          
+    if (!colorStaging || isOn) {
         addToNextBridgeCommand(["on": true])
         sendBridgeCommand()
+    } {
+        state["lastSat"] = device.currentValue("saturation")
+        createEventsFromMap()
     }
 }
 
@@ -277,6 +265,7 @@ def createEventsFromMap(Map bridgeCmd = state.nextCmd, boolean isFromBridge = fa
     bridgeCmd.each {
         switch (it.key) {
             case "on":
+                if (isFromBridge) break
             case "any_on":
                 eventName = "switch"
                 eventValue = it.value ? "on" : "off"
