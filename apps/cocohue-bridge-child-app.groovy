@@ -20,7 +20,7 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2019-11-23
+ *  Last modified: 2019-11-25
  * 
  *  Changelog:
  * 
@@ -137,7 +137,7 @@ def pageLinkBridge() {
     
     dynamicPage(name: "pageLinkBridge", refreshInterval: state.authRefreshInterval, uninstall: true, install: false, nextPage: "pageManageBridge") {  
         section("Linking Hue Bridge") {
-            if (!(state["bridgeLinked"])) {
+            if (!(state["bridgeAuthorized"])) {
                 log.debug("Attempting Hue Bridge authorization; attempt number ${state.authTryCount+1}")
                 sendUsernameRequest()
                 state.authTryCount = state.authTryCount + 1
@@ -216,6 +216,7 @@ def pageSelectLights() {
                     enumNewBulbs.put(it.key, it.value.name)
                 }
             }
+            enumNewBulbs = enumNewBulbs.sort { it.value }  // doesn't work to display this way, but maybe can figure out something else?
         }
         if (!bulbCache) {            
             refreshInt = 10
@@ -379,7 +380,7 @@ def createNewSelectedGroupDevices() {
  *  presses link button on Bridge
  */
 private sendUsernameRequest() {
-    def userDesc = location.mode ? "Hubitat CoCoHue#${location.mode}" : "Hubitat CoCoHue"
+    def userDesc = location.name ? "Hubitat CoCoHue#${location.name}" : "Hubitat CoCoHue"
     def host = settings["bridgeIP"] + ":80"
     sendHubCommand(new hubitat.device.HubAction([
         method: "POST",
@@ -391,7 +392,7 @@ private sendUsernameRequest() {
 }
 
 /** Callback for sendUsernameRequest. Saves username in app state if Bridge is
- * successfully linked, or logs error if unable to do so.
+ * successfully authorized, or logs error if unable to do so.
  */
 def parseUsernameResponse(hubitat.device.HubResponse resp) {
     def body = resp.json
@@ -401,7 +402,7 @@ def parseUsernameResponse(hubitat.device.HubResponse resp) {
         if (body.success[0] != null) {
             if (body.success[0].username) {
                 state["username"] = body.success[0].username
-                state["bridgeLinked"] = true
+                state["bridgeAuthorized"] = true
             }
         }
     }
@@ -445,7 +446,6 @@ private parseBridgeInfoResponse(hubitat.device.HubResponse resp) {
             state.bridgeID = serial.reverse().take(6).reverse().toUpperCase() // last 6 of MAC
             def bridgeDevice = addChildDevice("RMoRobert", "CoCoHue Bridge", "CCH/${state.bridgeID}", null,
                                               [label: "CoCoHue Bridge (${state.bridgeID})", name: "CoCoHue Bridge"])
-            //state.bridge = bridgeDevice
             state.bridgeLinked = true
         } else {
             log.error("Unexpected response received from Hue Bridge")
