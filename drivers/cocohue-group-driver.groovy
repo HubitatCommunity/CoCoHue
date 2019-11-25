@@ -224,7 +224,7 @@ def setSaturation(value) {
     if (!colorStaging || isOn) {
         addToNextBridgeCommand(["on": true])
         sendBridgeCommand()
-    } {
+    } else {
         state["lastSat"] = device.currentValue("saturation")
         createEventsFromMap()
     }
