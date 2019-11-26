@@ -20,7 +20,7 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2019-11-23
+ *  Last modified: 2019-11-25
  * 
  *  Changelog:
  * 
@@ -41,13 +41,15 @@ definition(
 )   
 
 preferences {
-  section {      
-      if (app.getInstallationState() == "INCOMPLETE") {
-          paragraph("<h1>Please press \"Done\" to finish installing this app, then re-open it to add your Hue Bridge.</h1>")
-          return
-      }
-    app(name: "childApps", appName: "CoCoHue (Bridge Instance Child App)", namespace: "RMoRobert", title: "Add new Hue Bridge...", multiple: true)
-  }
+    page(name: "mainPage", title: "CoCoHue - Hue Bridge Integration", install: true, uninstall: true) {
+        section {      
+          if (app.getInstallationState() == "INCOMPLETE") {
+              paragraph("<b>Please press \"Done\" to finish installing this app, then re-open it to add your Hue Bridge.</b>")
+              return
+          }
+        app(name: "childApps", appName: "CoCoHue (Bridge Instance Child App)", namespace: "RMoRobert", title: "Add new Hue Bridge...", multiple: true)
+        }
+    }
 }
 
 def installed() {

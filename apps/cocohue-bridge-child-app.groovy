@@ -47,6 +47,7 @@ preferences {
     page(name: "pageFirstPage", content: "pageFirstPage")
     page(name: "pageAddBridge", content: "pageAddBridge")
     page(name: "pageLinkBridge", content: "pageLinkBridge")
+    page(name: "pageBridgeLinked", content: "pageBridgeLinked")
     page(name: "pageManageBridge", content: "pageManageBridge")
     page(name: "pageSelectLights", content: "pageSelectLights")
     page(name: "pageSelectGroups", content: "pageSelectGroups")
@@ -125,9 +126,9 @@ def pageAddBridge() {
                       "existing Bridge child device from this child app if one still exists)", submitOnChange: true)
             }
             if (settings["bridgeIP"] && !state.bridgeLinked || settings["boolForceCreateBridge"]) {
-                paragraph("Press the button on your Hue Bridge, then click/tap the \"Next\" button to continue.")
+                paragraph("<strong>Press the button on your Hue Bridge,</strong> then click/tap the \"Next\" button to continue.")
             }
-        }           
+        }
     }
 }
 
@@ -138,7 +139,7 @@ def pageLinkBridge() {
         app.updateSetting("boolForceCreateBridge", false)
     }
     
-    dynamicPage(name: "pageLinkBridge", refreshInterval: state.authRefreshInterval, uninstall: true, install: false, nextPage: "pageManageBridge") {  
+    dynamicPage(name: "pageLinkBridge", refreshInterval: state.authRefreshInterval, uninstall: true, install: false, nextPage: "pageBridgeLinked") {  
         section("Linking Hue Bridge") {
             if (!(state["bridgeAuthorized"])) {
                 log.debug("Attempting Hue Bridge authorization; attempt number ${state.authTryCount+1}")
@@ -160,16 +161,33 @@ def pageLinkBridge() {
             }
             else {
                 if (!state.bridgeLinked) {
-                    logDebug("Hue Bridge authorized. Requesting info from Bridge and creating Bridge device...")
+                    log.debug("Hue Bridge authorized. Requesting info from Bridge and creating Bridge device...")
                     sendBridgeInfoRequest()
                 } else {
                     logDebug("Bridge device already exits; skipping creation")
                 }
-                paragraph("Your Hue Bridge has been linked! Press \"Next\" to return to the app for discovery.")
+                paragraph("<b>Your Hue Bridge has been linked!</b> Press \"Next\" to continue.")
             }
         }
     }
 }
+
+def pageBridgeLinked() {
+    dynamicPage(name: "pageBridgeLinked", uninstall: true, install: true, nextPage: pageFirstPage) {
+        state.authRefreshInterval = 4
+        state.authTryCount = 0
+        if (state["bridgeAuthorized"] && state["bridgeLinked"]) {
+            section("Bridge Linked") {
+                paragraph("Your Hue Bridge has been successfully linked to Hubitat. Press \"Done\" to finish " +
+                          "installing the app, then re-open it to discover/add devices.")
+            }
+        } else {
+            section("Bridge Not Linked") {
+                paragraph("There was a problem authorizing or linking your Hue Bridge. Please start over and try again.")
+            }
+        }
+    }
+}         
 
 def pageManageBridge() {
     if (settings["newBulbs"]) {
@@ -191,14 +209,15 @@ def pageManageBridge() {
             input(name: "pollInterval", type: "enum", title: "Poll bridge every...",
                options: [0:"Disabled", 10:"10 seconds", 30:"30 seconds", 60:"1 minute (recommended)", 300:"5 minutes", 3600:"1 hour"], defaultValue:60)
             href(name: "hrefAddBridge", title: "Edit Bridge IP or re-authorize",
-                 description: "", page: "pageAddBridge")
+                 description: "", page: "pageAddBridge")            
+            label(title: "Name for this Hue Bridge child app (optional)", required: false)
             input(name: "enableDebug", type: "bool", title: "Enable debug logging", defaultValue: true)
         }
     }
 }
 
 def pageSelectLights() {   
-    dynamicPage(name: "pageSelectLights", refreshInterval: refreshInt, uninstall: true, nextPage: pageManageBridge) {
+    dynamicPage(name: "pageSelectLights", refreshInterval: refreshInt, uninstall: true, install: true, nextPage: pageManageBridge) {
         state.addedBulbs = [:]  // To be populated with lights user has added, matched by Hue ID
         def bridge = getChildDevice("CCH/${state.bridgeID}")
         if (!bridge) {
@@ -253,7 +272,7 @@ def pageSelectLights() {
 }
 
 def pageSelectGroups() {
-    dynamicPage(name: "pageSelectGroups", refreshInterval: refreshInt, uninstall: true, nextPage: pageManageBridge) {
+    dynamicPage(name: "pageSelectGroups", refreshInterval: refreshInt, uninstall: true, install: true, nextPage: pageManageBridge) {
         state.addedGroups = [:]  // To be populated with groups user has added, matched by Hue ID
         def bridge = getChildDevice("CCH/${state.bridgeID}")
         if (!bridge) {
@@ -307,7 +326,7 @@ def pageSelectGroups() {
 }
 
 def pageSelectScenes() {
-    dynamicPage(name: "pageSelectScenes", uninstall: true, nextPage: pageManageBridge) {  
+    dynamicPage(name: "pageSelectScenes", uninstall: true, install: true, nextPage: pageManageBridge) {  
         section("Select Scenes") {
             paragraph("Coming soon!")
         }
@@ -424,7 +443,7 @@ def parseUsernameResponse(hubitat.device.HubResponse resp) {
  *  information necessary to create the Bridge device
  */
 private sendBridgeInfoRequest() {
-    logDebug("Sending request for Bridge information")
+    log.debug("Sending request for Bridge information")
     def host = settings["bridgeIP"] + ":80"
     sendHubCommand(new hubitat.device.HubAction([
         method: "GET",
@@ -439,17 +458,23 @@ private sendBridgeInfoRequest() {
  * and obtains MAC address for use in creating Bridge DNI and device name
  */
 private parseBridgeInfoResponse(hubitat.device.HubResponse resp) {
-    logDebug("Parsing response from Bridge information request")
+    log.debug("Parsing response from Bridge information request")
     def body = resp.xml
     if (body?.device?.modelName?.text().contains("Philips hue bridge")) {
         state.serial
         def serial = body?.device?.serialNumber?.text()
         if (serial) {
-            logDebug("Hue Bridge serial parsed as ${serial}; creating device")
+            log.debug("Hue Bridge serial parsed as ${serial}; creating device")
             state.bridgeID = serial.reverse().take(6).reverse().toUpperCase() // last 6 of MAC
-            def bridgeDevice = addChildDevice("RMoRobert", "CoCoHue Bridge", "CCH/${state.bridgeID}", null,
+            def bridgeDevice
+            try {
+                bridgeDevice = addChildDevice("RMoRobert", "CoCoHue Bridge", "CCH/${state.bridgeID}", null,
                                               [label: "CoCoHue Bridge (${state.bridgeID})", name: "CoCoHue Bridge"])
-            state.bridgeLinked = true
+                state.bridgeLinked = true
+            } catch (Exception e) {
+                log.error("Error creating Bridge device: $e")
+            }
+            if (!state.bridgeLinked) log.error("Unable to create Bridge device. Make sure driver installed and no Bridge device for this MAC already exists.")
         } else {
             log.error("Unexpected response received from Hue Bridge")
         } 
