@@ -24,6 +24,9 @@
 
 //import groovy.json.JsonBuilder
 
+// TODO: Add bulb enhancements to group
+// Manipulate member bulb states when group state changed (so no need for poll to update)
+
 metadata {
     definition (name: "CoCoHue Group", namespace: "RMoRobert", author: "Robert Morris", importURL: "https://raw.githubusercontent.com/RMoRobert/CoCoHue/master/drivers/cocohue-group-driver.groovy") {
         capability "Actuator"
