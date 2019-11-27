@@ -13,20 +13,20 @@ integration. It provides several advantages, including:
 For discussion and more information, visit the Hubitat Community forum thread (link coming soon).
 
 ## To Install
-1. Install the parent and child apps from the "apps" folder in this repository into the "Apps Code" section of Hubitat: 
+1. Back up your hub and save a local copy before proceeding.
 
-    * Install the parent app code: https://raw.githubusercontent.com/RMoRobert/CoCoHue/master/apps/cocohue-parent-app.groovy
-    
-    *  Install the child app code: https://raw.githubusercontent.com/RMoRobert/CoCoHue/master/apps/cocohue-bridge-child-app.groovy
+2. Install the parent and child apps from the "apps" folder in this repository into the "Apps Code" section of Hubitat: 
+    * Install the parent app code: https://raw.githubusercontent.com/RMoRobert/CoCoHue/master/apps/cocohue-parent-app.groovy    
+    * Install the child app code: https://raw.githubusercontent.com/RMoRobert/CoCoHue/master/apps/cocohue-bridge-child-app.groovy
 
-2. Install all necessary drivers from the "drivers" folder in this repository into the "Drivers Code" section of Hubitat. (There aren't very many, so I'd recommend just installing them all, but technically all you need is the Bridge driver plus the driver for any device types you plan to use.)
+3. Install all necessary drivers from the "drivers" folder in this repository into the "Drivers Code" section of Hubitat. (There aren't very many, so I'd recommend just installing them all, but technically all you need is the Bridge driver plus the driver for any device types you plan to use.)
     * Install the Bridge driver code: https://raw.githubusercontent.com/RMoRobert/CoCoHue/master/drivers/cocohue-bridge-driver.groovy
     * Install the bulb, group, and scene drivers:
     https://raw.githubusercontent.com/RMoRobert/CoCoHue/master/drivers/cocohue-rgbw-bulb-driver.groovy,
     https://raw.githubusercontent.com/RMoRobert/CoCoHue/master/drivers/cocohue-group-driver.groovy,
     (more coming soon)
 
-3. Install an instance of app: go to **Apps > Add User App**, choose **CoCoHue**, and follow the prompts. At the moment, your
+4. Install an instance of app: go to **Apps > Add User App**, choose **CoCoHue**, and follow the prompts. At the moment, your
    Hue Bridge needs a static IP address, as discovery is not supported.
 
 ## Feature Documentation
