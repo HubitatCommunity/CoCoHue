@@ -29,7 +29,7 @@ import groovy.transform.Field
 @Field static Map lightEffects = [1:"Color Loop",2:"Select",3:"Flash",4:"None"]
 
 metadata {
-    definition (name: "CoCoHue RGBW Bulb", namespace: "RMoRobert", author: "Robert Morris", importURL: "https://raw.githubusercontent.com/RMoRobert/CoCoHue/master/drivers/cocohue-rgbw-bulb-driver.groovy") {
+    definition (name: "CoCoHue RGBW Bulb", namespace: "RMoRobert", author: "Robert Morris", importURL: "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-rgbw-bulb-driver.groovy") {
         capability "Actuator"
         capability "Color Control"
         capability "Color Temperature"
