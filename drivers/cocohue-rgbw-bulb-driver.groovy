@@ -14,7 +14,7 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2019-11-25
+ *  Last modified: 2019-11-26
  * 
  *  Changelog:
  * 
@@ -23,6 +23,10 @@
  */ 
 
 //import groovy.json.JsonBuilder
+import groovy.json.JsonSlurper
+import groovy.transform.Field
+
+@Field static Map lightEffects = [1:"Color Loop",2:"Select",3:"Flash",4:"None"]
 
 metadata {
     definition (name: "CoCoHue RGBW Bulb", namespace: "RMoRobert", author: "Robert Morris", importURL: "https://raw.githubusercontent.com/RMoRobert/CoCoHue/master/drivers/cocohue-rgbw-bulb-driver.groovy") {
@@ -36,6 +40,7 @@ metadata {
         capability "ChangeLevel"
         capability "Light"
         capability "ColorMode"
+        capability "LightEffects"
                 
         attribute "colorName", "string"        
     }
@@ -52,6 +57,8 @@ metadata {
 
 def installed(){
     log.debug "Installed..."
+    def le = new groovy.json.JsonBuilder(lightEffects)
+    sendEvent(name: "lightEffects", value: le)
     initialize()
 }
 
@@ -230,6 +237,37 @@ def setSaturation(value) {
     }
 }
 
+def setEffect(String effect) {
+    def id = lightEffects.find{ it.value == effect }
+    if (id) setEffect(id.key)
+}
+
+def setEffect(id) {
+    logDebug("Setting effect...")
+    state.remove("lastHue")
+    state.remove("lastSat")
+    state.remove("lastCT")
+    addToNextBridgeCommand(["effect": (id == 1 ? "colorloop" : "none"), "on": true], true)
+    if (id) state.preEffectColorMode = device.currentValue("colorMode" ?: "RGB")
+    else state.remove("state.preEffectColorMode")
+    // No prestaging implemented here
+    sendBridgeCommand()
+}
+
+def setNextEffect() {
+    def currentEffect = state.crntEffectId ?: 0
+    currentEffect++
+    if (currentEffect >= 1) currentEffect = 0
+    setEffect(currentEffect)
+}
+
+def setPreviousEffect() {
+    def currentEffect = state.crntEffectId ?: 1
+    currentEffect--
+    if (currentEffect < 0) currentEffect = 0
+    setEffect(currentEffect)
+}
+
 /**
  * Used to build body of (future) HTTP PUT to Bridge; useful to build up
  * parts a command in multiple places/methods and then send to Bridge as one
@@ -270,6 +308,13 @@ def createEventsFromMap(Map bridgeCmd = state.nextCmd, boolean isFromBridge = fa
                 eventUnit = null                
                 if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue, eventUnit)
                 isOn = it.value
+                if (!isOn && !isFromBridge) {
+                    // Will get stuck in "EFFECT" mode otherwise, but Hue resets when turned off/on so try to anticipate
+                    eventName = "colorMode"
+                    eventValue = (state.preEffectColorMode ?: "RGB")
+                    eventUnit = null
+                    doSendEvent(eventName, eventValue, eventUnit)
+                }
                 break
             case "bri":
                 eventName = "level"
@@ -347,7 +392,18 @@ def createEventsFromMap(Map bridgeCmd = state.nextCmd, boolean isFromBridge = fa
                 eventValue = "RGB"
                 eventUnit = null
                 if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue, eventUnit)
-                break          
+                break
+            case "effect":
+                eventName = "colorMode"
+                eventValue = (it.value == "colorloop" ? "EFFECTS" : null)
+                if (eventValue == null) break
+                eventUnit = null
+                if (device.currentValue(eventName) != eventValue) {
+                    doSendEvent(eventName, eventValue, eventUnit)
+                }
+                eventUnit = null
+                if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue, eventUnit)
+                break
             case "transitiontime":
             case "mode":
             case "alert":
@@ -378,6 +434,13 @@ def sendBridgeCommand(Map customMap = null, boolean createHubEvents=true) {
     } else {
         cmd = state.nextCmd
         state.remove("nextCmd")
+    }
+    // Remove color effect if present and user setting hue or CT.
+    // Hue apparently needs this as a separate command first, or it will just restore
+    // to what it was before (not what else is passed along with)
+    if (customMap == null && !(cmd.containsKey("effect")) &&
+        (cmd.containsKey("hue") || cmd.containsKey("ct")) ) {
+            sendBridgeCommand(["effect": "none"], false)
     }
     if (!cmd) {
         log.debug("Commands not sent to Bridge because command map empty")

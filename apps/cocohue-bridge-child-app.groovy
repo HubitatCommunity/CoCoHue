@@ -20,16 +20,13 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2019-11-25
+ *  Last modified: 2019-11-26
  * 
  *  Changelog:
  * 
  *  1.0 - Initial Public Release
  *
  */ 
-
- // TODO: App doesn't fully install if user navigates away before clicking Done, even if already
- // added bulbs, etc.
 
 definition(
     name: "CoCoHue (Bridge Instance Child App)",
@@ -135,7 +132,7 @@ def pageAddBridge() {
 def pageLinkBridge() {
     def authMaxTries = 20
     if (settings["boolForceCreateBridge"]) {
-        state.remove("bridge")
+        state.remove("bridgeAuthorized")
         app.updateSetting("boolForceCreateBridge", false)
     }
     
