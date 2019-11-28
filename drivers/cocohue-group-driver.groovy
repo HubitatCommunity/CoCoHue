@@ -28,7 +28,7 @@
 // Manipulate member bulb states when group state changed (so no need for poll to update)
 
 metadata {
-    definition (name: "CoCoHue Group", namespace: "RMoRobert", author: "Robert Morris", importURL: "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-group-driver.groovy") {
+    definition (name: "CoCoHue Group", namespace: "RMoRobert", author: "Robert Morris", importUrl: "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-group-driver.groovy") {
         capability "Actuator"
         capability "Color Control"
         capability "Color Temperature"
