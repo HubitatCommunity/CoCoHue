@@ -25,7 +25,7 @@
 //import groovy.json.JsonBuilder
 
 metadata {
-    definition (name: "CoCoHue Bridge", namespace: "RMoRobert", author: "Robert Morris", importURL: "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-bridge-driver.groovy") {
+    definition (name: "CoCoHue Bridge", namespace: "RMoRobert", author: "Robert Morris", importUrl: "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-bridge-driver.groovy") {
         capability "Refresh"
         attribute "status", "string"   // TODO: This is not yet updated
     }
