@@ -14,19 +14,20 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2019-11-26
+ *  Last modified: 2019-12-01
  * 
  *  Changelog:
  * 
  *  v1.0 - Initial Release
- *
+ *  v1.1 - Added flash commands
+ *  v1.5 - Added additional custom commands and more consistency with effect behavior
  */ 
 
 //import groovy.json.JsonBuilder
 import groovy.json.JsonSlurper
 import groovy.transform.Field
 
-@Field static Map lightEffects = [1:"Color Loop",2:"Select",3:"Flash",4:"None"]
+@Field static Map lightEffects = [0: "None", 1:"Color Loop"]
 
 metadata {
     definition (name: "CoCoHue RGBW Bulb", namespace: "RMoRobert", author: "Robert Morris", importUrl: "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-rgbw-bulb-driver.groovy") {
@@ -41,7 +42,10 @@ metadata {
         capability "Light"
         capability "ColorMode"
         capability "LightEffects"
-                
+
+        command "flash"
+        command "flashOnce"
+        
         attribute "colorName", "string"        
     }
        
@@ -88,7 +92,7 @@ def parse(String description) {
 
 /**
  * Parses Hue Bridge device ID number out of Hubitat DNI for use with Hue API calls
- * Hubitat DNI is created in format "CCH/BridgeMACAbbrev/Lights/HueDeviceID", so just
+ * Hubitat DNI is created in format "CCH/BridgeMACAbbrev/Light/HueDeviceID", so just
  * looks for number after third "/" character
  */
 def getHueDeviceNumber() {
@@ -101,7 +105,8 @@ def on() {
      check if current level is different from lastXYZ value, in which case it was probably
      changed outside of Hubitat and we should not set the pre-staged value(s)--Hue does not
      support "true" prestaging, so any prestaging is a Hubitat-only workaround */
-    addToNextBridgeCommand(["on": true], !(colorStaging || levelStaging))
+    // Disables lselect alert if in progress to be consistent with other drivers that stop flash with on()
+    addToNextBridgeCommand(["on": true, "alert": "none"], !(colorStaging || levelStaging))
     sendBridgeCommand()
     state.remove("lastHue")
     state.remove("lastSat")
@@ -243,13 +248,21 @@ def setEffect(String effect) {
 }
 
 def setEffect(id) {
-    logDebug("Setting effect...")
+    logDebug("Setting effect $id...")
     state.remove("lastHue")
     state.remove("lastSat")
     state.remove("lastCT")
     addToNextBridgeCommand(["effect": (id == 1 ? "colorloop" : "none"), "on": true], true)
-    if (id) state.preEffectColorMode = device.currentValue("colorMode" ?: "RGB")
-    else state.remove("state.preEffectColorMode")
+    if (id) {
+        def prevMode = device.currentValue("colorMode")
+        if (prevMode != "EFFECTS") {
+            state.preEffectColorMode = device.currentValue("colorMode" ?: "RGB")
+        }
+        state.crntEffectId = id
+    } else {
+        state.remove("crntEffectId")
+        state.remove("state.preEffectColorMode")
+    }
     // No prestaging implemented here
     sendBridgeCommand()
 }
@@ -257,15 +270,27 @@ def setEffect(id) {
 def setNextEffect() {
     def currentEffect = state.crntEffectId ?: 0
     currentEffect++
-    if (currentEffect >= 1) currentEffect = 0
+    if (currentEffect > 1) currentEffect = 0
     setEffect(currentEffect)
 }
 
 def setPreviousEffect() {
-    def currentEffect = state.crntEffectId ?: 1
+    def currentEffect = state.crntEffectId ?: 0
     currentEffect--
-    if (currentEffect < 0) currentEffect = 0
+    if (currentEffect < 0) currentEffect = 1
     setEffect(currentEffect)
+}
+
+def flash() {
+    logDebug("Starting flash (note: Hue will automatically stop flashing after 15 cycles; this is not indefinite)...")
+    def cmd = ["alert": "lselect"]
+    sendBridgeCommand(cmd, false) 
+}
+
+def flashOnce() {
+    logDebug("Running flashOnce...")
+    def cmd = ["alert": "select"]
+    sendBridgeCommand(cmd, false) 
 }
 
 /**
@@ -311,9 +336,12 @@ def createEventsFromMap(Map bridgeCmd = state.nextCmd, boolean isFromBridge = fa
                 if (!isOn && !isFromBridge) {
                     // Will get stuck in "EFFECT" mode otherwise, but Hue resets when turned off/on so try to anticipate
                     eventName = "colorMode"
-                    eventValue = (state.preEffectColorMode ?: "RGB")
+                    eventValue = (state.preEffectColorMode)
                     eventUnit = null
-                    doSendEvent(eventName, eventValue, eventUnit)
+                    if (eventValue) {
+                        doSendEvent(eventName, eventValue, eventUnit)
+                        state.remove("preEffectColorMode")
+                    }
                 }
                 break
             case "bri":
@@ -391,18 +419,25 @@ def createEventsFromMap(Map bridgeCmd = state.nextCmd, boolean isFromBridge = fa
                 eventName = "colorMode"
                 eventValue = "RGB"
                 eventUnit = null
-                if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue, eventUnit)
+                if (device.currentValue(eventName) != eventValue && device.currentValue(eventName) != "EFFECTS") doSendEvent(eventName, eventValue, eventUnit)
                 break
             case "effect":
                 eventName = "colorMode"
                 eventValue = (it.value == "colorloop" ? "EFFECTS" : null)
+                if (!eventValue) {
+                    def cm = state.preEffectColorMode
+                    if (cm) {
+                        eventValue = cm
+                        state.remove("preEffectColorMode")
+                    }
+                }
                 if (eventValue == null) break
                 eventUnit = null
                 if (device.currentValue(eventName) != eventValue) {
                     doSendEvent(eventName, eventValue, eventUnit)
                 }
                 eventUnit = null
-                if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue, eventUnit)
+                if (device.currentValue(eventName) != eventValue && eventUnit != null) doSendEvent(eventName, eventValue, eventUnit)
                 break
             case "transitiontime":
             case "mode":
@@ -427,7 +462,7 @@ def createEventsFromMap(Map bridgeCmd = state.nextCmd, boolean isFromBridge = fa
  *        affected device attributes (e.g., will send an "on" event for "switch" if map contains "on": true)
  */
 def sendBridgeCommand(Map customMap = null, boolean createHubEvents=true) {    
-    logDebug("Sending command to Bridge: $state.nextCmd")
+    logDebug("Sending command to Bridge: ${customMap ?: state.nextCmd}")
     Map cmd = [:]
     if (customMap != null) {
         cmd = customMap
@@ -455,8 +490,7 @@ def sendBridgeCommand(Map customMap = null, boolean createHubEvents=true) {
         body: cmd
         ]
     asynchttpPut("parseBridgeResponse", params)
-    logDebug("Command sent to Bridge!")
-    logDebug("----------------------------------------------")
+    logDebug("-- Command sent to Bridge!" --)
 }
 
 def doSendEvent(eventName, eventValue, eventUnit) {
@@ -510,7 +544,7 @@ def setGenericName(hue){
             break
     }
     def descriptionText = "${device.getDisplayName()} color is ${colorName}"
-    if (txtEnable) log.info "${descriptionText}"
+    logDesc("${descriptionText}")
     sendEvent(name: "colorName", value: colorName ,descriptionText: descriptionText)
 }
 
@@ -532,7 +566,7 @@ def setGenericTempName(temp){
     else if (value <= 6500) genericName = "Skylight"
     else if (value < 20000) genericName = "Polar"
     def descriptionText = "${device.getDisplayName()} color is ${genericName}"
-    if (txtEnable) log.info "${descriptionText}"
+    logDesc("${descriptionText}")
     sendEvent(name: "colorName", value: genericName ,descriptionText: descriptionText)
 }
 
