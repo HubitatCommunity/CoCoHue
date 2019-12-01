@@ -14,11 +14,12 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2019-11-26
+ *  Last modified: 2019-12-01
  *
  *  Changelog:
  * 
  *  v1.0 - Initial Release
+ *  v1.5 - Additional methods to support scenes and improved group behavior
  *
  */ 
 
@@ -27,7 +28,7 @@
 metadata {
     definition (name: "CoCoHue Bridge", namespace: "RMoRobert", author: "Robert Morris", importUrl: "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-bridge-driver.groovy") {
         capability "Refresh"
-        attribute "status", "string"   // TODO: This is not yet updated
+        attribute "status", "string"
     }
     
     preferences() {
@@ -84,10 +85,12 @@ def refresh() {
     asynchttpGet("parseGroupStates", groupParams)
 }
 
+def configure() {}
+
 // ------------ BULBS ------------
 
 /** Requests list of all bulbs/lights from Hue Bridge; updates
- *  allBulbs in parent app state when finished. Intended to be called
+ *  allBulbs in state when finished. Intended to be called
  *  during bulb discovery in app.
  */
 def getAllBulbs() {
@@ -138,8 +141,12 @@ def parseLightStates(resp, data) {
         lightStates = resp.json
     } catch (ex) {
         log.error("Error requesting light data: ${resp.errorMessage ?: ex}")
+        if (device.currentValue("status") != "Offline") doSendEvent("status", "Offline")        
         return        
-    }    
+    }
+    if (device.currentValue("status") != "Online")  {
+        def ret = doSendEvent("status", "Online")
+    }
     lightStates.each { id, val ->
         def device = parent.getChildDevice("${device.deviceNetworkId}/Light/${id}")
         if (device) {
@@ -151,7 +158,7 @@ def parseLightStates(resp, data) {
 // ------------ GROUPS ------------
 
 /** Requests list of all bulbs/lights from Hue Bridge; updates
- *  allBulbs in parent app state when finished. Intended to be called
+ *  allBulbs in state when finished. Intended to be called
  *  during bulb discovery in app.
  */
 def getAllGroups() {
@@ -202,15 +209,72 @@ def parseGroupStates(resp, data) {
         groupStates = resp.json
     } catch (ex) {
         log.error("Error requesting light data: ${resp.errorMessage ?: ex}")
+        if (device.currentValue("status") != "Offline") doSendEvent("status", "Offline")
         return        
-    }    
+    }
+    if (device.currentValue("status") != "Online") doSendEvent("status", "Online")
     groupStates.each { id, val ->
         def device = parent.getChildDevice("${device.deviceNetworkId}/Group/${id}")
         if (device) {
             device.createEventsFromMap(val.action, true)
             device.createEventsFromMap(val.state, true)
+            device.setMemberBulbIDs(val.lights)
         }
     }
+}
+
+// ------------ SCENES ------------
+
+/** Requests list of all scenes from Hue Bridge; updates
+ *  allScenes in state when finished. Intended to be called
+ *  during bulb discovery in app.
+ */
+def getAllScenes() {
+    logDebug("Getting scene list from Bridge...")
+    getAllGroups() // so can get room names, etc.
+    //clearScenesCache()
+    def data = parent.getBridgeData()
+    def params = [
+        uri: data.fullHost,
+        path: "/api/${data.username}/scenes",
+        contentType: "application/json",
+        ]
+    asynchttpGet("parseGetAllScenesResponse", params)
+}
+
+private parseGetAllScenesResponse(resp, data) {
+    logDebug("Parsing in parseGetAllScenesResponse") 
+    def body = resp?.json
+    def scenes = [:]
+    body?.each { key, val ->
+        scenes[key] = ["name": val.name]
+        if (val.group) scenes[key] << ["group": val.group]
+    }
+    state.allScenes = scenes
+}
+
+
+/** Intended to be called from parent Bridge Child app to retrive previously
+ *  requested list of scenes
+ */
+def getAllScenesCache() {
+    return state.allScenes
+}
+
+/** Clears cache of scene IDs/names; useful for parent app to call if trying to ensure
+ * not working with old data
+ */
+def clearScenesCache() {
+    logDebug("Running clearScenesCache...")
+    state.allScenes = [:]
+}
+
+def doSendEvent(eventName, eventValue) {
+    logDebug("Creating event for $eventName...")
+    def descriptionText = "${device.displayName} ${eventName} is ${eventValue}"
+    logDesc(descriptionText)
+    def event = sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText) 
+    return event
 }
 
 def logDebug(str) {
