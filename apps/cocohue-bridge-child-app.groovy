@@ -20,12 +20,13 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2019-11-26
+ *  Last modified: 2019-12-01
  * 
  *  Changelog:
  * 
- *  1.0 - Initial Public Release
- *
+ *  v1.0 - Initial Public Release
+ *  v1.1 - Added more polling intervals
+ *  v1.5 - Added scene integration
  */ 
 
 definition(
@@ -188,13 +189,19 @@ def pageBridgeLinked() {
 
 def pageManageBridge() {
     if (settings["newBulbs"]) {
+        logDebug("New bulbs selected. Creating...")
         createNewSelectedBulbDevices()
     }
     if (settings["newGroups"]) {
+        logDebug("New groups selected. Creating...")
         createNewSelectedGroupDevices()
-    }    
+    }
+    if (settings["newScenes"]) {
+        logDebug("New scenes selected. Creating...")
+        createNewSelectedSceneDevices()
+    }
     dynamicPage(name: "pageManageBridge", uninstall: true, install: true) {  
-        section("Manage Hue Bridge Devices"/*, hideable: true, hidden: false*/) {
+        section("Manage Hue Bridge Devices") {
             href(name: "hrefSelectLights", title: "Select Lights",
                 description: "", page: "pageSelectLights")
             href(name: "hrefSelectGroups", title: "Select Groups",
@@ -204,7 +211,7 @@ def pageManageBridge() {
         }
         section("Bridge Device Options", hideable: true, hidden: true) {
             input(name: "pollInterval", type: "enum", title: "Poll bridge every...",
-               options: [0:"Disabled", 10:"10 seconds", 30:"30 seconds", 60:"1 minute (recommended)", 300:"5 minutes", 3600:"1 hour"], defaultValue:60)
+               options: [0:"Disabled", 10:"10 seconds", 15:"15 seconds", 20:"20 seconds", 30:"30 seconds", 60:"1 minute (recommended)", 300:"5 minutes", 3600:"1 hour"], defaultValue:60)
             href(name: "hrefAddBridge", title: "Edit Bridge IP or re-authorize",
                  description: "", page: "pageAddBridge")            
             label(title: "Name for this Hue Bridge child app (optional)", required: false)
@@ -214,7 +221,7 @@ def pageManageBridge() {
 }
 
 def pageSelectLights() {   
-    dynamicPage(name: "pageSelectLights", refreshInterval: refreshInt, uninstall: true, install: true, nextPage: pageManageBridge) {
+    dynamicPage(name: "pageSelectLights", refreshInterval: refreshInt, uninstall: true, install: false, nextPage: pageManageBridge) {
         state.addedBulbs = [:]  // To be populated with lights user has added, matched by Hue ID
         def bridge = getChildDevice("CCH/${state.bridgeID}")
         if (!bridge) {
@@ -223,7 +230,7 @@ def pageSelectLights() {
         }
         bridge.getAllBulbs()
         def refreshInt = 10
-        def enumNewBulbs = [:]
+        def arrNewBulbs = []
         def bulbCache = bridge.getAllBulbsCache()
         if (bulbCache) {
             refreshInt = 0
@@ -232,10 +239,16 @@ def pageSelectLights() {
                 if (bulbChild) {
                     state.addedBulbs.put(it.key, bulbChild.name)
                 } else {
-                    enumNewBulbs.put(it.key, it.value.name)
+                    def newBulb = [:]
+                    newBulb << [(it.key): (it.value.name)]
+                    arrNewBulbs << newBulb
                 }
             }
-            enumNewBulbs = enumNewBulbs.sort { it.value }  // doesn't work to display this way, but maybe can figure out something else?
+            arrNewBulbs = arrNewBulbs.sort { a, b ->
+                // Sort by bulb name (default would be hue ID)
+                a.entrySet().iterator().next()?.value <=> b.entrySet().iterator().next()?.value
+            }
+            state.addedBulbs = state.addedBulbs.sort { it.value }
         }
         if (!bulbCache) {            
             refreshInt = 10
@@ -247,7 +260,7 @@ def pageSelectLights() {
         else {
             section("Manage Lights") {
                 input(name: "newBulbs", type: "enum", title: "Select Hue lights to add:",
-                      multiple: true, options: enumNewBulbs)
+                      multiple: true, options: arrNewBulbs)
             }
             section("Previously added lights") {
                 if (state.addedBulbs) {
@@ -268,8 +281,9 @@ def pageSelectLights() {
     }    
 }
 
+
 def pageSelectGroups() {
-    dynamicPage(name: "pageSelectGroups", refreshInterval: refreshInt, uninstall: true, install: true, nextPage: pageManageBridge) {
+    dynamicPage(name: "pageSelectGroups", refreshInterval: refreshInt, uninstall: true, install: false, nextPage: pageManageBridge) {
         state.addedGroups = [:]  // To be populated with groups user has added, matched by Hue ID
         def bridge = getChildDevice("CCH/${state.bridgeID}")
         if (!bridge) {
@@ -278,8 +292,9 @@ def pageSelectGroups() {
         }
         bridge.getAllGroups()
         def refreshInt = 10
-        def enumNewGroups = [:]
+        def arrNewGroups = []
         def groupCache = bridge.getAllGroupsCache()
+
         if (groupCache) {
             refreshInt = 0
             groupCache.each {
@@ -287,10 +302,18 @@ def pageSelectGroups() {
                 if (groupChild) {
                     state.addedGroups.put(it.key, groupChild.name)
                 } else {
-                    enumNewGroups.put(it.key, it.value.name)
+                    def newGroup = [:]
+                    newGroup << [(it.key): (it.value.name)]
+                    arrNewGroups << newGroup
                 }
             }
+            arrNewGroups = arrNewGroups.sort {a, b ->
+                // Sort by group name (default would be Hue ID)
+                a.entrySet().iterator().next()?.value <=> b.entrySet().iterator().next()?.value
+                }
+            state.addedGroups = state.addedGroups.sort { it.value }
         }
+
         if (!groupCache) {            
             refreshInt = 10
             section("Discovering groups. Please wait...") {            
@@ -301,7 +324,7 @@ def pageSelectGroups() {
         else {
             section("Manage Groups") {
                 input(name: "newGroups", type: "enum", title: "Select Hue groups to add:",
-                      multiple: true, options: enumNewGroups)
+                      multiple: true, options: arrNewGroups)
             }
             section("Previously added groups") {
                 if (state.addedGroups) {
@@ -323,11 +346,87 @@ def pageSelectGroups() {
 }
 
 def pageSelectScenes() {
-    dynamicPage(name: "pageSelectScenes", uninstall: true, install: true, nextPage: pageManageBridge) {  
-        section("Select Scenes") {
-            paragraph("Coming soon!")
+    dynamicPage(name: "pageSelectScenes", uninstall: true, install: false, nextPage: pageManageBridge) {  
+        state.addedScenes = [:]  // To be populated with scenes user has added, matched by Hue ID
+        def bridge = getChildDevice("CCH/${state.bridgeID}")
+        if (!bridge) {
+            log.error "No Bridge device found"
+            return
         }
-    }    
+        bridge.getAllScenes()
+        def refreshInt = 10
+        def arrNewScenes = []
+        def sceneCache = bridge.getAllScenesCache()
+
+        def groupCache = bridge.getAllGroupsCache()
+        def grps = [:]
+        groupCache?.each { grps << [(it.key) : (it.value.name)] }
+
+        if (sceneCache) {
+            refreshInt = 0
+            state.sceneFullNames = [:]
+            sceneCache.each { sc ->
+                def sceneChild = getChildDevice("CCH/${state.bridgeID}/Scene/${sc.key}")
+                if (sceneChild) {
+                    state.addedScenes.put(sc.key, sceneChild.name)
+                } else {
+                    def newScene = [:]
+                    def sceneName = sc.value.name
+                    if (sc.value.group) {
+                        grps.each { g ->
+                            def k = g.key
+                            if (k && k == sc.value.group) {
+                                def v = g.value
+                                // "Group Name - Scene Name" naming convention:
+                                if (v) 
+                                sceneName = "$v - $sceneName"
+                                state.sceneFullNames.put(sc.key, sceneName)
+                            }
+                        }
+                    }
+                    newScene << [(sc.key): (sceneName)]
+                    arrNewScenes << newScene
+                }
+            }
+            arrNewScenes = arrNewScenes.sort {a, b ->
+                // Sort by group name (default would be Hue ID)
+                a.entrySet().iterator().next()?.value <=> b.entrySet().iterator().next()?.value
+            }
+            log.warn state.addedScenes
+            state.addedScenes = state.addedScenes.sort { it.value }
+            log.warn state.addedScenes
+        }
+
+        if (!sceneCache) {            
+            refreshInt = 10
+            section("Discovering scenes. Please wait...") {            
+                paragraph("Press \"Refresh\" if you see this message for an extended period of time")
+                input(name: "btnSceneRefresh", type: "button", title: "Refresh", submitOnChange: true)
+            }
+        }
+        else {
+            section("Manage Scenes") {
+                input(name: "newScenes", type: "enum", title: "Select Hue scenes to add:",
+                      multiple: true, options: arrNewScenes)
+            }
+            section("Previously added scenes") {
+                if (state.addedScenes) {
+                    state.addedScenes.each {
+                        paragraph(it.value)
+                    }
+                }
+                else {
+                    paragraph("No scenes added")
+                }
+            }
+            section("Rediscover Scenes") {
+                paragraph("If you added new scenes to the Hue Bridge and do not see them above, or if room/zone names are " +
+                          "missing from scenes (if assigned to one), click/tap the button " +
+                          "below to retrieve new information from the Bridge.")
+                input(name: "btnSceneRefresh", type: "button", title: "Refresh Scene List", submitOnChange: true)
+            }
+        }
+    }     
 }
 
 /** Creates new Hubitat devices for new user-selected bulbs on lights-selection
@@ -369,7 +468,6 @@ def createNewSelectedBulbDevices() {
  * page (intended to be called after navigating away/using "Done" from that page)
  */
 def createNewSelectedGroupDevices() {
-    // TODO: Change most of these when new drivers made
     def driverName = "CoCoHue Group"
     def bridge = getChildDevice("CCH/${state.bridgeID}")
     if (!bridge) log.error("Unable to find bridge device")
@@ -393,6 +491,38 @@ def createNewSelectedGroupDevices() {
     bridge.clearGroupsCache()
     bridge.getAllGroups()
     app.removeSetting("newGroups")
+}
+
+
+/** Creates new Hubitat devices for new user-selected scenes on scene-selection
+ * page (intended to be called after navigating away/using "Done" from that page)
+ */
+def createNewSelectedSceneDevices() {
+    def driverName = "CoCoHue Scene"
+    def bridge = getChildDevice("CCH/${state.bridgeID}")
+    if (!bridge) log.error("Unable to find bridge device")
+    def sceneCache = bridge?.getAllScenesCache()
+    settings["newScenes"].each {
+        def sc = sceneCache.get(it)
+        if (sc) {
+            try {
+                logDebug("Creating new device for Hue group ${it}" +
+                         " (state.sceneFullNames?.get(it) ?: sc.name)")
+                def devDNI = "CCH/${state.bridgeID}/Scene/${it}"
+                def devProps = [name: (state.sceneFullNames?.get(it) ?: sc.name)]
+                addChildDevice(getChildNamespace(), driverName, devDNI, null, devProps)
+
+            } catch (Exception ex) {
+                log.error("Unable to create new scene device for $it: $ex")
+            }
+        } else {
+            log.error("Unable to create new scene for scene $it: ID not found on Hue Bridge")
+        }
+    }  
+    bridge.clearScenesCache()
+    //bridge.getAllScenes()
+    app.removeSetting("newScenes")
+    state.remove("sceneFullNames")
 }
 
 /** Sends request for username creation to Bridge API. Intended to be called after user
@@ -503,10 +633,26 @@ private refreshBridge() {
     bridge.refresh()
 }
 
+/**
+ *  Intended to be called by group child device when state is manipulated in a way that would affect
+ *  all member bulbs. Updates member bulb states (so doesn't need to wait for next poll to update)
+ *  @param states Map of states in Hue Bridge format (e.g., ["on": true])
+ *  @param memberIDs Hue IDs of member bulbs to update
+ */
+ def updateGroupMemberBulbStates(Map states, List ids) {
+    ids?.each {
+        def device = getChildDevice("CCH/${state.bridgeID}/Light/${it}")
+            if (device) {
+                device.createEventsFromMap(states)
+            }
+    }
+ }
+
 def appButtonHandler(btn) {
     switch(btn) {
         case "btnBulbRefresh":
         case "btnGroupRefresh":
+        case "btnSceneRefresh":
             // Just want to resubmit page, so nothing
             break
         default:
