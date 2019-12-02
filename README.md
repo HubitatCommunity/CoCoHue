@@ -16,14 +16,15 @@ For discussion and more information, visit the Hubitat Community forum thread (l
 1. Back up your hub and save a local copy before proceeding.
 
 2. Install the parent and child apps from the "apps" folder in this repository into the "Apps Code" section of Hubitat: 
-    * Install the parent app code: https://raw.githubusercontent.com/RMoRobert/CoCoHue/master/apps/cocohue-parent-app.groovy    
-    * Install the child app code: https://raw.githubusercontent.com/RMoRobert/CoCoHue/master/apps/cocohue-bridge-child-app.groovy
+    * Install the parent app code: https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/apps/cocohue-parent-app.groovy    
+    * Install the child app code: https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/apps/cocohue-bridge-child-app.groovy
 
 3. Install all necessary drivers from the "drivers" folder in this repository into the "Drivers Code" section of Hubitat. (There aren't very many, so I'd recommend just installing them all, but technically all you need is the Bridge driver plus the driver for any device types you plan to use.)
-    * Install the Bridge driver code: https://raw.githubusercontent.com/RMoRobert/CoCoHue/master/drivers/cocohue-bridge-driver.groovy
+    * Install the Bridge driver code: https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-bridge-driver.groovy
     * Install the bulb, group, and scene drivers:
-    https://raw.githubusercontent.com/RMoRobert/CoCoHue/master/drivers/cocohue-rgbw-bulb-driver.groovy,
-    https://raw.githubusercontent.com/RMoRobert/CoCoHue/master/drivers/cocohue-group-driver.groovy,
+    https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-rgbw-bulb-driver.groovy,
+    https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-group-driver.groovy,
+    https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-scene-driver.groovy
     (more coming soon)
 
 4. Install an instance of app: go to **Apps > Add User App**, choose **CoCoHue**, and follow the prompts. At the moment, your
