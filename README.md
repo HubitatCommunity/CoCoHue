@@ -53,9 +53,9 @@ values) is in progress.
 3. "Select" and "LSelect" alerts: these are basically a one-time flash and a 15-time flash. These are implemented as the
 `flashOnce()` command and the pseudo-standard `flash()` command, respectively.
 
-4. Groups: besides "Change Level" (implemnted here), it appears that a Hubitat Hue group is smart enough to know which
-Hue bulbs are contained as members and adjusts their state without them needing to be updated via a Bridge poll. This
-will be coming soon here.
+4. Groups: besides "Change Level" (implemnted here), most group changes will propagage to individual bulbs (like the Hubitat
+stock integration). However, if you use both bulb and group devices, it is recommended to keep polling configured just
+in case.
 
 5. Scenes: implemented as button and switch devices. To activate, do a `push(1)` or an `on()` command (the `off()` command
 has no effect but can be used if desired without harm). If you use scenes, it is recommended to keep polling enabled (a
