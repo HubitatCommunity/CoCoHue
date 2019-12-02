@@ -20,7 +20,7 @@
  * 
  *  v1.0 - Initial Release
  *  v1.1 - Added flash commands
- *  v1.5 - Added additional custom commands and more consistency with effect behavior
+ *  v1.5b - Added additional custom commands and more consistency with effect behavior
  */ 
 
 //import groovy.json.JsonBuilder
@@ -146,6 +146,11 @@ def setLevel(value, rate) {
     state.remove("lastLevel")
     if (value < 0) value = 1
     else if (value > 100) value = 100
+    else if (value == 0) {
+        off()
+        logDebug("Level is 0 so turning off instead")
+        return
+    }
     def newLevel = scaleBriToBridge(value)
     def scaledRate = (rate * 10).toInteger()
     addToNextBridgeCommand(["bri": newLevel, "transitiontime": scaledRate], !(levelStaging || colorStaging))
