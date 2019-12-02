@@ -18,12 +18,12 @@
  * 
  *  Changelog:
  * 
- *  v1.5 - Initial public release
+ *  v1.5b - Initial public release
  *
  */ 
 
 metadata {
-    definition (name: "CoCoHue Scene", namespace: "RMoRobert", author: "Robert Morris", importURL: "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-rgbw-bulb-driver.groovy") {
+    definition (name: "CoCoHue Scene", namespace: "RMoRobert", author: "Robert Morris", importURL: "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-scene-driver.groovy") {
         capability "Actuator"
         capability "Configuration"
         capability "Refresh"
