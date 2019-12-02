@@ -151,6 +151,11 @@ def setLevel(value, rate) {
     state.remove("lastLevel")
     if (value < 0) value = 1
     else if (value > 100) value = 100
+    else if (value == 0) {
+        off()
+        logDebug("Level is 0 so turning off instead")
+        return
+    }
     def newLevel = scaleBriToBridge(value)
     def scaledRate = (rate * 10).toInteger()
     addToNextBridgeCommand(["bri": newLevel, "transitiontime": scaledRate], !(levelStaging || colorStaging))
