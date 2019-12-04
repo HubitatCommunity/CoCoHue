@@ -14,13 +14,14 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2019-12-01
+ *  Last modified: 2019-12-03
  * 
  *  Changelog:
  * 
  *  v1.0 - Initial Release
  *  v1.1 - Added parity with bulb features (effects, etc.)
  *  v1.5 - Group switch/level/etc. states now propagated to member bulbs w/o polling
+ *  v1.5b - Eliminated duplicate color/CT events on refresh
  *
  */ 
 
@@ -52,8 +53,8 @@ metadata {
    preferences {
         input(name: "transitionTime", type: "enum", description: "", title: "Transition time", options: [[0:"ASAP"],[400:"400ms"],[500:"500ms"],[1000:"1s"],[1500:"1.5s"],[2000:"2s"],[5000:"5s"]], defaultValue: 400)
         input(name: "hiRezHue", type: "bool", title: "Enable hue in degrees (0-360 instead of 0-100)", defaultValue: false)
-        input(name: "colorStaging", type: "bool", description: "", title: "Enable color pre-staging", defaultValue: false)
-        input(name: "levelStaging", type: "bool", description: "", title: "Enable level pre-staging", defaultValue: false)
+        input(name: "colorStaging", type: "bool", description: "", title: "Enable color pseudo-prestaging", defaultValue: false)
+        input(name: "levelStaging", type: "bool", description: "", title: "Enable level pseudo-prestaging", defaultValue: false)
         input(name: "enableDebug", type: "bool", title: "Enable debug logging", defaultValue: true)
         input(name: "enableDesc", type: "bool", title: "Enable descriptionText logging", defaultValue: true)
     }
@@ -558,9 +559,7 @@ def setGenericName(hue){
         case 346..360: colorName = "Red"
             break
     }
-    def descriptionText = "${device.getDisplayName()} color is ${colorName}"
-    logDesc("${descriptionText}")
-    sendEvent(name: "colorName", value: colorName ,descriptionText: descriptionText)
+    if (device.currentValue("colorName") != colorName) doSendEvent("colorName", colorName, null)
 }
 
 // Hubitat-provided ct/name mappings
@@ -580,9 +579,7 @@ def setGenericTempName(temp){
     else if (value < 6000) genericName = "Electronic"
     else if (value <= 6500) genericName = "Skylight"
     else if (value < 20000) genericName = "Polar"
-    def descriptionText = "${device.getDisplayName()} color is ${genericName}"
-    logDesc("${descriptionText}")
-    sendEvent(name: "colorName", value: genericName ,descriptionText: descriptionText)
+    if (device.currentValue("colorName") != genericName) doSendEvent("colorName", genericName, null)
 }
 
 /**
