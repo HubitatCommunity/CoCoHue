@@ -14,7 +14,7 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2019-12-01
+ *  Last modified: 2019-12-04
  * 
  *  Changelog:
  * 
@@ -23,7 +23,7 @@
  */ 
 
 metadata {
-    definition (name: "CoCoHue Scene", namespace: "RMoRobert", author: "Robert Morris", importURL: "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-scene-driver.groovy") {
+    definition (name: "CoCoHue Scene", namespace: "RMoRobert", author: "Robert Morris", importUrl: "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-scene-driver.groovy") {
         capability "Actuator"
         capability "Configuration"
         capability "Refresh"
