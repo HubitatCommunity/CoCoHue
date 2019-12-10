@@ -20,13 +20,14 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2019-12-01
+ *  Last modified: 2019-12-02
  * 
  *  Changelog:
  * 
  *  v1.0 - Initial Public Release
  *  v1.1 - Added more polling intervals
  *  v1.5 - Added scene integration
+ *  v1.6 - Added options for bulb and group deivce naming
  */ 
 
 definition(
@@ -261,6 +262,7 @@ def pageSelectLights() {
             section("Manage Lights") {
                 input(name: "newBulbs", type: "enum", title: "Select Hue lights to add:",
                       multiple: true, options: arrNewBulbs)
+                input(name: "boolAppendBulb", type: "bool", title: "Append \"(Hue Light)\" to Hubitat device name")
             }
             section("Previously added lights") {
                 if (state.addedBulbs) {
@@ -325,6 +327,7 @@ def pageSelectGroups() {
             section("Manage Groups") {
                 input(name: "newGroups", type: "enum", title: "Select Hue groups to add:",
                       multiple: true, options: arrNewGroups)
+                input(name: "boolAppendGroup", type: "bool", title: "Append \"(Hue Group)\" to Hubitat device name")
             }
             section("Previously added groups") {
                 if (state.addedGroups) {
@@ -449,7 +452,7 @@ def createNewSelectedBulbDevices() {
                 logDebug("Creating new device for Hue light ${it} (${b.name})")
                 def devDriver = driverMap[b.type.toLowerCase()] ?: driverMap["DEFAULT"]
                 def devDNI = "CCH/${state.bridgeID}/Light/${it}"
-                def devProps = [name: b.name]
+                def devProps = [name: (settings["boolAppendBulb"] ? b.name + " (Hue Bulb)" : b.name)]
                 addChildDevice(getChildNamespace(), devDriver, devDNI, null, devProps)
 
             } catch (Exception ex) {
@@ -478,7 +481,7 @@ def createNewSelectedGroupDevices() {
             try {
                 logDebug("Creating new device for Hue group ${it} (${g.name})")
                 def devDNI = "CCH/${state.bridgeID}/Group/${it}"
-                def devProps = [name: g.name]
+                def devProps = [name: (settings["boolAppendGroup"] ? g.name + " (Hue Group)" : g.name)]
                 addChildDevice(getChildNamespace(), driverName, devDNI, null, devProps)
 
             } catch (Exception ex) {
