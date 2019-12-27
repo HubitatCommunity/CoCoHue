@@ -14,11 +14,12 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2019-12-04
+ *  Last modified: 2019-12-27
  * 
  *  Changelog:
  * 
  *  v1.5b - Initial public release
+ *  v1.7  - Added configure() per Capability requirement
  *
  */ 
 
@@ -122,7 +123,10 @@ def refresh() {
     log.warn "Refresh CoCoHue Bridge device instead of individual device to update (all) bulbs/groups"
 }
 
-def configure() {}
+def configure() {
+    // Do I need to do anything here?
+    log.warn "configure()"
+}
 
 /**
  * Generic callback for async Bridge calls when we don't care about

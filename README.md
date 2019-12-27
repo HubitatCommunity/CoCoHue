@@ -7,8 +7,8 @@ This is a Hue Bridge integration designed to replace (or supplement) Hubitat's b
 integration. It provides several advantages, including:
 1. Access to Hue bulb "effects" (color loop, select/alert, etc.)
 2. Improved group support ("Change Level" capability--`startLevelChagne` and stopLevelChange` commands implemented)
-3. Coming soon: scene support!
-4. It's open source! Customize the code to suit your requirements.
+3. Scene support: create switch/button devices for Hue Bridge scenes
+4. It's open source! Customize the code to suit your requirements if so desired
 
 For discussion and more information, visit the Hubitat Community forum thread (link coming soon).
 
@@ -21,10 +21,11 @@ For discussion and more information, visit the Hubitat Community forum thread (l
 
 3. Install all necessary drivers from the "drivers" folder in this repository into the "Drivers Code" section of Hubitat. (There aren't very many, so I'd recommend just installing them all, but technically all you need is the Bridge driver plus the driver for any device types you plan to use.)
     * Install the Bridge driver code: https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-bridge-driver.groovy
-    * Install the bulb, group, and scene drivers:
+    * Install the bulb, group, scene, and plug drivers:
     https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-rgbw-bulb-driver.groovy,
     https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-group-driver.groovy,
-    https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-scene-driver.groovy
+    https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-scene-driver.groovy,
+    https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-plug-driver.groovy
     (more coming soon)
 
 4. Install an instance of app: go to **Apps > Add User App**, choose **CoCoHue**, and follow the prompts. At the moment, your
@@ -32,8 +33,10 @@ For discussion and more information, visit the Hubitat Community forum thread (l
 
 ## Feature Documentation
 CoCoHue is designed to be a drop-in replacement for Hubitat's existing Hue integration. If any devices behave differently, this
-may be considered a bug. Please report any such behavior in the Community forum. This integration extends built-in functionality,
-and notes on these features are below:
+may be considered a bug (except for differences noted below). Please report any such behavior in the Community forum, and feel free
+to ask any questions there as well.
+
+This integration is intended to replace the built-in Hue Bridge Integration app, and adds the following features:
 
 1. Prestaging: this integration adds color and level prestaging options to mimic those found in many other native drivers.
 This means that if a `setLevel` (for level prestaging) or a `setColorTemperature`, `setColor`, `setHue`, or
@@ -53,10 +56,12 @@ values) is in progress.
 3. "Select" and "LSelect" alerts: these are basically a one-time flash and a 15-time flash. These are implemented as the
 `flashOnce()` command and the pseudo-standard `flash()` command, respectively.
 
-4. Groups: besides "Change Level" (implemnted here), most group changes will propagage to individual bulbs (like the Hubitat
-stock integration). However, if you use both bulb and group devices, it is recommended to keep polling configured just
-in case.
+4. Groups: besides "Change Level" (implemnted here), most group changes will propagage to individual bulbs. This is consistent with
+Hubitat's stock behavior. CoCoHue adds the reverse, updating group states when individual bulbs are updated. In both cases, unlike
+Hubitat's stock integration, CoCoHue considers a group when any (not all) members are on. This is consistent with Hue app behavior and
+makes prestaging options make more sense when using both. It also means both bulbs and groups should get updated without polling
+when either is mannipulated, though it is recommended to configure some polling interval regardless.
 
 5. Scenes: implemented as button and switch devices. To activate, do a `push(1)` or an `on()` command (the `off()` command
-has no effect but can be used if desired without harm). If you use scenes, it is recommended to keep polling enabled (a
-good idea regardless, though if bulb devices are manipulated only through Hubitat it may not be necessary). 
+has no effect but can be used if desired without harm). If you use scenes, it is recommended to keep polling enabled (actvating a scene
+will not update associated Hubitat group or bulb devices without polling).

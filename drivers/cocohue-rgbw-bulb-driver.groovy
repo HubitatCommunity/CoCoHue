@@ -14,7 +14,7 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2019-12-03
+ *  Last modified: 2019-12-27
  * 
  *  Changelog:
  * 
@@ -22,6 +22,8 @@
  *  v1.1 - Added flash commands
  *  v1.5 - Added additional custom commands and more consistency with effect behavior
  *  v1.6 - Eliminated duplicate color/CT events on refresh
+ *  v1.6b - Changed bri_inc to match Hubitat behavior
+ *  v1.7 - Bulb switch/level states now propgate to groups w/o polling (TODO: add option to disable both?)
  */ 
 
 import groovy.json.JsonSlurper
@@ -127,7 +129,7 @@ def off() {
 
 def startLevelChange(direction) {
     logDebug("Running startLevelChange($direction)...")
-    def cmd = ["bri": (direction == "up" ? 254 : 1), "transitiontime": 40]
+    def cmd = ["bri_inc": (direction == "up" ? 254 : -254), "transitiontime": 30]
     sendBridgeCommand(cmd, false) 
 }
 
@@ -495,6 +497,9 @@ def sendBridgeCommand(Map customMap = null, boolean createHubEvents=true) {
         body: cmd
         ]
     asynchttpPut("parseBridgeResponse", params)
+    if (cmd.containsKey("on") || cmd.containsKey("bri")) {
+        parent.updateGroupStatesFromBulb(cmd, getHueDeviceNumber()) 
+    }
     logDebug("-- Command sent to Bridge!" --)
 }
 
@@ -513,6 +518,11 @@ def doSendEvent(eventName, eventValue, eventUnit) {
 
 def refresh() {
     log.warn "Refresh CoCoHue Bridge device instead of individual device to update (all) bulbs/groups"
+}
+
+def configure() {
+    // Do I need to do anything here?
+    log.warn "configure()"
 }
 
 // Hubiat-provided color/name mappings

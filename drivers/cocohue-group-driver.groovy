@@ -14,7 +14,7 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2019-12-03
+ *  Last modified: 2019-12-27
  * 
  *  Changelog:
  * 
@@ -22,6 +22,8 @@
  *  v1.1 - Added parity with bulb features (effects, etc.)
  *  v1.5 - Group switch/level/etc. states now propagated to member bulbs w/o polling
  *  v1.5b - Eliminated duplicate color/CT events on refresh
+ *  v1.6b - Changed bri_inc to match Hubitat behavior
+ *  v1.7 - Bulb switch/level states now propgate to groups w/o polling (TODO: add option to disable both?)
  *
  */ 
 
@@ -128,12 +130,7 @@ def off() {
 
 def startLevelChange(direction) {
     logDebug("Running startLevelChange($direction)...")
-    def transitionTime = 40
-    if ((direction == "up" && device.currentValue("level") > 70) ||
-        (direction == "down" && device.currentValue("level") < 30)) {
-        transitionTime = 30
-    }
-    def cmd = ["bri": (direction == "up" ? 254 : 1), "transitiontime": transitionTime]
+    def cmd = ["bri_inc": (direction == "up" ? 254 : -254), "transitiontime": 30]
     sendBridgeCommand(cmd, false) 
 }
 
@@ -504,7 +501,7 @@ def sendBridgeCommand(Map customMap = null, boolean createHubEvents=true) {
         ]
     asynchttpPut("parseBridgeResponse", params)
     if (cmd.containsKey("on") || cmd.containsKey("bri")) {
-        parent.updateGroupMemberBulbStates(cmd, state.memberBulbs) 
+        parent.updateMemberBulbStatesFromGroup(cmd, state.memberBulbs) 
     }
     logDebug("---- Command sent to Bridge! ----")
 }
@@ -524,6 +521,11 @@ def doSendEvent(eventName, eventValue, eventUnit) {
 
 def refresh() {
     log.warn "Refresh CoCoHue Bridge device instead of individual device to update (all) bulbs/groups"
+}
+
+def configure() {
+    // Do I need to do anything here?
+    log.warn "configure()"
 }
 
 // Hubiat-provided color/name mappings
@@ -652,7 +654,6 @@ def setMemberBulbIDs(List ids) {
 def getMemberBulbIDs() {
     return state.memberBulbs
 }
-
 
 def logDebug(str) {
     if (settings.enableDebug) log.debug(str)

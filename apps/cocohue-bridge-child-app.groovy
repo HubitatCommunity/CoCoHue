@@ -20,16 +20,18 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2019-12-01
+ *  Last modified: 2019-12-27
  * 
  *  Changelog:
  * 
  *  v1.0 - Initial Public Release
  *  v1.1 - Added more polling intervals
  *  v1.5 - Added scene integration
+ *  v1.6 - Added options for bulb and group deivce naming
+ *  v1.7 - Addition of new child device types, updating groups from member bulbs
  */ 
 
-definition(
+definition (
     name: "CoCoHue (Bridge Instance Child App)",
     namespace: "RMoRobert",
     author: "Robert Morris",
@@ -261,6 +263,7 @@ def pageSelectLights() {
             section("Manage Lights") {
                 input(name: "newBulbs", type: "enum", title: "Select Hue lights to add:",
                       multiple: true, options: arrNewBulbs)
+                input(name: "boolAppendBulb", type: "bool", title: "Append \"(Hue Light)\" to Hubitat device name")
             }
             section("Previously added lights") {
                 if (state.addedBulbs) {
@@ -325,6 +328,7 @@ def pageSelectGroups() {
             section("Manage Groups") {
                 input(name: "newGroups", type: "enum", title: "Select Hue groups to add:",
                       multiple: true, options: arrNewGroups)
+                input(name: "boolAppendGroup", type: "bool", title: "Append \"(Hue Group)\" to Hubitat device name")
             }
             section("Previously added groups") {
                 if (state.addedGroups) {
@@ -378,23 +382,22 @@ def pageSelectScenes() {
                             if (k && k == sc.value.group) {
                                 def v = g.value
                                 // "Group Name - Scene Name" naming convention:
-                                if (v) 
-                                sceneName = "$v - $sceneName"
-                                state.sceneFullNames.put(sc.key, sceneName)
+                                if (v) sceneName = "$v - $sceneName"
+                                }
                             }
                         }
+                        if (sc.value?.group || settings["showAllScenes"]) {
+                            state.sceneFullNames.put(sc.key, sceneName)
+                            newScene << [(sc.key): (sceneName)]                        
+                            arrNewScenes << newScene
+                        }
                     }
-                    newScene << [(sc.key): (sceneName)]
-                    arrNewScenes << newScene
                 }
-            }
             arrNewScenes = arrNewScenes.sort {a, b ->
                 // Sort by group name (default would be Hue ID)
                 a.entrySet().iterator().next()?.value <=> b.entrySet().iterator().next()?.value
             }
-            log.warn state.addedScenes
             state.addedScenes = state.addedScenes.sort { it.value }
-            log.warn state.addedScenes
         }
 
         if (!sceneCache) {            
@@ -408,6 +411,7 @@ def pageSelectScenes() {
             section("Manage Scenes") {
                 input(name: "newScenes", type: "enum", title: "Select Hue scenes to add:",
                       multiple: true, options: arrNewScenes)
+                input(name: "showAllScenes", type: "bool", title: "Include scenes not associated with rooms/zones")
             }
             section("Previously added scenes") {
                 if (state.addedScenes) {
@@ -420,9 +424,9 @@ def pageSelectScenes() {
                 }
             }
             section("Rediscover Scenes") {
-                paragraph("If you added new scenes to the Hue Bridge and do not see them above, or if room/zone names are " +
-                          "missing from scenes (if assigned to one), click/tap the button " +
-                          "below to retrieve new information from the Bridge.")
+                paragraph("If you added new scenes to the Hue Bridge and do not see them above, if room/zone names are " +
+                          "missing from scenes (if assigned to one), or if you changed the \"Include scenes...\" setting above, " +
+                          "click/tap the button below to retrieve new information from the Bridge.")
                 input(name: "btnSceneRefresh", type: "button", title: "Refresh Scene List", submitOnChange: true)
             }
         }
@@ -438,6 +442,8 @@ def createNewSelectedBulbDevices() {
                      "color light": "CoCoHue RGBW Bulb",            
                      "color temperature light": "CoCoHue RGBW Bulb",
                      "dimmable light": "CoCoHue RGBW Bulb",
+                     "on/off light": "CoCoHue On/Off Plug/Light",
+                     "on/off plug-in unit": "CoCoHue On/Off Plug/Light",
                      "DEFAULT": "CoCoHue RGBW Bulb"]
     def bridge = getChildDevice("CCH/${state.bridgeID}")
     if (!bridge) log.error("Unable to find bridge device")
@@ -449,7 +455,7 @@ def createNewSelectedBulbDevices() {
                 logDebug("Creating new device for Hue light ${it} (${b.name})")
                 def devDriver = driverMap[b.type.toLowerCase()] ?: driverMap["DEFAULT"]
                 def devDNI = "CCH/${state.bridgeID}/Light/${it}"
-                def devProps = [name: b.name]
+                def devProps = [name: (settings["boolAppendBulb"] ? b.name + " (Hue Bulb)" : b.name)]
                 addChildDevice(getChildNamespace(), devDriver, devDNI, null, devProps)
 
             } catch (Exception ex) {
@@ -478,7 +484,7 @@ def createNewSelectedGroupDevices() {
             try {
                 logDebug("Creating new device for Hue group ${it} (${g.name})")
                 def devDNI = "CCH/${state.bridgeID}/Group/${it}"
-                def devProps = [name: g.name]
+                def devProps = [name: (settings["boolAppendGroup"] ? g.name + " (Hue Group)" : g.name)]
                 addChildDevice(getChildNamespace(), driverName, devDNI, null, devProps)
 
             } catch (Exception ex) {
@@ -637,15 +643,64 @@ private refreshBridge() {
  *  Intended to be called by group child device when state is manipulated in a way that would affect
  *  all member bulbs. Updates member bulb states (so doesn't need to wait for next poll to update)
  *  @param states Map of states in Hue Bridge format (e.g., ["on": true])
- *  @param memberIDs Hue IDs of member bulbs to update
+ *  @param ids Hue IDs of member bulbs to update
  */
- def updateGroupMemberBulbStates(Map states, List ids) {
+ def updateMemberBulbStatesFromGroup(Map states, List ids) {
+    logDebug("Updating member bulb $ids states after group device change...")
     ids?.each {
         def device = getChildDevice("CCH/${state.bridgeID}/Light/${it}")
-            if (device) {
-                device.createEventsFromMap(states)
-            }
+        device?.createEventsFromMap(states, false)
     }
+ }
+
+ /**
+ *  Intended to be called by bulb child device when state is manipulated in a way that would affect
+ *  group and user has enabled this option. Updates group device states if this bulb ID is found as a
+ *  member of that group (so doesn't need to wait for next poll to update)
+ *  @param states Map of states in Hue Bridge format (e.g., ["on": true])
+ *  @param id Hue bulb ID to search all groups for (will update group if bulb found in group)
+ */
+ def updateGroupStatesFromBulb(Map states, id) {
+    logDebug("Searching for group devices containing bulb $id to update group state after bulb state change...")
+    //TODO: There is a better, Groovier way to do this search...
+    def matchingGroups = []
+    getChildDevices()?.each {
+        if (it.getDeviceNetworkId()?.startsWith("CCH/${state.bridgeID}/Group/")) {
+            if (it.getMemberBulbIDs()?.contains(id)) {
+                logDebug("Bulb $id found in group. Updating states.")
+                matchingGroups.add(it)
+            }
+        }
+    }
+    matchingGroups.each {
+        // Hue app reports "on" if any members on but takes last color/level/etc. from most recent
+        // change, so emulate that behavior here
+        def onState = getIsAnyGroupMemberBulbOn(it)
+        it.createEventsFromMap(states << ["on": onState], false)
+    }
+ }
+
+ /**
+ * Finds Hubitat devices for member bulbs of group and returns true if any (that are found) are on; returns false
+ * if all off or no member bulb devices found
+ * @param Instance of CoCoHue Group device on which to check member bulb states
+ */
+def getIsAnyGroupMemberBulbOn(groupDevice) {
+    logDebug ("Determining whether any group member bulbs on for group $groupID")
+    def retVal = false
+    def memberDevices = []
+    if (groupDevice) {
+        groupDevice.getMemberBulbIDs().each {
+            if (!retVal) { // no point in continuing to check if already found one on
+                def memberLight = getChildDevice("CCH/${state.bridgeID}/Light/${it}")
+                if (memberLight?.currentValue("switch") == "on") retVal = true
+            }
+        }
+    } else {
+        logDebug "No group device found for group ID $groupID"
+    }
+    logDebug("Determined if any group member bulb on: $retVal")
+    return retVal
  }
 
 def appButtonHandler(btn) {
