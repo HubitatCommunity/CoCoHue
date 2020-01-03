@@ -1,7 +1,7 @@
 /*
  * =============================  CoCoHue On/Off Plug/Light (Driver) ===============================
  *
- *  Copyright 2019 Robert Morris
+ *  Copyright 2019-2020 Robert Morris
  * 
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
@@ -14,13 +14,15 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2019-12-27
+ *  Last modified: 2020-01-02
  * 
  *  Changelog:
  * 
  *  v1.7 Initial Release
- */ 
-
+ *  v1.8 - Added ability to disable plug->group state propagation;
+ *         Removed ["alert:" "none"] from on() command, now possible explicitly with flashOff()   
+ */
+ 
 metadata {
     definition (name: "CoCoHue On/Off Plug", namespace: "RMoRobert", author: "Robert Morris", importUrl: "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-plug-driver.groovy") {
         capability "Actuator"
@@ -31,12 +33,15 @@ metadata {
         
         // Not supported on (most?) plugs; can uncomment if you are using for lights that support this:
         //command "flash" 
-        //command "flashOnce"  
+        //command "flashOnce" 
+        //command "flashOff"  
+
     }
        
    preferences {
         input(name: "enableDebug", type: "bool", title: "Enable debug logging", defaultValue: true)
         input(name: "enableDesc", type: "bool", title: "Enable descriptionText logging", defaultValue: true)
+        input(name: "updateGroups", type: "bool", description: "", title: "Update state of groups immediately when plug state changes", defaultValue: false)
     }
 }
 
@@ -89,7 +94,7 @@ def getHueDeviceNumber() {
 
 def on() {    
     logDebug("Turning on...")
-    addToNextBridgeCommand(["on": true, "alert": "none"], true)
+    addToNextBridgeCommand(["on": true], true)
     sendBridgeCommand()
 }
 
@@ -100,14 +105,20 @@ def off() {
 }
 
 def flash() {
-    logDebug("Starting flash (note: not supported on plugs; bulbs will stop automatically after 15 cycles)...")
+    logDesc("${device.displayName} started 15-cycle flash")
     def cmd = ["alert": "lselect"]
     sendBridgeCommand(cmd, false) 
 }
 
 def flashOnce() {
-    logDebug("Running flashOnce... (note: not supported on plugs)")
+    logDesc("${device.displayName} started 1-cycle flash")
     def cmd = ["alert": "select"]
+    sendBridgeCommand(cmd, false) 
+}
+
+def flashOff() {
+    logDesc("${device.displayName} was sent command to stop flash")
+    def cmd = ["alert": "none"]
     sendBridgeCommand(cmd, false) 
 }
 
@@ -195,8 +206,8 @@ def sendBridgeCommand(Map customMap = null, boolean createHubEvents=true) {
         body: cmd
         ]
     asynchttpPut("parseBridgeResponse", params)
-    if (cmd.containsKey("on") || cmd.containsKey("bri")) {
-        parent.updateGroupStatesFromBulb(cmd, getHueDeviceNumber()) 
+    if (cmd.containsKey("on") && settings["updateGroups"]) {
+        parent.updateGroupStatesFromBulb(cmd, getHueDeviceNumber())
     }
     logDebug("-- Command sent to Bridge!" --)
 }

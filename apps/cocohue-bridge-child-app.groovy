@@ -8,7 +8,7 @@
  *  TO INSTALL:
  *  See documentation on Hubitat Community forum.
  *
- *  Copyright 2019 Robert Morris
+ *  Copyright 2019-2020 Robert Morris
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
  *
@@ -20,7 +20,7 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2019-12-27
+ *  Last modified: 2020-01-02
  * 
  *  Changelog:
  * 
@@ -496,6 +496,7 @@ def createNewSelectedGroupDevices() {
     }    
     bridge.clearGroupsCache()
     bridge.getAllGroups()
+    bridge.refresh()
     app.removeSetting("newGroups")
 }
 
