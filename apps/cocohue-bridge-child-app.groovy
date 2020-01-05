@@ -8,7 +8,7 @@
  *  TO INSTALL:
  *  See documentation on Hubitat Community forum.
  *
- *  Copyright 2019 Robert Morris
+ *  Copyright 2019-2020 Robert Morris
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
  *
@@ -20,7 +20,7 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2019-12-27
+ *  Last modified: 2020-01-04
  * 
  *  Changelog:
  * 
@@ -442,8 +442,8 @@ def createNewSelectedBulbDevices() {
                      "color light": "CoCoHue RGBW Bulb",            
                      "color temperature light": "CoCoHue RGBW Bulb",
                      "dimmable light": "CoCoHue RGBW Bulb",
-                     "on/off light": "CoCoHue On/Off Plug/Light",
-                     "on/off plug-in unit": "CoCoHue On/Off Plug/Light",
+                     "on/off light": "CoCoHue On/Off Plug",
+                     "on/off plug-in unit": "CoCoHue On/Off Plug",
                      "DEFAULT": "CoCoHue RGBW Bulb"]
     def bridge = getChildDevice("CCH/${state.bridgeID}")
     if (!bridge) log.error("Unable to find bridge device")
@@ -496,6 +496,7 @@ def createNewSelectedGroupDevices() {
     }    
     bridge.clearGroupsCache()
     bridge.getAllGroups()
+    bridge.refresh()
     app.removeSetting("newGroups")
 }
 
