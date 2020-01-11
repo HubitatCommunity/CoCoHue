@@ -14,7 +14,7 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2020-01-07
+ *  Last modified: 2020-01-11
  * 
  *  Changelog:
  * 
@@ -27,8 +27,9 @@
  *  v1.7b - Modified startLevelChange behavior to avoid possible problems with third-party devices
  *  v1.8 - Changed effect state to custom attribute instead of colorMode
  *         Added ability to disable group->bulb state propagation;
- *         Removed ["alert:" "none"] from on() command, now possible explicitly with flashOff()
+ *         Removed ["alert:" "none"] from on() command, now possible explicitly with flashOff() 
  *  v1.8b - Skip spurious color name event if bulb not in correct mode 
+ *  v1.8c - Added back color/CT events for manual commands not from bridge without polling
  *
  */ 
 
@@ -380,7 +381,7 @@ def createEventsFromMap(Map bridgeCmd = state.nextCmd, boolean isFromBridge = fa
                     if (!isOn && isFromBridge && colorStaging && (state.nextCmd?.get("hue") || state.nextCmd?.get("sat") || state.nextCmd?.get("ct"))) {
                         logDebug("Prestaging enabled, light off, and prestaged command found; not sending ${eventName} event")
                         break
-                    } else if (bridgeCmd["colormode"] != "ct") {
+                    } else if (isFromBridge && bridgeCmd["colormode"] != "ct") {
                         logDebug("Skipping colorTemperature event creation because light not in ct mode")
                         break
                     }
@@ -404,7 +405,7 @@ def createEventsFromMap(Map bridgeCmd = state.nextCmd, boolean isFromBridge = fa
                     }
                     doSendEvent(eventName, eventValue, eventUnit)
                 }
-                if (bridgeCmd["colormode"] == "ct") {
+                if (isFromBridge && bridgeCmd["colormode"] == "ct") {
                         logDebug("Skipping colorMode and color name event creation because light in ct mode")
                         break
                 }
