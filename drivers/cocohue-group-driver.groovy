@@ -14,7 +14,7 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2020-01-11
+ *  Last modified: 2020-01-13
  * 
  *  Changelog:
  * 
@@ -30,6 +30,7 @@
  *         Removed ["alert:" "none"] from on() command, now possible explicitly with flashOff() 
  *  v1.8b - Skip spurious color name event if bulb not in correct mode 
  *  v1.8c - Added back color/CT events for manual commands not from bridge without polling
+ *  v1.8d - added minDim option and added that option to setLevel and startLevelChange
  *
  */ 
 
@@ -62,6 +63,7 @@ metadata {
        
    preferences {
         input(name: "transitionTime", type: "enum", description: "", title: "Transition time", options: [[0:"ASAP"],[400:"400ms"],[500:"500ms"],[1000:"1s"],[1500:"1.5s"],[2000:"2s"],[5000:"5s"]], defaultValue: 400)
+        input(name: "minDim", type: "number", title: "Minimum Dimmer Level", defaultValue: 0)
         input(name: "hiRezHue", type: "bool", title: "Enable hue in degrees (0-360 instead of 0-100)", defaultValue: false)
         input(name: "colorStaging", type: "bool", description: "", title: "Enable color pseudo-prestaging", defaultValue: false)
         input(name: "levelStaging", type: "bool", description: "", title: "Enable level pseudo-prestaging", defaultValue: false)
@@ -138,7 +140,7 @@ def off() {
 
 def startLevelChange(direction) {
     logDebug("Running startLevelChange($direction)...")
-    def cmd = ["bri": (direction == "up" ? 254 : 1), "transitiontime": 30]
+    def cmd = ["bri": (direction == "up" ? 254 : scaleBriToBridge(minDim)), "transitiontime": 30]
     sendBridgeCommand(cmd, false) 
 }
 
@@ -155,7 +157,7 @@ def setLevel(value) {
 def setLevel(value, rate) {
     logDebug("Setting level to ${value}% over ${rate}s...")
     state.remove("lastLevel")
-    if (value < 0) value = 1
+    if (value < minDim) value = minDim
     else if (value > 100) value = 100
     else if (value == 0) {
         off()
