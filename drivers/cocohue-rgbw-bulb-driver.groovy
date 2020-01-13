@@ -14,7 +14,7 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2020-01-07
+ *  Last modified: 2020-01-11
  * 
  *  Changelog:
  * 
@@ -29,6 +29,7 @@
  *         Added ability to disable bulb->group state propagation;
  *         Removed ["alert:" "none"] from on() command, now possible explicitly with flashOff()
  *  v1.8b - Fix for sprious color name event if bulb in different mode   
+ *  v1.8c - Added back color/CT events for manual commands not from bridge without polling
  *    
  */ 
 
@@ -378,7 +379,7 @@ def createEventsFromMap(Map bridgeCmd = state.nextCmd, boolean isFromBridge = fa
                     if (!isOn && isFromBridge && colorStaging && (state.nextCmd?.get("hue") || state.nextCmd?.get("sat") || state.nextCmd?.get("ct"))) {
                         logDebug("Prestaging enabled, light off, and prestaged command found; not sending ${eventName} event")
                         break
-                    } else if (bridgeCmd["colormode"] != "ct") {
+                    } else if (isFromBridge && bridgeCmd["colormode"] != "ct") {
                         logDebug("Skipping colorTemperature event creation because light not in ct mode")
                         break
                     }
@@ -402,7 +403,7 @@ def createEventsFromMap(Map bridgeCmd = state.nextCmd, boolean isFromBridge = fa
                     }
                     doSendEvent(eventName, eventValue, eventUnit)
                 }
-                if (bridgeCmd["colormode"] == "ct") {
+                if (isFromBridge && bridgeCmd["colormode"] == "ct") {
                         logDebug("Skipping colorMode and color name event creation because light in ct mode")
                         break
                 }
