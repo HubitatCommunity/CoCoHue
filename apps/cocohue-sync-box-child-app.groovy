@@ -117,7 +117,7 @@ def pageAddSyncBox() {
                 input(name: "boolForceCreateSyncBox", type: "bool", title: "Force recreation of Sync Box child device)", submitOnChange: true)
             }
             if (settings["syncBoxIP"] && !state.syncBoxLinked || settings["boolForceCreateSyncBox"]) {
-                paragraph("<strong>Press the button on your Hue Sycn Box for 2 seconds,</strong> then click/tap the \"Next\" button to continue.")
+                paragraph("<strong>Press the button on your Hue Sycn Box for 2 seconds and make sure your TV is on,</strong> then click/tap the \"Next\" button to continue.")
             }
         }
     }
@@ -139,7 +139,7 @@ def pageLinkSyncBox() {
                 paragraph("Waiting for Sync Box to authorize. This page will automatically refresh.")
                 if (state.authTryCount > 5 && state.authTryCount < authMaxTries) {
                     def strParagraph = "Still waiting for authorization. Please make sure you pressed " +
-                        "the button on the Hue Sync Box for 2 seconds."
+                        "the button on the Hue Sync Box for 2 seconds and make sure your TV is on."
                     if (state.authTryCount > 10) {
                         strParagraph + "Also, verify that your Sync Box IP address is correct: ${settings["syncBoxIP"]}"
                     }
