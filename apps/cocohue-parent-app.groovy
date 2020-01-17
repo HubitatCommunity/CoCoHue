@@ -26,6 +26,7 @@
  * 
  *  v1.0 - Initial Public Release
  *  v1.5 - Minor formatting changes, version ugpraded to match most components
+ *  V1.? - Added Hue Sync Box Child App
  *
  */ 
  
@@ -49,6 +50,7 @@ preferences {
               return
           }
         app(name: "childApps", appName: "CoCoHue (Bridge Instance Child App)", namespace: "RMoRobert", title: "Add new Hue Bridge...", multiple: true)
+        app(name: "childApps", appName: "CoCoHue (Sync Box Instance Child App)", namespace: "RMoRobert", title: "Add new Hue Sync Box...", multiple: true)
         }
     }
 }
