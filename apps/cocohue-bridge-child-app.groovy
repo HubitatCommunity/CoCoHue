@@ -20,7 +20,7 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2020-01-04
+ *  Last modified: 2020-01-22
  * 
  *  Changelog:
  * 
@@ -29,6 +29,7 @@
  *  v1.5 - Added scene integration
  *  v1.6 - Added options for bulb and group deivce naming
  *  v1.7 - Addition of new child device types, updating groups from member bulbs
+ *  v1.9 - Added CT and dimmable bulb types
  */ 
 
 definition (
@@ -440,8 +441,8 @@ def createNewSelectedBulbDevices() {
     // TODO: Change most of these when new drivers made
     def driverMap = ["extended color light": "CoCoHue RGBW Bulb",
                      "color light": "CoCoHue RGBW Bulb",            
-                     "color temperature light": "CoCoHue RGBW Bulb",
-                     "dimmable light": "CoCoHue RGBW Bulb",
+                     "color temperature light": "CoCoHue CT Bulb",
+                     "dimmable light": "CoCoHue Dimmable Bulb",
                      "on/off light": "CoCoHue On/Off Plug",
                      "on/off plug-in unit": "CoCoHue On/Off Plug",
                      "DEFAULT": "CoCoHue RGBW Bulb"]
@@ -602,7 +603,7 @@ private parseBridgeInfoResponse(hubitat.device.HubResponse resp) {
             state.bridgeID = serial.reverse().take(6).reverse().toUpperCase() // last 6 of MAC
             def bridgeDevice
             try {
-                bridgeDevice = addChildDevice("RMoRobert", "CoCoHue Bridge", "CCH/${state.bridgeID}", null,
+                bridgeDevice = addChildDevice(getChildNamespace(), "CoCoHue Bridge", "CCH/${state.bridgeID}", null,
                                               [label: "CoCoHue Bridge (${state.bridgeID})", name: "CoCoHue Bridge"])
                 state.bridgeLinked = true
             } catch (Exception e) {

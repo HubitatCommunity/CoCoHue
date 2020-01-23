@@ -14,7 +14,7 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2020-01-11
+ *  Last modified: 2020-01-22
  * 
  *  Changelog:
  * 
@@ -30,6 +30,7 @@
  *         Removed ["alert:" "none"] from on() command, now possible explicitly with flashOff() 
  *  v1.8b - Skip spurious color name event if bulb not in correct mode 
  *  v1.8c - Added back color/CT events for manual commands not from bridge without polling
+ *  v1.9 - Parse xy as ct (previously did rgb but without parsing actual color)
  *
  */ 
 
@@ -55,17 +56,19 @@ metadata {
         command "flash"
         command "flashOnce"
         command "flashOff"
-                
+        
         attribute "colorName", "string"
         attribute "effect", "string"
     }
        
    preferences {
-        input(name: "transitionTime", type: "enum", description: "", title: "Transition time", options: [[0:"ASAP"],[400:"400ms"],[500:"500ms"],[1000:"1s"],[1500:"1.5s"],[2000:"2s"],[5000:"5s"]], defaultValue: 400)
+        input(name: "transitionTime", type: "enum", description: "", title: "Transition time", options:
+            [[0:"ASAP"],[400:"400ms"],[500:"500ms"],[1000:"1s"],[1500:"1.5s"],[2000:"2s"],[5000:"5s"]], defaultValue: 400)
         input(name: "hiRezHue", type: "bool", title: "Enable hue in degrees (0-360 instead of 0-100)", defaultValue: false)
         input(name: "colorStaging", type: "bool", description: "", title: "Enable color pseudo-prestaging", defaultValue: false)
         input(name: "levelStaging", type: "bool", description: "", title: "Enable level pseudo-prestaging", defaultValue: false)
-        input(name: "updateBulbs", type: "bool", description: "", title: "Update member bulb states immediately when group state changes", defaultValue: true)
+        input(name: "updateBulbs", type: "bool", description: "", title: "Update member bulb states immediately when group state changes",
+            defaultValue: true)
         input(name: "enableDebug", type: "bool", title: "Enable debug logging", defaultValue: true)
         input(name: "enableDesc", type: "bool", title: "Enable descriptionText logging", defaultValue: true)
     }
@@ -324,21 +327,26 @@ def addToNextBridgeCommand(Map cmdToAdd, boolean clearFirst=false) {
  * a sendEvent for each relevant attribute; intended to be called either when commands are sent
  * to Bridge or if pre-staged attribute is changed and "real" command not yet able to be sent, or
  * to parse/update light states based on data received from Bridge
- * @param bridgeCmd Map of light states that are or would be sent to bridge OR state as received from
+ * @param bridgeMap Map of light states that are or would be sent to bridge OR state as received from
  *  Bridge; defaults to the  state attribute created by addToNextBridgeCommand if not provided
  * @param isFromBridge Set to true if this is data read from Hue Bridge rather than intended to be sent
  *  to Bridge; if true, will ignore differences for prestaged attributes if switch state is off
  */
-def createEventsFromMap(Map bridgeCmd = state.nextCmd, boolean isFromBridge = false) {
-    if (!bridgeCmd) {
+def createEventsFromMap(Map bridgeCommandMap = state.nextCmd, boolean isFromBridge = false) {
+    if (!bridgeCommandMap) {
         logDebug("createEventsFromMap called but map command empty; exiting")
         return
     }
-    logDebug("Preparing to create events from map${isFromBridge ? ' from Bridge' : ''}: ${bridgeCmd}")
+    def bridgeMap = bridgeCommandMap
+    logDebug("Preparing to create events from map${isFromBridge ? ' from Bridge' : ''}: ${bridgeMap}")
     def eventName, eventValue, eventUnit, descriptionText
-    String colorMode
-    boolean isOn
-    bridgeCmd.each {
+    def colorMode = bridgeMap["colormode"]
+    if (isFromBridge && bridgeMap["colormode"] == "xy") {
+        colorMode == "ct"
+        logDebug("In XY mode but parsing as CT")
+    }
+    boolean isOn = bridgeMap["any_on"]
+    bridgeMap.each {
         switch (it.key) {
             case "on":
                 if (isFromBridge) break
@@ -347,7 +355,6 @@ def createEventsFromMap(Map bridgeCmd = state.nextCmd, boolean isFromBridge = fa
                 eventValue = it.value ? "on" : "off"
                 eventUnit = null                
                 if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue, eventUnit)
-                isOn = it.value
                 break
             case "bri":
                 eventName = "level"
@@ -363,7 +370,7 @@ def createEventsFromMap(Map bridgeCmd = state.nextCmd, boolean isFromBridge = fa
                 break
             case "colormode":
                 eventName = "colorMode"
-                eventValue = (it.value == "ct" ? "CT" : "RGB")
+                eventValue = (it.value == "hs" ? "RGB" : "CT")
                 eventUnit = null
                 if (device.currentValue(eventName) != eventValue) {
                     if (!isOn && isFromBridge && colorStaging && (state.nextCmd?.get("hue") || state.nextCmd?.get("sat") || state.nextCmd?.get("ct"))) {
@@ -381,13 +388,13 @@ def createEventsFromMap(Map bridgeCmd = state.nextCmd, boolean isFromBridge = fa
                     if (!isOn && isFromBridge && colorStaging && (state.nextCmd?.get("hue") || state.nextCmd?.get("sat") || state.nextCmd?.get("ct"))) {
                         logDebug("Prestaging enabled, light off, and prestaged command found; not sending ${eventName} event")
                         break
-                    } else if (isFromBridge && bridgeCmd["colormode"] != "ct") {
+                    } else if (isFromBridge && colorMode == "hs") {
                         logDebug("Skipping colorTemperature event creation because light not in ct mode")
                         break
                     }
                     doSendEvent(eventName, eventValue, eventUnit)
                 }
-                if (isFromBridge) break
+                if (isFromBridge && colorMode == "hs") break
                 setGenericTempName(eventValue)
                 eventName = "colorMode"
                 eventValue = "CT"
@@ -405,8 +412,8 @@ def createEventsFromMap(Map bridgeCmd = state.nextCmd, boolean isFromBridge = fa
                     }
                     doSendEvent(eventName, eventValue, eventUnit)
                 }
-                if (isFromBridge && bridgeCmd["colormode"] == "ct") {
-                        logDebug("Skipping colorMode and color name event creation because light in ct mode")
+                if (isFromBridge && colorMode != "hs") {
+                        logDebug("Skipping colorMode and color name event creation because light not in hs mode")
                         break
                 }
                 setGenericName(eventValue)
@@ -432,7 +439,7 @@ def createEventsFromMap(Map bridgeCmd = state.nextCmd, boolean isFromBridge = fa
                 eventValue = "RGB"
                 eventUnit = null
                 if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue, eventUnit)
-               break
+                break
             case "effect":
                 eventName = "effect"
                 eventValue = (it.value == "colorloop" ? "colorloop" : "none")
@@ -474,7 +481,7 @@ def sendBridgeCommand(Map customMap = null, boolean createHubEvents=true) {
         cmd = state.nextCmd
         state.remove("nextCmd")
     }
-
+    
     if (!cmd) {
         log.debug("Commands not sent to Bridge because command map empty")
         return
@@ -548,6 +555,8 @@ def setGenericName(hue){
             break
         case 346..360: colorName = "Red"
             break
+        default: colorName = "undefined" // shouldn't happen, but just in case
+            break            
     }
     if (device.currentValue("colorName") != colorName) doSendEvent("colorName", colorName, null)
 }
