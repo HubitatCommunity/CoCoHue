@@ -216,9 +216,10 @@ def pageManageBridge() {
             input(name: "pollInterval", type: "enum", title: "Poll bridge every...",
                options: [0:"Disabled", 10:"10 seconds", 15:"15 seconds", 20:"20 seconds", 30:"30 seconds", 60:"1 minute (recommended)", 300:"5 minutes", 3600:"1 hour"], defaultValue:60)
             href(name: "hrefAddBridge", title: "Edit Bridge IP or re-authorize",
-                 description: "", page: "pageAddBridge")            
-            label(title: "Name for this Hue Bridge child app (optional)", required: false)
+                 description: "", page: "pageAddBridge")
+            input(name: "showAllScenes", type: "bool", title: "Allow adding scenes not associated with rooms/zones (not recommended; devices will not support \"off\" command)")
             input(name: "enableDebug", type: "bool", title: "Enable debug logging", defaultValue: true)
+            label(title: "Name for this Hue Bridge child app (optional)", required: false)
         }
     }
 }
@@ -412,7 +413,6 @@ def pageSelectScenes() {
             section("Manage Scenes") {
                 input(name: "newScenes", type: "enum", title: "Select Hue scenes to add:",
                       multiple: true, options: arrNewScenes)
-                input(name: "showAllScenes", type: "bool", title: "Include scenes not associated with rooms/zones")
             }
             section("Previously added scenes") {
                 if (state.addedScenes) {
@@ -518,8 +518,7 @@ def createNewSelectedSceneDevices() {
                          " (state.sceneFullNames?.get(it) ?: sc.name)")
                 def devDNI = "CCH/${state.bridgeID}/Scene/${it}"
                 def devProps = [name: (state.sceneFullNames?.get(it) ?: sc.name)]
-                addChildDevice(getChildNamespace(), driverName, devDNI, null, devProps)
-
+                def dev = addChildDevice(getChildNamespace(), driverName, devDNI, null, devProps)
             } catch (Exception ex) {
                 log.error("Unable to create new scene device for $it: $ex")
             }
