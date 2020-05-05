@@ -1,0 +1,70 @@
+{
+	"packageName": "CoCoHue (Hue Bridge Integration)",
+	"minimumHEVersion": "2.1.0",
+	"author": "Robert Morris",
+	"dateReleased": "2020-05-05",
+	"licenseFile": "",
+	"releaseNotes": "NOTE: Users upgrading from v1.x should follow instructions forum or on GitHub (parent app deprecatred but still available).\n\nNew in 2.0: Bridge discovery; 'startLevelChange' rate option for dimmable devices; improved error handling and Bridge online/offline status reporting",
+	"apps" : [
+		{
+			"id": "568bab8e-5c69-4800-a038-481026904c05",
+			"name": "CoCoHue - Hue Bridge Integration",
+			"namespace": "RMoRobert",
+			"location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/apps/cocohue-app.groovy",
+			"required": true,
+			"version": "2.0.0-preview.1",
+			"oauth": false
+		}
+	],
+	"drivers" : [
+		{
+			"id": "bcf030d1-de50-4cd8-83ce-008cb64cef92",
+			"name": "CoCoHue Bridge",
+			"namespace": "RMoRobert",
+			"location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-bridge-driver.groovy",
+			"required": true
+		},
+		{
+			"id": "9833a9fd-2742-4ebf-a2cc-519275e4bba3",
+			"name": "CoCoHue CT Bulb",
+			"namespace": "RMoRobert",
+			"location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-ct-bulb-driver.groovy",
+			"required": true
+		},
+		{
+			"id": "a7ad13cb-8ac5-4e57-a9e6-e2fb2598f014",
+			"name": "CoCoHue Dimmable Bulb",
+			"namespace": "RMoRobert",
+			"location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-dimmable-bulb-driver.groovy",
+			"required": true
+		},
+		{
+			"id": "47b893dd-db0c-41b4-a5db-eb3bb892082c",
+			"name": "CoCoHue Group",
+			"namespace": "RMoRobert",
+			"location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-group-driver.groovy",
+			"required": true
+		},
+		{
+			"id": "4c7d5058-4995-436f-add8-c6d4f949f439",
+			"name": "CoCoHue On/Off Plug",
+			"namespace": "RMoRobert",
+			"location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-plug-driver.groovy",
+			"required": false
+		},
+		{
+			"id": "bf27ffe5-244d-4756-9ab9-30d8f89b47bd",
+			"name": "CoCoHue RGBW Bulb",
+			"namespace": "RMoRobert",
+			"location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-rgbw-bulb-driver.groovy",
+			"required": true
+		},
+		{
+			"id": "19ffbc1b-2261-4f7e-a68f-39e40d1c831f",
+			"name": "CoCoHue Scene",
+			"namespace": "RMoRobert",
+			"location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-scene-driver.groovy",
+			"required": true
+		}
+	]
+}

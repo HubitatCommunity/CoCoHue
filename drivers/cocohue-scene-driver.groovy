@@ -14,14 +14,16 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2019-01-23
+ *  Last modified: 2020-05-04
+ *  Version: 2.0.0-preview.1
  * 
  *  Changelog:
  * 
- *  v1.5b - Initial public release
- *  v1.7  - Added configure() per Capability requirement
- *  v1.9  - Added off() functionality
- *
+ *  v2.0    - Improved HTTP error handling; attribute events now generated only after hearing back from Bridge;
+              Bridge online/offline status improvements; bug fix for off() with light- or group-device-less scenes
+ *  v1.9    - Added off() functionality
+ *  v1.7    - Added configure() per Capability requirement
+ *  v1.5b   - Initial public release
  */ 
 
 metadata {
@@ -86,20 +88,19 @@ def on() {
     logDebug("Turning on scene...")
     def data = parent.getBridgeData()
     def cmd = ["scene": getHueDeviceNumber()]
-    def params = [
+    Map params = [
         uri: data.fullHost,
         path: "/api/${data.username}/groups/0/action",
         contentType: 'application/json',
-        body: cmd
+        body: cmd,
+        timeout: 15
         ]
-    asynchttpPut("parseBridgeResponse", params)
+    asynchttpPut("parseSendCommandResponse", params, [attribute: 'switch', value: 'on'])
     logDebug("Command sent to Bridge: $cmd")
-    doSendEvent("switch", "on", null)
 }
 
 def off() {
     logDebug("off()")
-    doSendEvent("switch", "off", null)
     if (state.type == "GroupScene") {
         logDebug("Scene is GroupScene; turning off group $state.group")
         def dniParts = device.deviceNetworkId.split("/")
@@ -108,20 +109,24 @@ def off() {
         if (dev) {
             logDebug("Hubitat device for group ${state.group} found; turning off")
             dev.off()
-        } else {
+            doSendEvent("switch", "off", null) // optimistic here; group device will catch if problem
+        }
+        else {
             logDebug("Device not found; sending command directly to turn off Hue group")
             def data = parent.getBridgeData()
-            def cmd = ["on": "false"]
+            def cmd = ["on": false]
             def params = [
                 uri: data.fullHost,
                 path: "/api/${data.username}/groups/${state.group}/action",
                 contentType: 'application/json',
-                body: cmd
+                body: cmd,
+                timeout: 15
             ]
-            asynchttpPut("parseBridgeResponse", params)
+            asynchttpPut("parseSendCommandResponse", params, [attribute: 'switch', value: 'off'])
             logDebug("Command sent to Bridge: $cmd")
         }
     } else if (state.type == "LightScene") {
+        doSendEvent("switch", "off", null) // optimistic here (would be difficult to determine and aggregate individual light responses and should be rare anyway)
         logDebug("Scene is LightScene; turning off lights $state.lights")
         state.lights.each {
             def dniParts = device.deviceNetworkId.split("/")
@@ -133,14 +138,15 @@ def off() {
             } else {
                 logDebug("Device not found; sending command directly to turn off Hue light")
                 def data = parent.getBridgeData()
-                def cmd = ["on": "false"]
+                def cmd = ["on": false]
                 def params = [
                     uri: data.fullHost,
                     path: "/api/${data.username}/lights/${it}/state",
                     contentType: 'application/json',
-                    body: cmd
+                    body: cmd,
+                    timeout: 15
                 ]
-                asynchttpPut("parseBridgeResponse", params)
+                asynchttpPut("parseSendCommandResponse", params)
                 logDebug("Command sent to Bridge: $cmd")
             }
         }
@@ -150,12 +156,69 @@ def off() {
     }
 }
 
+/** 
+  * Parses response from Bridge (or not) after sendBridgeCommand. Updates device state if
+  * appears to have been successful.
+  * @param resp Async HTTP response object
+  * @param data Map with keys 'attribute' and 'value' containing event data to send if successful (e.g., [attribute: 'switch', value: 'off'])
+  */
+void parseSendCommandResponse(resp, data) {
+    logDebug("Response from Bridge: ${resp.status}; data from app = $data")
+    if (checkIfValidResponse(resp) && data?.attribute != null && data?.value != null) {
+        logDebug("  Bridge response valid; running creating events")          
+        doSendEvent(data.attribute, data.value)
+    }
+    else {
+        logDebug("  Not creating events from map because not specified to do or Bridge response invalid")
+    }
+}
+
+/** Performs basic check on data returned from HTTP response to determine if should be
+  * parsed as likely Hue Bridge data or not; returns true (if OK) or logs errors/warnings and
+  * returns false if not
+  * @param resp The async HTTP response object to examine
+  */
+private Boolean checkIfValidResponse(resp) {
+    logDebug("Checking if valid HTTP response/data from Bridge...")
+    Boolean isOK = true
+    if (!(resp?.headers?.'Content-Type')?.contains('json')) {
+        isOK = false
+        if (!(resp?.headers)) log.error "Error: HTTP ${resp.status} when attempting to communicate with Bridge"
+        else log.error "Invalid content-type response from bridge: ${resp.headers.'Content-Type'} (HTTP ${resp.status})"
+        parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery 
+        parent.setBridgeStatus(false)
+    }
+    else if (resp.status < 400 && resp.json) {
+        if (resp.json[0]?.error) {
+            // Bridge (not HTTP) error (bad username, bad command formatting, etc.):
+            isOK = false
+            log.warn "Error from Hue Bridge: ${resp.json[0].error}"
+            // Not setting Bridge to offline when light/scene/group devices end up here because could
+            // be old/bad ID and don't want to consider Bridge offline just for that (but also won't set
+            // to online because wasn't successful attempt)
+        }
+    }
+    else {
+        isOK = false
+        if (resp?.status < 400) {
+            log.warn("HTTP status code ${resp.status} from Bridge")
+        }
+        else if (resp?.status >= 400) {
+            log.error("HTTP status code ${resp.status} from Bridge")
+            parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery 
+        }
+        parent.setBridgeStatus(false)
+    }
+    if (isOK) parent.setBridgeStatus(true)
+    return isOK
+}
+
 def push(btnNum) {
     on()
     doSendEvent("pushed", "1", null)
 }
 
-def doSendEvent(eventName, eventValue, eventUnit) {
+def doSendEvent(eventName, eventValue, eventUnit=null) {
     logDebug("Creating event for $eventName...")
     def descriptionText = "${device.displayName} ${eventName} is ${eventValue}${eventUnit ?: ''}"
     logDesc(descriptionText)
@@ -176,7 +239,7 @@ def refresh() {
         uri: data.fullHost,
         path: "/api/${data.username}/scenes/${getHueDeviceNumber()}",
         contentType: 'application/json',
-        //body: cmds
+        timeout: 15
         ]
     asynchttpGet("parseSceneAttributeResponse", sceneParams)  
 }
@@ -212,14 +275,6 @@ def parseSceneAttributeResponse(resp, data) {
         state.remove("lights")
         state.remove("type")
     }
-}
-
-/**
- * Generic callback for async Bridge calls when we don't care about
- * the response (but can log it if debug enabled)
- */
-def parseBridgeResponse(resp, data) {
-    logDebug("Response from Bridge: $resp.status")
 }
 
 def logDebug(str) {

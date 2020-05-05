@@ -14,13 +14,16 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2020-01-02
+ *  Last modified: 2020-05-04
+ *  Version: 2.0.0-preview.1
  * 
  *  Changelog:
  * 
- *  v1.7 Initial Release
- *  v1.8 - Added ability to disable plug->group state propagation;
- *         Removed ["alert:" "none"] from on() command, now possible explicitly with flashOff()   
+ *  v2.0    - Improved HTTP error handling; attribute events now generated
+ *            only after hearing back from Bridge; Bridge online/offline status improvements
+ *  v1.8    - Added ability to disable plug->group state propagation;
+ *            Removed ["alert:" "none"] from on() command, now possible explicitly with flashOff()
+ *  v1.7    - Initial Release  
  */
  
 metadata {
@@ -203,16 +206,74 @@ def sendBridgeCommand(Map customMap = null, boolean createHubEvents=true) {
         uri: data.fullHost,
         path: "/api/${data.username}/lights/${getHueDeviceNumber()}/state",
         contentType: 'application/json',
-        body: cmd
+        body: cmd,
+        timeout: 15
         ]
-    asynchttpPut("parseBridgeResponse", params)
-    if (cmd.containsKey("on") && settings["updateGroups"]) {
-        parent.updateGroupStatesFromBulb(cmd, getHueDeviceNumber())
-    }
+    asynchttpPut("parseSendCommandResponse", params, createHubEvents ? cmd : null)
     logDebug("-- Command sent to Bridge!" --)
 }
 
-def doSendEvent(eventName, eventValue, eventUnit) {
+/** 
+  * Parses response from Bridge (or not) after sendBridgeCommand. Updates device state if
+  * appears to have been successful.
+  * @param resp Async HTTP response object
+  * @param data Map of commands sent to Bridge if specified to create events from map
+  */
+void parseSendCommandResponse(resp, data) {
+    logDebug("Response from Bridge: ${resp.status}")
+    if (checkIfValidResponse(resp) && data) {
+        logDebug("  Bridge response valid; creating events from data map")          
+        createEventsFromMap(data)
+        if ((data.containsKey("on") || data.containsKey("bri")) && settings["updateGroups"]) {
+            parent.updateGroupStatesFromBulb(data, getHueDeviceNumber())
+        }
+    }
+    else {
+        logDebug("  Not creating events from map because not specified to do or Bridge response invalid")
+    }
+}
+
+/** Performs basic check on data returned from HTTP response to determine if should be
+  * parsed as likely Hue Bridge data or not; returns true (if OK) or logs errors/warnings and
+  * returns false if not
+  * @param resp The async HTTP response object to examine
+  */
+private Boolean checkIfValidResponse(resp) {
+    logDebug("Checking if valid HTTP response/data from Bridge...")
+    Boolean isOK = true
+    if (!(resp?.headers?.'Content-Type')?.contains('json')) {
+        isOK = false
+        if (!(resp?.headers)) log.error "Error: HTTP ${resp.status} when attempting to communicate with Bridge"
+        else log.error "Invalid content-type response from bridge: ${resp.headers.'Content-Type'} (HTTP ${resp.status})"
+        parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery 
+        parent.setBridgeStatus(false)
+    }
+    else if (resp.status < 400 && resp.json) {
+        if (resp.json[0]?.error) {
+            // Bridge (not HTTP) error (bad username, bad command formatting, etc.):
+            isOK = false
+            log.warn "Error from Hue Bridge: ${resp.json[0].error}"
+            // Not setting Bridge to offline when light/scene/group devices end up here because could
+            // be old/bad ID and don't want to consider Bridge offline just for that (but also won't set
+            // to online because wasn't successful attempt)
+        }
+    }
+    else {
+        isOK = false
+        if (resp?.status < 400) {
+            log.warn("HTTP status code ${resp.status} from Bridge")
+        }
+        else if (resp?.status >= 400) {
+            log.error("HTTP status code ${resp.status} from Bridge")
+            parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery 
+        }
+        parent.setBridgeStatus(false)
+    }
+    if (isOK) parent.setBridgeStatus(true)
+    return isOK
+}
+
+def doSendEvent(eventName, eventValue, eventUnit=null) {
     logDebug("Creating event for $eventName...")
     def descriptionText = "${device.displayName} ${eventName} is ${eventValue}${eventUnit ?: ''}"
     logDesc(descriptionText)
@@ -223,14 +284,6 @@ def doSendEvent(eventName, eventValue, eventUnit) {
         event = sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText) 
     }
     return event
-}
-
-/**
- * Generic callback for async Bridge calls when we don't care about
- * the response (but can log it if debug enabled)
- */
-def parseBridgeResponse(resp, data) {
-    logDebug("Response from Bridge: $resp.status")
 }
 
 def logDebug(str) {

@@ -14,12 +14,14 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2020-01-22
+ *  Last modified: 2020-05-04
+ *  Version: 2.0.0-preview.1
  * 
  *  Changelog:
  * 
- *  v1.9 - Initial release (based on CT bulb driver)
- *  
+ *  v2.0    - Added startLevelChange rate option; improved HTTP error handling; attribute events now generated
+ *            only after hearing back from Bridge; Bridge online/offline status improvements
+ *  v1.9    - Initial release (based on CT bulb driver)
  */ 
 
 metadata {
@@ -42,6 +44,8 @@ metadata {
         input(name: "transitionTime", type: "enum", description: "", title: "Transition time", options:
             [[0:"ASAP"],[400:"400ms"],[500:"500ms"],[1000:"1s"],[1500:"1.5s"],[2000:"2s"],[5000:"5s"]], defaultValue: 400)
         input(name: "levelStaging", type: "bool", description: "", title: "Enable level pseudo-prestaging", defaultValue: false)
+        input(name: "levelChangeRate", type: "enum", description: "", title: '"Start level change" rate', options:
+            [["slow":"Slow"],["medium":"Medium"],["fast":"Fast (default)"]], defaultValue: "fast")
         input(name: "updateGroups", type: "bool", description: "", title: "Update state of groups immediately when bulb state changes",
             defaultValue: false)
         input(name: "enableDebug", type: "bool", title: "Enable debug logging", defaultValue: true)
@@ -110,7 +114,9 @@ def off() {
 
 def startLevelChange(direction) {
     logDebug("Running startLevelChange($direction)...")
-    def cmd = ["bri": (direction == "up" ? 254 : 1), "transitiontime": 30]
+    def cmd = ["bri": (direction == "up" ? 254 : 1),
+               "transitiontime": ((settings["levelChangeRate"] == "fast" || !settings["levelChangeRate"]) ?
+                                   30 : (settings["levelChangeRate"] == "slow" ? 60 : 45))]
     sendBridgeCommand(cmd, false) 
 }
 
@@ -259,16 +265,74 @@ def sendBridgeCommand(Map customMap = null, boolean createHubEvents=true) {
         uri: data.fullHost,
         path: "/api/${data.username}/lights/${getHueDeviceNumber()}/state",
         contentType: 'application/json',
-        body: cmd
+        body: cmd,
+        timeout: 15
         ]
-    asynchttpPut("parseBridgeResponse", params)
-    if ((cmd.containsKey("on") || cmd.containsKey("bri")) && settings["updateGroups"]) {
-        parent.updateGroupStatesFromBulb(cmd, getHueDeviceNumber())
-    }
+    asynchttpPut("parseSendCommandResponse", params, createHubEvents ? cmd : null)
     logDebug("-- Command sent to Bridge!" --)
 }
 
-def doSendEvent(eventName, eventValue, eventUnit) {
+/** 
+  * Parses response from Bridge (or not) after sendBridgeCommand. Updates device state if
+  * appears to have been successful.
+  * @param resp Async HTTP response object
+  * @param data Map of commands sent to Bridge if specified to create events from map
+  */
+void parseSendCommandResponse(resp, data) {
+    logDebug("Response from Bridge: ${resp.status}")
+    if (checkIfValidResponse(resp) && data) {
+        logDebug("  Bridge response valid; creating events from data map")          
+        createEventsFromMap(data)
+        if ((data.containsKey("on") || data.containsKey("bri")) && settings["updateGroups"]) {
+            parent.updateGroupStatesFromBulb(data, getHueDeviceNumber())
+        }
+    }
+    else {
+        logDebug("  Not creating events from map because not specified to do or Bridge response invalid")
+    }
+}
+
+/** Performs basic check on data returned from HTTP response to determine if should be
+  * parsed as likely Hue Bridge data or not; returns true (if OK) or logs errors/warnings and
+  * returns false if not
+  * @param resp The async HTTP response object to examine
+  */
+private Boolean checkIfValidResponse(resp) {
+    logDebug("Checking if valid HTTP response/data from Bridge...")
+    Boolean isOK = true
+    if (!(resp?.headers?.'Content-Type')?.contains('json')) {
+        isOK = false
+        if (!(resp?.headers)) log.error "Error: HTTP ${resp.status} when attempting to communicate with Bridge"
+        else log.error "Invalid content-type response from bridge: ${resp.headers.'Content-Type'} (HTTP ${resp.status})"
+        parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery 
+        parent.setBridgeStatus(false)
+    }
+    else if (resp.status < 400 && resp.json) {
+        if (resp.json[0]?.error) {
+            // Bridge (not HTTP) error (bad username, bad command formatting, etc.):
+            isOK = false
+            log.warn "Error from Hue Bridge: ${resp.json[0].error}"
+            // Not setting Bridge to offline when light/scene/group devices end up here because could
+            // be old/bad ID and don't want to consider Bridge offline just for that (but also won't set
+            // to online because wasn't successful attempt)
+        }
+    }
+    else {
+        isOK = false
+        if (resp?.status < 400) {
+            log.warn("HTTP status code ${resp.status} from Bridge")
+        }
+        else if (resp?.status >= 400) {
+            log.error("HTTP status code ${resp.status} from Bridge")
+            parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery 
+        }
+        parent.setBridgeStatus(false)
+    }
+    if (isOK) parent.setBridgeStatus(true)
+    return isOK
+}
+
+def doSendEvent(eventName, eventValue, eventUnit=null) {
     logDebug("Creating event for $eventName...")
     def descriptionText = "${device.displayName} ${eventName} is ${eventValue}${eventUnit ?: ''}"
     logDesc(descriptionText)
@@ -291,17 +355,9 @@ def configure() {
 }
 
 /**
- * Generic callback for async Bridge calls when we don't care about
- * the response (but can log it if debug enabled)
- */
-def parseBridgeResponse(resp, data) {
-    logDebug("Response from Bridge: $resp.status")
-}
-
-/**
  * Scales Hubitat's 1-100 brightness levels to Hue Bridge's 1-254
  */
-private scaleBriToBridge(hubitatLevel) {
+private Integer scaleBriToBridge(hubitatLevel) {
     def scaledLevel =  hubitatLevel == 1 ? 1 : hubitatLevel.toBigDecimal() / 100 * 254
     return Math.round(scaledLevel)
 }
@@ -309,7 +365,7 @@ private scaleBriToBridge(hubitatLevel) {
 /**
  * Scales Hue Bridge's 1-254 brightness levels to Hubitat's 1-100
  */
-private scaleBriFromBridge(bridgeLevel) {
+private Integer scaleBriFromBridge(bridgeLevel) {
     def scaledLevel = bridgeLevel.toBigDecimal() / 254 * 100
     if (scaledLevel < 1) scaledLevel = 1
     return Math.round(scaledLevel)

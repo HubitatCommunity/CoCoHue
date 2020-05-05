@@ -14,24 +14,26 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2020-01-22
+ *  Last modified: 2020-05-04
+ *  Version: 2.0.0-preview.1
  * 
  *  Changelog:
  * 
- *  v1.0 - Initial Release
- *  v1.1 - Added parity with bulb features (effects, etc.)
- *  v1.5 - Group switch/level/etc. states now propagated to member bulbs w/o polling
- *  v1.5b - Eliminated duplicate color/CT events on refresh
- *  v1.6b - Changed bri_inc to match Hubitat behavior
- *  v1.7 - Bulb switch/level states now propgate to groups w/o polling
- *  v1.7b - Modified startLevelChange behavior to avoid possible problems with third-party devices
- *  v1.8 - Changed effect state to custom attribute instead of colorMode
- *         Added ability to disable group->bulb state propagation;
- *         Removed ["alert:" "none"] from on() command, now possible explicitly with flashOff() 
- *  v1.8b - Skip spurious color name event if bulb not in correct mode 
- *  v1.8c - Added back color/CT events for manual commands not from bridge without polling
- *  v1.9 - Parse xy as ct (previously did rgb but without parsing actual color)
- *
+ *  v2.0    - Added startLevelChange rate option; improved HTTP error handling; attribute events now generated
+ *            only after hearing back from Bridge; Bridge online/offline status improvements
+ *  v1.9    - Parse xy as ct (previously did rgb but without parsing actual color)
+ *  v1.8c   - Added back color/CT events for manual commands not from bridge without polling
+ *  v1.8b   - Skip spurious color name event if bulb not in correct mode
+ *  v1.8    - Changed effect state to custom attribute instead of colorMode
+ *            Added ability to disable group->bulb state propagation
+ *  v1.7b   - Modified startLevelChange behavior to avoid possible problems with third-party devices
+ *            Removed ["alert:" "none"] from on() command, now possible explicitly with flashOff()
+ *  v1.7    - Bulb switch/level states now propgate to groups w/o polling
+ *  v1.6b   - Changed bri_inc to match Hubitat behavior
+ *  v1.5b   - Eliminated duplicate color/CT events on refresh
+ *  v1.5    - Group switch/level/etc. states now propagated to member bulbs w/o polling
+ *  v1.1    - Added parity with bulb features (effects, etc.)
+ *  v1.0    - Initial Release
  */ 
 
 import groovy.json.JsonSlurper
@@ -57,7 +59,7 @@ metadata {
         command "flashOnce"
         command "flashOff"
         
-        attribute "colorName", "string"
+        //attribute "colorName", "string"
         attribute "effect", "string"
     }
        
@@ -67,6 +69,8 @@ metadata {
         input(name: "hiRezHue", type: "bool", title: "Enable hue in degrees (0-360 instead of 0-100)", defaultValue: false)
         input(name: "colorStaging", type: "bool", description: "", title: "Enable color pseudo-prestaging", defaultValue: false)
         input(name: "levelStaging", type: "bool", description: "", title: "Enable level pseudo-prestaging", defaultValue: false)
+        input(name: "levelChangeRate", type: "enum", description: "", title: '"Start level change" rate', options:
+            [["slow":"Slow"],["medium":"Medium"],["fast":"Fast (default)"]], defaultValue: "fast")
         input(name: "updateBulbs", type: "bool", description: "", title: "Update member bulb states immediately when group state changes",
             defaultValue: true)
         input(name: "enableDebug", type: "bool", title: "Enable debug logging", defaultValue: true)
@@ -141,7 +145,9 @@ def off() {
 
 def startLevelChange(direction) {
     logDebug("Running startLevelChange($direction)...")
-    def cmd = ["bri": (direction == "up" ? 254 : 1), "transitiontime": 30]
+    def cmd = ["bri": (direction == "up" ? 254 : 1),
+               "transitiontime": ((settings["levelChangeRate"] == "fast" || !settings["levelChangeRate"]) ?
+                                   30 : (settings["levelChangeRate"] == "slow" ? 60 : 45))]
     sendBridgeCommand(cmd, false) 
 }
 
@@ -486,22 +492,79 @@ def sendBridgeCommand(Map customMap = null, boolean createHubEvents=true) {
         log.debug("Commands not sent to Bridge because command map empty")
         return
     }
-    if (createHubEvents) createEventsFromMap(cmd)
     def data = parent.getBridgeData()
     def params = [
         uri: data.fullHost,
         path: "/api/${data.username}/groups/${getHueDeviceNumber()}/action",
         contentType: 'application/json',
-        body: cmd
+        body: cmd,
+        timeout: 15
         ]
-    asynchttpPut("parseBridgeResponse", params)
-    if ((cmd.containsKey("on") || cmd.containsKey("bri")) && settings["updateBulbs"]) {
-        parent.updateMemberBulbStatesFromGroup(cmd, state.memberBulbs)
-    }
-    logDebug("---- Command sent to Bridge! ----")
+    asynchttpPut("parseSendCommandResponse", params, createHubEvents ? cmd : null)
+    logDebug("-- Command sent to Bridge!" --)
 }
 
-def doSendEvent(eventName, eventValue, eventUnit) {
+/** 
+  * Parses response from Bridge (or not) after sendBridgeCommand. Updates device state if
+  * appears to have been successful.
+  * @param resp Async HTTP response object
+  * @param data Map of commands sent to Bridge if specified to create events from map
+  */
+void parseSendCommandResponse(resp, data) {
+    logDebug("Response from Bridge: ${resp.status}")
+    if (checkIfValidResponse(resp) && data) {
+        logDebug("  Bridge response valid; creating events from data map")          
+        createEventsFromMap(data)
+        if ((data.containsKey("on") || data.containsKey("bri")) && settings["updateBulbs"]) {
+            parent.updateMemberBulbStatesFromGroup(data, state.memberBulbs)
+        }
+    }
+    else {
+        logDebug("  Not creating events from map because not specified to do or Bridge response invalid")
+    }
+}
+
+/** Performs basic check on data returned from HTTP response to determine if should be
+  * parsed as likely Hue Bridge data or not; returns true (if OK) or logs errors/warnings and
+  * returns false if not
+  * @param resp The async HTTP response object to examine
+  */
+private Boolean checkIfValidResponse(resp) {
+    logDebug("Checking if valid HTTP response/data from Bridge...")
+    Boolean isOK = true
+    if (!(resp?.headers?.'Content-Type')?.contains('json')) {
+        isOK = false
+        if (!(resp?.headers)) log.error "Error: HTTP ${resp.status} when attempting to communicate with Bridge"
+        else log.error "Invalid content-type response from bridge: ${resp.headers.'Content-Type'} (HTTP ${resp.status})"
+        parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery 
+        parent.setBridgeStatus(false)
+    }
+    else if (resp.status < 400 && resp.json) {
+        if (resp.json[0]?.error) {
+            // Bridge (not HTTP) error (bad username, bad command formatting, etc.):
+            isOK = false
+            log.warn "Error from Hue Bridge: ${resp.json[0].error}"
+            // Not setting Bridge to offline when light/scene/group devices end up here because could
+            // be old/bad ID and don't want to consider Bridge offline just for that (but also won't set
+            // to online because wasn't successful attempt)
+        }
+    }
+    else {
+        isOK = false
+        if (resp?.status < 400) {
+            log.warn("HTTP status code ${resp.status} from Bridge")
+        }
+        else if (resp?.status >= 400) {
+            log.error("HTTP status code ${resp.status} from Bridge")
+            parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery 
+        }
+        parent.setBridgeStatus(false)
+    }
+    if (isOK) parent.setBridgeStatus(true)
+    return isOK
+}
+
+def doSendEvent(String eventName, eventValue, eventUnit=null) {
     logDebug("Creating event for $eventName...")
     def descriptionText = "${device.displayName} ${eventName} is ${eventValue}${eventUnit ?: ''}"
     logDesc(descriptionText)
@@ -558,7 +621,8 @@ def setGenericName(hue){
         default: colorName = "undefined" // shouldn't happen, but just in case
             break            
     }
-    if (device.currentValue("colorName") != colorName) doSendEvent("colorName", colorName, null)
+    if (device.currentValue("saturation") < 1) colorName = "White"
+    if (device.currentValue("colorName") != colorName) doSendEvent("colorName", colorName)
 }
 
 // Hubitat-provided ct/name mappings
@@ -578,21 +642,14 @@ def setGenericTempName(temp){
     else if (value < 6000) genericName = "Electronic"
     else if (value <= 6500) genericName = "Skylight"
     else if (value < 20000) genericName = "Polar"
-    if (device.currentValue("colorName") != genericName) doSendEvent("colorName", genericName, null)
-}
-
-/**
- * Generic callback for async Bridge calls when we don't care about
- * the response (but can log it if debug enabled)
- */
-def parseBridgeResponse(resp, data) {
-    logDebug("Response from Bridge: $resp.status")
+    else genericName = "undefined" // shouldn't happen, but just in case
+    if (device.currentValue("colorName") != genericName) doSendEvent("colorName", genericName)
 }
 
 /**
  * Scales Hubitat's 1-100 brightness levels to Hue Bridge's 1-254
  */
-private scaleBriToBridge(hubitatLevel) {
+private Integer scaleBriToBridge(hubitatLevel) {
     def scaledLevel =  hubitatLevel == 1 ? 1 : hubitatLevel.toBigDecimal() / 100 * 254
     return Math.round(scaledLevel)
 }
@@ -600,20 +657,20 @@ private scaleBriToBridge(hubitatLevel) {
 /**
  * Scales Hue Bridge's 1-254 brightness levels to Hubitat's 1-100
  */
-private scaleBriFromBridge(bridgeLevel) {
+private Integer scaleBriFromBridge(bridgeLevel) {
     def scaledLevel = bridgeLevel.toBigDecimal() / 254 * 100
     if (scaledLevel < 1) scaledLevel = 1
     return Math.round(scaledLevel)
 }
 
-private scaleHueToBridge(hubitatLevel) {
+private Integer scaleHueToBridge(hubitatLevel) {
     def scaledLevel = Math.round(hubitatLevel.toBigDecimal() / (hiRezHue ? 360 : 100) * 65535)
     if (scaledLevel < 0) scaledLevel = 0
     else if (scaledLevel > 65535) scaledLevel = 65535
     return scaledLevel
 }
 
-private scaleHueFromBridge(bridgeLevel) {
+private Integer scaleHueFromBridge(bridgeLevel) {
     def scaledLevel = Math.round(bridgeLevel.toBigDecimal() / 65535 * (hiRezHue ? 360 : 100))
     if (scaledLevel < 0) scaledLevel = 0
     else if (scaledLevel > 360) scaledLevel = 360
@@ -621,7 +678,7 @@ private scaleHueFromBridge(bridgeLevel) {
     return scaledLevel
 }
 
-private scaleSatToBridge(hubitatLevel) {
+private Integer scaleSatToBridge(hubitatLevel) {
     def scaledLevel = Math.round(hubitatLevel.toBigDecimal() / 100 * 254)
     if (scaledLevel < 0) scaledLevel = 0
     else if (scaledLevel > 254) scaledLevel = 254
@@ -629,7 +686,7 @@ private scaleSatToBridge(hubitatLevel) {
     return scaleHueFromBridge()
 }
 
-private scaleSatFromBridge(bridgeLevel) {
+private Integer scaleSatFromBridge(bridgeLevel) {
     def scaledLevel = Math.round(bridgeLevel.toBigDecimal() / 254 * 100)
     if (scaledLevel < 0) scaledLevel = 0
     else if (scaledLevel > 100) scaledLevel = 100
