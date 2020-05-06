@@ -31,8 +31,7 @@ For discussion and more information, visit the <a href="https://community.hubita
       * https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-group-driver.groovy
       * https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-scene-driver.groovy
       
-4. Install an instance of app: go to **Apps > Add User App**, choose **CoCoHue**, and follow the prompts. At the moment, your
-   Hue Bridge needs a static IP address, as discovery is not supported.
+4. Install an instance of app: go to **Apps > Add User App**, choose **CoCoHue**, and follow the prompts.
 
 ## To Install (Hubitat Package Manager/Automatic Method)
 
