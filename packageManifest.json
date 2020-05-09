@@ -2,10 +2,10 @@
 	"packageName": "CoCoHue (Hue Bridge Integration)",
 	"minimumHEVersion": "2.1.0",
 	"author": "Robert Morris",
-	"dateReleased": "2020-05-05",
+	"dateReleased": "2020-05-09",
 	"communityLink": "https://community.hubitat.com/t/release-cocohue-hue-bridge-integration-including-scenes/27978",
 	"licenseFile": "",
-	"releaseNotes": "NOTE: Users upgrading from v1.x should follow instructions forum or on GitHub (parent app deprecatred but still available).\n\nNew in 2.0: Bridge discovery; 'startLevelChange' rate option for dimmable devices; improved error handling and Bridge online/offline status reporting",
+	"releaseNotes": "NOTE: Users upgrading from v1.x should follow instructions forum or on GitHub (parent app deprecatred but still available).\n\nNew in 2.0: Bridge discovery; 'startLevelChange' rate option for dimmable devices; improved error handling and Bridge online/offline status reporting\n\nPreview 2: Fixes spurious v1 Bridge content-type/JSON errors; minor error handling improvements; manual Bridge addition page refresh bugfix",
 	"apps" : [
 		{
 			"id": "568bab8e-5c69-4800-a038-481026904c05",
@@ -13,7 +13,7 @@
 			"namespace": "RMoRobert",
 			"location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/apps/cocohue-app.groovy",
 			"required": true,
-			"version": "2.0.0-preview.1",
+			"version": "2.0.0-preview.2",
 			"oauth": false
 		}
 	],

@@ -14,8 +14,8 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2020-05-05
- *  Version: 2.0.0-preview.1
+ *  Last modified: 2020-05-09
+ *  Version: 2.0.0-preview.2
  *
  *  Changelog:
  * 
@@ -99,10 +99,10 @@ def refresh() {
 private Boolean checkIfValidResponse(resp) {
     logDebug("Checking if valid HTTP response/data from Bridge...")
     Boolean isOK = true
-    if (!(resp?.headers?.'Content-Type')?.contains('json')) {
+    if (!(resp?.json)) {
         isOK = false
         if (!(resp?.headers)) log.error "Error: HTTP ${resp.status} when attempting to communicate with Bridge"
-        else log.error "Invalid content-type response from bridge: ${resp.headers.'Content-Type'} (HTTP ${resp.status})"
+        else log.error "No JSON data found in response. (HTTP ${resp.status}; headers = ${resp.headers})"
         parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery 
     }
     else if (resp.status < 400 && resp.json) {
@@ -111,16 +111,12 @@ private Boolean checkIfValidResponse(resp) {
             isOK = false
             log.warn "Error from Hue Bridge: ${resp.json[0].error}"
         }
+        // Otherwise: probably OK (not changing anything because isOK = true already)
     }
     else {
         isOK = false
-        if (resp?.status < 400) {
-            log.warn("HTTP status code ${resp.status} from Bridge")
-        }
-        else if (resp?.status >= 400) {
-            log.error("HTTP status code ${resp.status} from Bridge")
-            parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery 
-        }
+        log.warn("HTTP status code ${resp.status} from Bridge")
+        if (resp?.status >= 400) parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery 
     }
     if (device.currentValue("status") != (isOK ? "Online" : "Offline")) doSendEvent("status", (isOK ? "Online" : "Offline"))
     return isOK

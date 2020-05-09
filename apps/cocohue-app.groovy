@@ -8,7 +8,7 @@
  *  groups, and scenes.
  
  *  TO INSTALL:
- *  See documentation on Hubitat Community forum.
+ *  See documentation on Hubitat Community forum or README.MD file in GitHub repo
  *
  *  Copyright 2019-2020 Robert Morris
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
@@ -22,11 +22,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2020-05-05
- *  Version: 2.0.0-preview.1
+ *  Last modified: 2020-05-09
+ *  Version: 2.0.0-preview.2
  * 
  *  Changelog:
- * // TODO:  reduce no. of child->parent calls?
  *  v2.0   - New non-parent/child structure and name change; Bridge discovery; Bridge linking improvements (fewer pages);
  *           added documentation links
  *           Additiononal device features; child devices now (optionally) deleted when app uninstalled
@@ -209,10 +208,11 @@ def pageAddBridge() {
         subscribe(location, "ssdpTerm.urn:schemas-upnp-org:device:basic:1", ssdpHandler)
         sendBridgeDiscoveryCommand()
     }
-    String nextPageName = ((settings["useSSDP"] != false && settings["selectedDiscoveredBridge"]) || settings['bridgeIP']) ?
-                          "pageLinkBridge" : "pageAddBridge"
+    String nextPageName = ((settings['useSSDP'] != false && settings['selectedDiscoveredBridge']) || settings['bridgeIP']) ?
+                          "pageLinkBridge" : "pageAddBridge"    
     dynamicPage(name: "pageAddBridge", uninstall: true, install: false,
-                refreshInterval: (selectedDiscoveredBridge ? null : state.authRefreshInterval), nextPage: nextPageName) {
+                refreshInterval: ((!(settings['useSSDP']) || selectedDiscoveredBridge) ? null : state.authRefreshInterval),
+                nextPage: nextPageName) {
         section("Add Hue Bridge") {
             input(name: "useSSDP", type: "bool", title: "Discover Hue Bridges automatically", defaultValue: true, submitOnChange: true)
             if (settings["useSSDP"] != false) {
@@ -900,19 +900,16 @@ void setBridgeStatus(setToOnline=true) {
   */
  void updateGroupStatesFromBulb(Map states, id) {
     logDebug("Searching for group devices containing bulb $id to update group state after bulb state change...")
-    //TODO: There is a better, Groovier way to do this search...
-    def matchingGroups = []
-    getChildDevices()?.each {
-        if (it.getDeviceNetworkId()?.startsWith("CCH/${state.bridgeID}/Group/")) {
-            if (it.getMemberBulbIDs()?.contains(id)) {
-                logDebug("Bulb $id found in group. Updating states.")
-                matchingGroups.add(it)
-            }
+    List matchingGroups = []
+    getChildDevices()?.findAll({it.getDeviceNetworkId()?.startsWith("CCH/${state.bridgeID}/Group/")})?.each {
+        if (it.getMemberBulbIDs()?.contains(id)) {
+            logDebug("Bulb $id found in group. Updating states.")
+            matchingGroups.add(it)
         }
     }
     matchingGroups.each {
         // Hue app reports "on" if any members on but takes last color/level/etc. from most recent
-        // change, so emulate that behavior here
+        // change, so emulate that behavior here (or does Hue average level of all? this is at least close...)
         def onState = getIsAnyGroupMemberBulbOn(it)
         it.createEventsFromMap(states << ["on": onState], false)
     }
