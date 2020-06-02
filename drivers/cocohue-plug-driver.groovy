@@ -14,8 +14,8 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2020-05-09
- *  Version: 2.0.0-preview.2
+ *  Last modified: 2020-06-02
+ *  Version: 2.0.0-preview.3
  * 
  *  Changelog:
  * 
@@ -241,9 +241,9 @@ void parseSendCommandResponse(resp, data) {
 private Boolean checkIfValidResponse(resp) {
     logDebug("Checking if valid HTTP response/data from Bridge...")
     Boolean isOK = true
-    if (!(resp?.json)) {
+    if (resp?.json == null) {
         isOK = false
-        if (!(resp?.headers)) log.error "Error: HTTP ${resp.status} when attempting to communicate with Bridge"
+        if (resp?.headers == null) log.error "Error: HTTP ${resp.status} when attempting to communicate with Bridge"
         else log.error "No JSON data found in response. ${resp.headers.'Content-Type'} (HTTP ${resp.status})"
         parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery 
         parent.setBridgeStatus(false)

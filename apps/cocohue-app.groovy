@@ -22,8 +22,8 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2020-05-09
- *  Version: 2.0.0-preview.2
+ *  Last modified: 2020-06-02
+ *  Version: 2.0.0-preview.3
  * 
  *  Changelog:
  *  v2.0   - New non-parent/child structure and name change; Bridge discovery; Bridge linking improvements (fewer pages);
@@ -157,7 +157,8 @@ void sendBridgeDiscoveryCommandIfSSDPEnabled(Boolean checkIfRecent=true) {
     logDebug("sendBridgeDiscoveryCommandIfSSDPEnabled($checkIfRecent)")
     if (settings["useSSDP"] == true || settings["useSSDP"] == null) {
         // If not in the last 5 minutes:
-        if (!state.lastDiscoCommand && (now() -  state.lastDiscoCommand >= 300000)) {
+        // TODO: Gradually increase this interval if clear been offline for a while?
+        if (!(state.lastDiscoCommand) || (now() -  state.lastDiscoCommand >= 300000)) {
             sendBridgeDiscoveryCommand()
         }
     }
@@ -744,13 +745,13 @@ void sendBridgeInfoRequest(Boolean createBridge=true, String protocol="http", St
  * and obtains MAC address for use in creating Bridge DNI and device name
  */
 private parseBridgeInfoResponse(resp, data) {
-    log.debug("Parsing response from Bridge information request (resp = $resp, data = $data)")
+    logDebug("Parsing response from Bridge information request (resp = $resp, data = $data)")
     def body = resp.xml
     if (body?.device?.modelName?.text().contains("Philips hue bridge")) {
         String friendlyBridgeName
         String serial = body?.device?.serialNumber?.text().toUpperCase()
         if (serial) {
-            log.debug("  Hue Bridge serial parsed as ${serial}; getting additional device info...")
+            logDebug("  Hue Bridge serial parsed as ${serial}; getting additional device info...")
             friendlyBridgeName = body?.device?.friendlyName
             if (friendlyBridgeName) friendlyBridgeName = friendlyBridgeName.substring(0,friendlyBridgeName.lastIndexOf(' ('-1)) // strip out parenthetical IP address
             def bridgeDevice           
@@ -882,13 +883,22 @@ void setBridgeStatus(setToOnline=true) {
  *  all member bulbs. Updates member bulb states (so doesn't need to wait for next poll to update)
  *  @param states Map of states in Hue Bridge format (e.g., ["on": true])
  *  @param ids Hue IDs of member bulbs to update
+ *  @param isAllGroup Set to true if is "All Hue Lights" group (group 0); ids (ignored) can be null in this case. Defaults to false.
  */
- void updateMemberBulbStatesFromGroup(Map states, List ids) {
-    logDebug("Updating member bulb $ids states after group device change...")
-    ids?.each {
-        def device = getChildDevice("CCH/${state.bridgeID}/Light/${it}")
-        device?.createEventsFromMap(states, false)
-    }
+ void updateMemberBulbStatesFromGroup(Map states, List ids, Boolean isAllGroup=false) {
+    logDebug("Updating member bulb states after group device change... (ids = $ids, isAllGroup = $isAllGroup)")
+    if (!isAllGroup) {
+        ids?.each {
+            com.hubitat.app.ChildDeviceWrapper dev = getChildDevice("CCH/${state.bridgeID}/Light/${it}")
+            dev?.createEventsFromMap(states, false)
+        }
+    } else {
+            List<com.hubitat.app.ChildDeviceWrapper> devList = getChildDevices().findAll { it.getDeviceNetworkId().startsWith("CCH/${state.bridgeID}/Light/") }
+            // Update other gropus even though they aren't "bulbs":
+            devList += getChildDevices().findAll { it.getDeviceNetworkId().startsWith("CCH/${state.bridgeID}/Group/") && !(it.getDeviceNetworkId() == "CCH/${state.bridgeID}/Group/0") }
+            log.warn devList
+            devList.each { it.createEventsFromMap(states, false) }
+    }    
  }
 
  /**
@@ -900,18 +910,18 @@ void setBridgeStatus(setToOnline=true) {
   */
  void updateGroupStatesFromBulb(Map states, id) {
     logDebug("Searching for group devices containing bulb $id to update group state after bulb state change...")
-    List matchingGroups = []
+    List matchingGroupDevs = []
     getChildDevices()?.findAll({it.getDeviceNetworkId()?.startsWith("CCH/${state.bridgeID}/Group/")})?.each {
-        if (it.getMemberBulbIDs()?.contains(id)) {
-            logDebug("Bulb $id found in group. Updating states.")
-            matchingGroups.add(it)
+        if (it.getMemberBulbIDs()?.contains(id) || it.getDeviceNetworkId() == "CCH/${state.bridgeID}/Group/0") {
+            logDebug("Bulb $id found in group ${it.toString()}. Updating states.")
+            matchingGroupDevs.add(it)
         }
     }
-    matchingGroups.each {
+    matchingGroupDevs.each { groupDev ->
         // Hue app reports "on" if any members on but takes last color/level/etc. from most recent
         // change, so emulate that behavior here (or does Hue average level of all? this is at least close...)
-        def onState = getIsAnyGroupMemberBulbOn(it)
-        it.createEventsFromMap(states << ["on": onState], false)
+        def onState = getIsAnyGroupMemberBulbOn(groupDev)
+        groupDev.createEventsFromMap(states << ["on": onState], false)
     }
  }
 
@@ -921,21 +931,24 @@ void setBridgeStatus(setToOnline=true) {
  * @param Instance of CoCoHue Group device on which to check member bulb states
  */
 Boolean getIsAnyGroupMemberBulbOn(groupDevice) {
-    logDebug ("Determining whether any group member bulbs on for group $groupID")
+    logDebug ("Determining whether any group member bulbs on for group $groupDevice")
     def retVal = false
-    def memberDevices = []
+
     if (groupDevice) {
-        groupDevice.getMemberBulbIDs().each {
-            if (!retVal) { // no point in continuing to check if already found one on
-                def memberLight = getChildDevice("CCH/${state.bridgeID}/Light/${it}")
-                if (memberLight?.currentValue("switch") == "on") retVal = true
+        List<com.hubitat.app.ChildDeviceWrapper> memberBulbDevs = []
+        if (groupDevice.getDeviceNetworkId() == "CCH/${state.bridgeID}/Group/0") {
+            memberBulbDevs = getChildDevices().findAll { it.getDeviceNetworkId().startsWith("CCH/${state.bridgeID}/Light/") }
+        }
+        else {
+            groupDevice.getMemberBulbIDs().each { bulbId ->
+                com.hubitat.app.ChildDeviceWrapper bulbDev = getChildDevice("CCH/${state.bridgeID}/Light/${bulbId}")
+                if (bulbDev) memberBulbDevs.add(bulbDev)
             }
         }
-    } else {
-        logDebug "No group device found for group ID $groupID"
+        Boolean anyOn = memberBulbDevs.any { it.currentValue('switch') == 'on' }
+        logDebug("Determined if any group member bulb on: $anyOn")
+        return anyOn
     }
-    logDebug("Determined if any group member bulb on: $retVal")
-    return retVal
  }
 
 def appButtonHandler(btn) {

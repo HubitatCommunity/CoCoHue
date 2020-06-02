@@ -14,8 +14,8 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2020-05-09
- *  Version: 2.0.0-preview.2
+ *  Last modified: 2020-06-02
+ *  Version: 2.0.0-preview.3
  *
  *  Changelog:
  * 
@@ -98,10 +98,15 @@ def refresh() {
   */
 private Boolean checkIfValidResponse(resp) {
     logDebug("Checking if valid HTTP response/data from Bridge...")
+
     Boolean isOK = true
-    if (!(resp?.json)) {
+    if (resp?.hasError()) {
+        log.warn "Error in Bridge response. HTTP ${resp.status}."
         isOK = false
-        if (!(resp?.headers)) log.error "Error: HTTP ${resp.status} when attempting to communicate with Bridge"
+    }
+    else if (resp?.json == null) {
+        isOK = false
+        if (resp?.headers == null) log.error "Error: HTTP ${resp.status} when attempting to communicate with Bridge"
         else log.error "No JSON data found in response. (HTTP ${resp.status}; headers = ${resp.headers})"
         parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery 
     }
@@ -221,6 +226,7 @@ private void parseGetAllGroupsResponse(resp, data) {
             resp.json.each { key, val ->
                 groups[key] = [name: val.name, type: val.type]
             }
+            if (groups) groups[0] = [name: "All Hue Lights", type:  "LightGroup"] // add "all Hue lights" group, ID 0
             state.allGroups = groups
         }
         catch (Exception ex) {
@@ -228,8 +234,6 @@ private void parseGetAllGroupsResponse(resp, data) {
         }
     }
 }
-
-
 
 /** Intended to be called from parent Bridge Child app to retrive previously
  *  requested list of groups
@@ -254,13 +258,19 @@ private void parseGroupStates(resp, data) {
     if (checkIfValidResponse(resp)) {
         try {
             resp.json.each { id, val ->
-                def device = parent.getChildDevice("${device.deviceNetworkId}/Group/${id}")
-                if (device) {
-                    device.createEventsFromMap(val.action, true)
-                    device.createEventsFromMap(val.state, true)
-                    device.setMemberBulbIDs(val.lights)
+                com.hubitat.app.DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Group/${id}")
+                if (dev) {
+                    dev.createEventsFromMap(val.action, true)
+                    dev.createEventsFromMap(val.state, true)
+                    dev.setMemberBulbIDs(val.lights)
                 }
             }
+            Boolean anyOn = resp.json.any { it.value?.state?.any_on == false }
+            com.hubitat.app.DeviceWrapper allLightsDev = parent.getChildDevice("${device.deviceNetworkId}/Group/0")
+            if (allLightsDev) {
+                    allLightsDev.createEventsFromMap(['any_on': anyOn], true)
+            }
+            
         }
         catch (Exception ex) {
             log.error "Error parsing group states: ${ex}"   
