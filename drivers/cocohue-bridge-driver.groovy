@@ -14,8 +14,8 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2020-06-02
- *  Version: 2.0.0-preview.3
+ *  Last modified: 2020-09-16
+ *  Version: 2.0.0-preview.5
  *
  *  Changelog:
  * 
@@ -98,7 +98,6 @@ def refresh() {
   */
 private Boolean checkIfValidResponse(resp) {
     logDebug("Checking if valid HTTP response/data from Bridge...")
-
     Boolean isOK = true
     if (resp?.hasError()) {
         log.warn "Error in Bridge response. HTTP ${resp.status}."
@@ -124,6 +123,7 @@ private Boolean checkIfValidResponse(resp) {
         if (resp?.status >= 400) parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery 
     }
     if (device.currentValue("status") != (isOK ? "Online" : "Offline")) doSendEvent("status", (isOK ? "Online" : "Offline"))
+    logDebug("Reponse ${isOK ? 'valid' : 'invalid'}")
     return isOK
 }
 
@@ -156,6 +156,7 @@ private void parseGetAllBulbsResponse(resp, data) {
                 bulbs[key] = [name: val.name, type: val.type]
             }
             state.allBulbs = bulbs
+            logDebug("  All bulbs received from Bridge: $bulbs")
         }
         catch (Exception ex) {
             log.error "Error parsing all bulbs response: $ex"
@@ -191,7 +192,7 @@ private void parseLightStates(resp, data) {
             if (device) {
                 device.createEventsFromMap(val.state, true)
             }
-        }            
+        }
         if (device.currentValue("status") != "Online") doSendEvent("status", "Online")
         } catch (Exception ex) {
             log.error "Error parsing light states: ${ex}"           
@@ -226,8 +227,9 @@ private void parseGetAllGroupsResponse(resp, data) {
             resp.json.each { key, val ->
                 groups[key] = [name: val.name, type: val.type]
             }
-            if (groups) groups[0] = [name: "All Hue Lights", type:  "LightGroup"] // add "all Hue lights" group, ID 0
+            groups[0] = [name: "All Hue Lights", type:  "LightGroup"] // add "all Hue lights" group, ID 0
             state.allGroups = groups
+            logDebug("  All groups received from Bridge: $groups")
         }
         catch (Exception ex) {
             log.error "Error parsing all groups response: $ex"
@@ -308,6 +310,7 @@ private void parseGetAllScenesResponse(resp, data) {
                 if (val.group) scenes[key] << ["group": val.group]
             }
             state.allScenes = scenes
+            logDebug("  All scenes received from Bridge: $scenes")
         }
         catch (Exception ex) {
             log.error "Error parsing all scenes response: ${ex}"   

@@ -14,8 +14,8 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2020-06-02
- *  Version: 2.0.0-preview.3
+ *  Last modified: 2020-09-16
+ *  Version: 2.0.0-preview.5
  * 
  *  Changelog:
  * 
@@ -27,7 +27,6 @@
 metadata {
     definition (name: "CoCoHue Dimmable Bulb", namespace: "RMoRobert", author: "Robert Morris", importUrl: "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-dimmable-bulb-driver.groovy") {
         capability "Actuator"
-        capability "Configuration"
         capability "Refresh"
         capability "Switch"
         capability "Switch Level"
@@ -343,11 +342,6 @@ def doSendEvent(eventName, eventValue, eventUnit=null) {
 
 def refresh() {
     log.warn "Refresh CoCoHue Bridge device instead of individual device to update (all) bulbs/groups"
-}
-
-def configure() {
-    // Do I need to do anything here?
-    log.warn "configure()"
 }
 
 /**
