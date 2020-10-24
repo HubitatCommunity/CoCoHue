@@ -14,13 +14,15 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2020-09-16
- *  Version: 2.0.0-preview.5
+ *  Last modified: 2020-10-22
+ *  Version: 2.0.0-rc.1
  * 
  *  Changelog:
  * 
  *  v2.0    - Improved HTTP error handling; attribute events now generated only after hearing back from Bridge;
-              Bridge online/offline status improvements; bug fix for off() with light- or group-device-less scenes
+ *            Bridge online/offline status improvements; bug fix for off() with light- or group-device-less scenes
+ *            Added options for scene "switch" attribute (on/off) behavior
+ *            Added options for optional Bridge refresh on scene on/off or push (activation) commands 
  *  v1.9    - Added off() functionality
  *  v1.7    - Added configure() per Capability requirement
  *  v1.5b   - Initial public release
@@ -33,11 +35,23 @@ metadata {
       capability "Switch"
       capability "Light"
       capability "PushableButton"
+      capability "Configuration"
 
-      command "push", [[name:"NUMBER", type: "NUMBER", description: "Button number" ]]
+      command "push", [[name:"NUMBER", type: "NUMBER", description: "Button number (button 1 is the only number used by this device)" ]]
    }
        
    preferences {
+      input(name: "onPropagation", type: "enum", title: "Scene \"on\"/\"off\" behavior: when this scene is activated...",
+         options: [["none": "Do not manipulate other scene device states"],
+                   ["groupScenesOff": "Mark other scenes for this group as off (if GroupScene)"],
+                   ["allScenesOff": "Mark all other CoCoHue scenes as off"],
+                   ["autoOff": "Automatically mark as off in 5 seconds"]],
+         defaultValue: "groupScenesOff")
+      input(name: "onRefresh", type: "enum", title: "Bridge refresh on activation: when this scene is activated or receives \"off\" command...",
+         options: [["none": "Do not refresh Bridge"],
+                   ["1000": "Refresh Bridge device in 1s"],
+                   ["5000": "Refrehs Bridge device in 5s"]],
+         defaultValue: "none")
       input(name: "enableDebug", type: "bool", title: "Enable debug logging", defaultValue: true)
       input(name: "enableDesc", type: "bool", title: "Enable descriptionText logging", defaultValue: true)
     }
@@ -45,6 +59,7 @@ metadata {
 
 def installed(){
    log.debug "Installed..."
+   setDefaultAttributeValues()
    initialize()
 }
 
@@ -62,6 +77,11 @@ def initialize() {
       runIn(disableTime, debugOff)
    }
    refresh() // Get scene data
+}
+
+def configure() {
+   log.debug "Configure"
+   setDefaultAttributeValues()
 }
 
 def debugOff() {
@@ -95,6 +115,9 @@ def on() {
       timeout: 15
       ]
    asynchttpPut("parseSendCommandResponse", params, [attribute: 'switch', value: 'on'])
+   if (settings["onRefresh"] == "1000" || settings["onRefresh"] == "5000") {
+      parent.runInMillis(settings["onRefresh"] as Integer, "refreshBridge")
+   }
    logDebug("Command sent to Bridge: $cmd")
 }
 
@@ -134,7 +157,8 @@ def off() {
          if (dev) {
                logDebug("Hubitat device for light ${it} found; turning off")
                dev.off()
-         } else {
+         }
+         else {
                logDebug("Device not found; sending command directly to turn off Hue light")
                def data = parent.getBridgeData()
                def cmd = ["on": false]
@@ -148,9 +172,12 @@ def off() {
                asynchttpPut("parseSendCommandResponse", params)
                logDebug("Command sent to Bridge: $cmd")
          }
+      }      
+      if (settings["onRefresh"] == "1000" || settings["onRefresh"] == "5000") {
+         parent.runInMillis(settings["onRefresh"] as Integer, "refreshBridge")
       }
-
-   } else {
+   }
+   else {
       log.warn "No off() action available for scene $device.displayName"
    }
 }
@@ -164,11 +191,25 @@ def off() {
 void parseSendCommandResponse(resp, data) {
    logDebug("Response from Bridge: ${resp.status}; data from app = $data")
    if (checkIfValidResponse(resp) && data?.attribute != null && data?.value != null) {
-      logDebug("  Bridge response valid; running creating events")          
-      doSendEvent(data.attribute, data.value)
-   }
-   else {
-      logDebug("  Not creating events from map because not specified to do or Bridge response invalid")
+      logDebug("  Bridge response valid; running creating events")
+      doSendEvent(data.attribute, data.value)   
+      if (data?.attribute == "switch" && data?.value == "on") {
+         if (settings["onPropagation"] == "groupScenesOff") {
+            parent.updateSceneStateToOffForGroup(state.group ?: "0", device.deviceNetworkId)
+         }
+         else if (settings["onPropagation"] == "allScenesOff") {
+            parent.updateSceneStateToOffForGroup("0", device.deviceNetworkId)
+         }
+         else if (settings["onPropagation"] == "autoOff") {
+            runIn(5, autoOffHandler)
+         }
+         else {
+            logDebug("No scene onPropagation configured; leaving other scene states as-is")
+         }
+      }
+      else {
+         logDebug("  Not creating events from map because not specified to do or Bridge response invalid")
+      }
    }
 }
 
@@ -210,18 +251,29 @@ private Boolean checkIfValidResponse(resp) {
 
 def push(btnNum) {
    on()
-   doSendEvent("pushed", "1", null)
+   doSendEvent("pushed", 1, null, true)
 }
 
-def doSendEvent(eventName, eventValue, eventUnit=null) {
+def doSendEvent(eventName, eventValue, eventUnit=null, forceStateChange=false) {
    logDebug("Creating event for $eventName...")
    def descriptionText = "${device.displayName} ${eventName} is ${eventValue}${eventUnit ?: ''}"
    logDesc(descriptionText)
    def event
+   // TODO: Map-ify these parameters to make cleaner and less verbose?
    if (eventUnit) {
-      event = sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, unit: eventUnit) 
+      if (forceStateChange) {
+         event = sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, unit: eventUnit, isStateChange: true) 
+      }
+      else {
+         event = sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, unit: eventUnit)          
+      }
    } else {
-      event = sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText) 
+      if (forceStateChange) {
+         event = sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, isStateChange: true)  
+      }
+      else {
+         event = sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText)  
+      }
    }
    return event
 }
@@ -255,16 +307,41 @@ def parseSceneAttributeResponse(resp, data) {
       state.type = "GroupScene"
       state.group = sceneAttributes["group"]
       state.remove("lights")
-   } else if (sceneAttributes["type"] == "LightScene") {
+   }
+   else if (sceneAttributes["type"] == "LightScene") {
       state.type = "LightScene"
       state.lights = sceneAttributes["lights"]
       state.remove("group")
-   } else {
+   }
+   else {
       log.warn "Unknown scene type; off() commands will not work"
       state.remove("group")
       state.remove("lights")
       state.remove("type")
    }
+}
+
+/**
+ * Sets all group attribute values to something, intended to be called when device initially created to avoid
+ * missing attribute values (may cause problems with GH integration, etc. otherwise). Default values are
+ * approximately warm white and off.
+ */
+private void setDefaultAttributeValues() {
+   logDebug("Setting scene device states to sensibile default values...")
+   event = sendEvent(name: "switch", value: "off", isStateChange: false)
+   event = sendEvent(name: "pushed", value: 1, isStateChange: false)
+}
+
+void autoOffHandler() {
+   doSendEvent("switch", "off") 
+}
+
+/**
+ * Returns Hue group ID (as String, since it is likely to be used in DNI check or API call).
+ * May return null (if is not GroupScene)
+ */
+String getGroupID() {
+   return state.group
 }
 
 def logDebug(str) {

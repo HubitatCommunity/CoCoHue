@@ -16,7 +16,7 @@ For discussion and more information, visit the <a href="https://community.hubita
 1. Back up your hub and save a local copy before proceeding.
 
 2. Install the app  from the "apps" folder in this repository into the "Apps Code" section of Hubitat: https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/apps/cocohue-app.groovy
-    * **Important for users upgrading from 1.x:** if your installation is set up using the parent/child app strucutre (and you want to keep this installation), then
+    * **Important for users upgrading from 1.x:** if your installation is set up using the parent/child app strucutre (and you want to keep that installation), then
     follow these steps instead. First, update the parent app: https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/deprecated/cocohue-parent-app.groovy. Then,
     install the (child) app as above: https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/apps/cocohue-app.groovy. Finally, uncomment the
     line `parent: "RMoRobert:CoCoHue (Parent App)"` (should be around line 50-55) in the "child" app by removing the two slashes, `//`, in front of it.
@@ -54,7 +54,8 @@ scenes, it is recommended to keep polling enabled (actvating a scene will not up
 devices without polling). The `off()` command on a scene device will turn off the associated group (using the Hubitat device if
 available) or (for classic/"non-GroupScene" scenes) the associated lights, but in most cases it would be desirable to manually
 turn the group/lights off yourself instead of using the scene device (you'll have more control and know exactly what the outcome
-should be instead of CoCoHue inferring one for you).
+should be instead of CoCoHue inferring one for you). CoCoHue provides options for handling scene device on/off state and can
+optionally show other scenes for same room/zone/group as off when another is activated.
 
 2. Groups: the "Change Level" capability is implemented, meaning the "Start Level Change" and "Stop Level Change" commands are
 implemented on CoCoHue group devices, not just individual bulbs. Like Hubitat, by default, most group changes will propagage to

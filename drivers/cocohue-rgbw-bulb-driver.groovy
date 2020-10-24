@@ -14,8 +14,8 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2020-09-16
- *  Version: 2.0.0-preview.5
+ *  Last modified: 2020-10-22
+ *  Version: 2.0.0-rc.1
  * 
  *  Changelog:
  *  v2.0    - Added startLevelChange rate option; improved HTTP error handling; attribute events now generated
@@ -35,7 +35,7 @@
  *  v1.0    - Initial Release
  */ 
 
-import groovy.json.JsonSlurper
+//import groovy.json.JsonSlurper
 import groovy.transform.Field
 
 @Field static Map lightEffects = [0: "None", 1:"Color Loop"]

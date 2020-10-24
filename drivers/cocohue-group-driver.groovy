@@ -14,8 +14,8 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2020-09-16
- *  Version: 2.0.0-preview.5
+ *  Last modified: 2020-10-22
+ *  Version: 2.0.0-rc.1
  * 
  *  Changelog:
  * 
@@ -36,7 +36,7 @@
  *  v1.0    - Initial Release
  */ 
 
-import groovy.json.JsonSlurper
+//import groovy.json.JsonSlurper
 import groovy.transform.Field
 
 @Field static Map lightEffects = [0: "None", 1:"Color Loop"]
@@ -71,6 +71,8 @@ metadata {
       input(name: "levelChangeRate", type: "enum", description: "", title: '"Start level change" rate', options:
          [["slow":"Slow"],["medium":"Medium"],["fast":"Fast (default)"]], defaultValue: "fast")
       input(name: "updateBulbs", type: "bool", description: "", title: "Update member bulb states immediately when group state changes",
+         defaultValue: true)
+      input(name: "updateScenes", type: "bool", description: "", title: "Mark all GroupScenes for this group as off when group device turns off",
          defaultValue: true)
       input(name: "enableDebug", type: "bool", title: "Enable debug logging", defaultValue: true)
       input(name: "enableDesc", type: "bool", title: "Enable descriptionText logging", defaultValue: true)
@@ -518,6 +520,9 @@ void parseSendCommandResponse(resp, data) {
       if ((data.containsKey("on") || data.containsKey("bri")) && settings["updateBulbs"]) {
          parent.updateMemberBulbStatesFromGroup(data, state.memberBulbs, device.getDeviceNetworkId().endsWith('/0'))
       }
+      if (data["on"] == false && settings["updateScenes"]) {
+         parent.updateSceneStateToOffForGroup(getHueDeviceNumber())
+      }
    }
    else {
       logDebug("  Not creating events from map because not specified to do or Bridge response invalid")
@@ -709,7 +714,6 @@ private void setDefaultAttributeValues() {
    logDebug("Setting group device states to sensibile default values...")
    Map defaultValues = [any_on: false, bri: 254, hue: 8593, sat: 121, ct: 370 ]
    createEventsFromMap(defaultValues)
-
 }
 
 void logDebug(str) {
