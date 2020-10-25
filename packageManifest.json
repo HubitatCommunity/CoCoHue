@@ -13,7 +13,7 @@
 			"namespace": "RMoRobert",
 			"location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/apps/cocohue-app.groovy",
 			"required": true,
-			"version": "2.0.0-rc.1",
+			"version": "2.0.0-rc.6",
 			"primary": true,
 			"oauth": false
 		}
@@ -24,7 +24,7 @@
 			"name": "CoCoHue Bridge",
 			"namespace": "RMoRobert",
 			"location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-bridge-driver.groovy",
-			"version": "2.0.0-rc.1",
+			"version": "2.0.0-rc.6",
 			"required": true
 		},
 		{
@@ -32,7 +32,7 @@
 			"name": "CoCoHue CT Bulb",
 			"namespace": "RMoRobert",
 			"location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-ct-bulb-driver.groovy",
-			"version": "2.0.0-rc.1",
+			"version": "2.0.0-rc.6",
 			"required": true
 		},
 		{
@@ -40,7 +40,7 @@
 			"name": "CoCoHue Dimmable Bulb",
 			"namespace": "RMoRobert",
 			"location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-dimmable-bulb-driver.groovy",
-			"version": "2.0.0-rc.1",
+			"version": "2.0.0-rc.6",
 			"required": true
 		},
 		{
@@ -48,7 +48,7 @@
 			"name": "CoCoHue Group",
 			"namespace": "RMoRobert",
 			"location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-group-driver.groovy",
-			"version": "2.0.0-rc.1",
+			"version": "2.0.0-rc.6",
 			"required": true
 		},
 		{
@@ -56,7 +56,7 @@
 			"name": "CoCoHue On/Off Plug",
 			"namespace": "RMoRobert",
 			"location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-plug-driver.groovy",
-			"version": "2.0.0-rc.1",
+			"version": "2.0.0-rc.6",
 			"required": true
 		},
 		{
@@ -64,7 +64,7 @@
 			"name": "CoCoHue RGBW Bulb",
 			"namespace": "RMoRobert",
 			"location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-rgbw-bulb-driver.groovy",
-			"version": "2.0.0-rc.1",
+			"version": "2.0.0-rc.6",
 			"required": true
 		},
 		{
@@ -72,7 +72,7 @@
 			"name": "CoCoHue Scene",
 			"namespace": "RMoRobert",
 			"location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-scene-driver.groovy",
-			"version": "2.0.0-rc.1",
+			"version": "2.0.0-rc.6",
 			"required": true
 		}
 	]
