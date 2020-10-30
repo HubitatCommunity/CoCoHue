@@ -2,10 +2,10 @@
 	"packageName": "CoCoHue (Hue Bridge Integration)",
 	"minimumHEVersion": "2.1.9",
 	"author": "Robert Morris",
-	"dateReleased": "2020-10-23",
+	"dateReleased": "2020-10-29",
 	"communityLink": "https://community.hubitat.com/t/release-cocohue-hue-bridge-integration-including-scenes/27978",
 	"licenseFile": "",
-	"releaseNotes": "Version 2.0 RC 1 introdues some new features:\n* Improved bulb, scene and group discovery: added devices will now show with both Hubitat and Hue names for comparison and includes link to Hubitat device page\n* Better heuristics for scene device on/off states with more options (can turn off other scenes for group if one activated, for example)\n* Code optimization, likely performance improvements\n\nNOTE: Users upgrading from v1.x should follow instructions forum or on GitHub (parent app deprecatred but still available).\n\nNew in 2.0: Bridge discovery; 'startLevelChange' rate option for dimmable devices; improved error handling and Bridge online/offline status reporting\n\nPreivew 5: Improved debug logging for light and group list fetches from Bridge to aid in troubleshooting; improved handling for possible non-Bridge discovery request responses",
+	"releaseNotes": "Version 2.0 released! (If you've installed CoCoHue from HPM, you've always been on 2.x previews; this is the first offficial \"stable\" 2.0 release.) This contains a minor bugfix for scene discovery since 2.0 RC 1.\n\nNew features in v2.0 from v1.x include: Bridge discovery (manual setup still available); improved bulb, scene, and group discovery--previously added devices now show with both Hue and Hubitat names (and link to Hubitat device) for comparison; added options for improved scene on/off behavior (can show other scenes or other scenes in group as off when other scene in group activated, for example); \"startLevelChange\" rate option for dimmable devices; and code optimizations with likely performance improvements.\n\nNOTE: Users upgrading from v1.x should follow instructions forum or on GitHub (parent app deprecatred but still available).",
 	"apps" : [
 		{
 			"id": "568bab8e-5c69-4800-a038-481026904c05",
@@ -13,7 +13,7 @@
 			"namespace": "RMoRobert",
 			"location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/apps/cocohue-app.groovy",
 			"required": true,
-			"version": "2.0.0-rc.6",
+			"version": "2.0.0-final.7",
 			"primary": true,
 			"oauth": false
 		}
@@ -24,7 +24,7 @@
 			"name": "CoCoHue Bridge",
 			"namespace": "RMoRobert",
 			"location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-bridge-driver.groovy",
-			"version": "2.0.0-rc.6",
+			"version": "2.0.0-final.7",
 			"required": true
 		},
 		{
@@ -32,7 +32,7 @@
 			"name": "CoCoHue CT Bulb",
 			"namespace": "RMoRobert",
 			"location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-ct-bulb-driver.groovy",
-			"version": "2.0.0-rc.6",
+			"version": "2.0.0-final.7",
 			"required": true
 		},
 		{
@@ -40,7 +40,7 @@
 			"name": "CoCoHue Dimmable Bulb",
 			"namespace": "RMoRobert",
 			"location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-dimmable-bulb-driver.groovy",
-			"version": "2.0.0-rc.6",
+			"version": "2.0.0-final.7",
 			"required": true
 		},
 		{
@@ -48,7 +48,7 @@
 			"name": "CoCoHue Group",
 			"namespace": "RMoRobert",
 			"location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-group-driver.groovy",
-			"version": "2.0.0-rc.6",
+			"version": "2.0.0-final.7,
 			"required": true
 		},
 		{
@@ -56,7 +56,7 @@
 			"name": "CoCoHue On/Off Plug",
 			"namespace": "RMoRobert",
 			"location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-plug-driver.groovy",
-			"version": "2.0.0-rc.6",
+			"version": "2.0.0-final.7",
 			"required": true
 		},
 		{
@@ -64,7 +64,7 @@
 			"name": "CoCoHue RGBW Bulb",
 			"namespace": "RMoRobert",
 			"location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-rgbw-bulb-driver.groovy",
-			"version": "2.0.0-rc.6",
+			"version": "2.0.0-final.7",
 			"required": true
 		},
 		{
@@ -72,7 +72,7 @@
 			"name": "CoCoHue Scene",
 			"namespace": "RMoRobert",
 			"location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-scene-driver.groovy",
-			"version": "2.0.0-rc.6",
+			"version": "2.0.0-final.7",
 			"required": true
 		}
 	]

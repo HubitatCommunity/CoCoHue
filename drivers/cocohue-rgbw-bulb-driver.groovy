@@ -14,8 +14,8 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2020-10-22
- *  Version: 2.0.0-rc.1
+ *  Last modified: 2020-10-29
+ *  Version: 2.0.0
  * 
  *  Changelog:
  *  v2.0    - Added startLevelChange rate option; improved HTTP error handling; attribute events now generated

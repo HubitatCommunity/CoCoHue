@@ -22,8 +22,8 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2020-10-23
- *  Version: 2.0.0-rc.1
+ *  Last modified: 2020-10-29
+ *  Version: 2.0.0
  * 
  *  Changelog:
  *  v2.0   - New non-parent/child structure and name change; Bridge discovery; Bridge linking improvements (fewer pages);
@@ -605,7 +605,7 @@ def pageSelectScenes() {
       if (sceneCache) {
          state.sceneFullNames = [:]
          sceneCache.each { sc ->
-            com.hubitat.app.ChildDeviceWrapper sceneChild = getChildDevice("CCH/${state.bridgeID}/Scene/${sc.key}")
+            com.hubitat.app.ChildDeviceWrapper sceneChild = unclaimedScenes.find { scn -> scn.deviceNetworkId == "CCH/${state.bridgeID}/Scene/${sc.key}" }
             if (sceneChild) {
                addedScenes.put(sc.key, [hubitatName: sceneChild.name, hubitatId: sceneChild.id, hueName: sc.value?.name])
                unclaimedScenes.removeElement(sceneChild)
