@@ -48,7 +48,7 @@
 			"name": "CoCoHue Group",
 			"namespace": "RMoRobert",
 			"location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-group-driver.groovy",
-			"version": "2.0.0-final.7,
+			"version": "2.0.0-final.7",
 			"required": true
 		},
 		{
