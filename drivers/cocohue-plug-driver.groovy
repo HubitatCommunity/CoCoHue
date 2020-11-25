@@ -14,11 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2020-10-29
- *  Version: 2.0.0
+ *  Last modified: 2020-11-25
  * 
  *  Changelog:
- * 
+ *  v2.1    - Minor code cleanup; more static typing
  *  v2.0    - Improved HTTP error handling; attribute events now generated
  *            only after hearing back from Bridge; Bridge online/offline status improvements
  *  v1.8    - Added ability to disable plug->group state propagation;
@@ -46,17 +45,17 @@ metadata {
    }
 }
 
-def installed(){
+void installed(){
    log.debug "Installed..."
    initialize()
 }
 
-def updated(){
+void updated(){
    log.debug "Updated..."
    initialize()
 }
 
-def initialize() {
+void initialize() {
    log.debug "Initializing"
    int disableTime = 1800
    if (enableDebug) {
@@ -65,17 +64,17 @@ def initialize() {
    }
 }
 
-def refresh() {
+void refresh() {
    log.warn "Refresh CoCoHue Bridge device instead of individual device to update (all) bulbs/groups"
 }
 
-def debugOff() {
+void debugOff() {
    log.warn("Disabling debug logging")
    device.updateSetting("enableDebug", [value:"false", type:"bool"])
 }
 
 // Probably won't happen but...
-def parse(String description) {
+void parse(String description) {
    log.warn("Running unimplemented parse for: '${description}'")
 }
 
@@ -84,37 +83,37 @@ def parse(String description) {
  * Hubitat DNI is created in format "CCH/BridgeMACAbbrev/Light/HueDeviceID", so just
  * looks for number after third "/" character
  */
-def getHueDeviceNumber() {
+String getHueDeviceNumber() {
    return device.deviceNetworkId.split("/")[3]
 }
 
-def on() {    
+void on() {    
    logDebug("Turning on...")
    addToNextBridgeCommand(["on": true], true)
    sendBridgeCommand()
 }
 
-def off() {    
+void off() {    
    logDebug("Turning off...")
    addToNextBridgeCommand(["on": false], true)
    sendBridgeCommand()
 }
 
-def flash() {
+void flash() {
    logDesc("${device.displayName} started 15-cycle flash")
-   def cmd = ["alert": "lselect"]
+   Map cmd = ["alert": "lselect"]
    sendBridgeCommand(cmd, false) 
 }
 
-def flashOnce() {
+void flashOnce() {
    logDesc("${device.displayName} started 1-cycle flash")
-   def cmd = ["alert": "select"]
+   Map cmd = ["alert": "select"]
    sendBridgeCommand(cmd, false) 
 }
 
-def flashOff() {
+void flashOff() {
    logDesc("${device.displayName} was sent command to stop flash")
-   def cmd = ["alert": "none"]
+   Map cmd = ["alert": "none"]
    sendBridgeCommand(cmd, false) 
 }
 
@@ -126,9 +125,9 @@ def flashOff() {
  * @param cmdToAdd Map of Bridge commands to place in next command to be sent--example: ["on": true]
  * @param clearFirst If true (optional; default is false), will clear pending command map first
  */
-def addToNextBridgeCommand(Map cmdToAdd, boolean clearFirst=false) {
-    if (clearFirst || !state.nextCmd) state.nextCmd = [:]
-    state.nextCmd << cmdToAdd
+void addToNextBridgeCommand(Map cmdToAdd, boolean clearFirst=false) {
+   if (clearFirst || !state.nextCmd) state.nextCmd = [:]
+   state.nextCmd << cmdToAdd
 }
 
 /**
@@ -141,13 +140,14 @@ def addToNextBridgeCommand(Map cmdToAdd, boolean clearFirst=false) {
  * @param isFromBridge Set to true if this is data read from Hue Bridge rather than intended to be sent
  *  to Bridge; if true, will ignore differences for prestaged attributes if switch state is off
  */
-def createEventsFromMap(Map bridgeCmd = state.nextCmd, boolean isFromBridge = false) {
+void createEventsFromMap(Map bridgeCmd = state.nextCmd, boolean isFromBridge = false) {
    if (!bridgeCmd) {
       logDebug("createEventsFromMap called but map command empty; exiting")
       return
    }
    logDebug("Preparing to create events from map${isFromBridge ? ' from Bridge' : ''}: ${bridgeCmd}")
-   def eventName, eventValue, eventUnit, descriptionText
+   String eventName, eventUnit, descriptionText
+   def eventValue // could be String or number
    Boolean isOn
    bridgeCmd.each {
       switch (it.key) {
@@ -180,7 +180,7 @@ def createEventsFromMap(Map bridgeCmd = state.nextCmd, boolean isFromBridge = fa
  * @param createHubEvents Will iterate over Bridge command map and do sendEvent for all
  *        affected device attributes (e.g., will send an "on" event for "switch" if map contains "on": true)
  */
-def sendBridgeCommand(Map customMap = null, boolean createHubEvents=true) {    
+void sendBridgeCommand(Map customMap = null, boolean createHubEvents=true) {    
    logDebug("Sending command to Bridge: ${customMap ?: state.nextCmd}")
    Map cmd = [:]
    if (customMap != null) {
@@ -194,8 +194,8 @@ def sendBridgeCommand(Map customMap = null, boolean createHubEvents=true) {
       return
    }
    if (createHubEvents) createEventsFromMap(cmd)
-   def data = parent.getBridgeData()
-   def params = [
+   Map<String,String> data = parent.getBridgeData()
+   Map params = [
       uri: data.fullHost,
       path: "/api/${data.username}/lights/${getHueDeviceNumber()}/state",
       contentType: 'application/json',
@@ -262,23 +262,21 @@ private Boolean checkIfValidResponse(resp) {
    return isOK
 }
 
-def doSendEvent(eventName, eventValue, eventUnit=null) {
+void doSendEvent(String eventName, eventValue, String eventUnit=null) {
    logDebug("Creating event for $eventName...")
-   def descriptionText = "${device.displayName} ${eventName} is ${eventValue}${eventUnit ?: ''}"
+   String descriptionText = "${device.displayName} ${eventName} is ${eventValue}${eventUnit ?: ''}"
    logDesc(descriptionText)
-   def event
    if (eventUnit) {
-      event = sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, unit: eventUnit) 
+      sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, unit: eventUnit) 
    } else {
-      event = sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText) 
+      sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText) 
    }
-   return event
 }
 
-def logDebug(str) {
+void logDebug(str) {
    if (settings.enableDebug) log.debug(str)
 }
 
-def logDesc(str) {
+void logDesc(str) {
    if (settings.enableDesc) log.info(str)
 }

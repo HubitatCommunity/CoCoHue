@@ -14,10 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2020-10-29
- *  Version: 2.0.0
+ *  Last modified: 2020-11-25
  * 
  *  Changelog:
+ *  v2.1    - Added optional rate to setColor per Hubitat (used by Hubitat Groups and Scenes); more static typing
  *  v2.0    - Added startLevelChange rate option; improved HTTP error handling; attribute events now generated
  *            only after hearing back from Bridge; Bridge online/offline status improvements
  *  v1.9    - Parse xy as ct (previously did rgb but without parsing actual color)
@@ -76,19 +76,19 @@ metadata {
    }
 }
 
-def installed(){
+void installed(){
    log.debug "Installed..."
    def le = new groovy.json.JsonBuilder(lightEffects)
    sendEvent(name: "lightEffects", value: le)
    initialize()
 }
 
-def updated(){
+void updated(){
    log.debug "Updated..."
    initialize()
 }
 
-def initialize() {
+void initialize() {
    log.debug "Initializing"
    int disableTime = 1800
    if (enableDebug) {
@@ -97,13 +97,13 @@ def initialize() {
    }
 }
 
-def debugOff() {
+void debugOff() {
    log.warn("Disabling debug logging")
    device.updateSetting("enableDebug", [value:"false", type:"bool"])
 }
 
 // Probably won't happen but...
-def parse(String description) {
+void parse(String description) {
    log.warn("Running unimplemented parse for: '${description}'")
 }
 
@@ -112,11 +112,11 @@ def parse(String description) {
  * Hubitat DNI is created in format "CCH/BridgeMACAbbrev/Light/HueDeviceID", so just
  * looks for number after third "/" character
  */
-def getHueDeviceNumber() {
+String getHueDeviceNumber() {
    return device.deviceNetworkId.split("/")[3]
 }
 
-def on() {    
+void on() {    
    logDebug("Turning on...")
    /* TODO: Add setting for "agressive" vs. normal prestaging (?), and for regular pre-staging,
    check if current level is different from lastXYZ value, in which case it was probably
@@ -130,7 +130,7 @@ def on() {
    state.remove("lastLevel")
 }
 
-def off() {    
+void off() {    
    logDebug("Turning off...")
    state.remove("lastHue")
    state.remove("lastSat")
@@ -140,25 +140,25 @@ def off() {
    sendBridgeCommand()
 }
 
-def startLevelChange(direction) {
+void startLevelChange(direction) {
    logDebug("Running startLevelChange($direction)...")
-   def cmd = ["bri": (direction == "up" ? 254 : 1),
+   Map cmd = ["bri": (direction == "up" ? 254 : 1),
             "transitiontime": ((settings["levelChangeRate"] == "fast" || !settings["levelChangeRate"]) ?
                                  30 : (settings["levelChangeRate"] == "slow" ? 60 : 45))]
    sendBridgeCommand(cmd, false) 
 }
 
-def stopLevelChange() {
+void stopLevelChange() {
    logDebug("Running stopLevelChange...")
-   def cmd = ["bri_inc": 0]
+   Map cmd = ["bri_inc": 0]
    sendBridgeCommand(cmd, false) 
 }
 
-def setLevel(value) {
+void setLevel(value) {
    setLevel(value, ((transitionTime != null ? transitionTime.toBigDecimal() : 1000)) / 1000)
 }
 
-def setLevel(value, rate) {
+void setLevel(value, rate) {
    logDebug("Setting level to ${value}% over ${rate}s...")
    state.remove("lastLevel")
    if (value < 0) value = 1
@@ -168,10 +168,10 @@ def setLevel(value, rate) {
       logDebug("Level is 0 so turning off instead")
       return
    }
-   def newLevel = scaleBriToBridge(value)
-   def scaledRate = (rate * 10).toInteger()
+   Integer newLevel = scaleBriToBridge(value)
+   Integer scaledRate = (rate * 10).toInteger()
    addToNextBridgeCommand(["bri": newLevel, "transitiontime": scaledRate], !(levelStaging || colorStaging))
-   def isOn = device.currentValue("switch") == "on"    
+   Boolean isOn = device.currentValue("switch") == "on"    
    if (!levelStaging || isOn) {
       addToNextBridgeCommand(["on": true])
       sendBridgeCommand()
@@ -181,17 +181,17 @@ def setLevel(value, rate) {
    }
 }
 
-def setColorTemperature(value) {
+void setColorTemperature(value) {
    logDebug("Setting color temperature to $value...")
    state.remove("lastHue")
    state.remove("lastSat")
    state.remove("lastCT")
-   def newCT = Math.round(1000000/value)
+   Integer newCT = Math.round(1000000/value)
    if (newCT < 153) value = 153
    else if (newCT > 500) newCT = 500
-   def scaledRate = ((transitionTime != null ? transitionTime.toBigDecimal() : 1000) / 100).toInteger()
+   Integer scaledRate = ((transitionTime != null ? transitionTime.toBigDecimal() : 1000) / 100).toInteger()
    addToNextBridgeCommand(["ct": newCT, "transitiontime": scaledRate], !(levelStaging || colorStaging))
-   def isOn = device.currentValue("switch") == "on"    
+   Boolean isOn = device.currentValue("switch") == "on"    
    if (!colorStaging || isOn) {
       addToNextBridgeCommand(["on": true])
       sendBridgeCommand()
@@ -201,23 +201,29 @@ def setColorTemperature(value) {
    }
 }
 
-def setColor(value) {
+void setColor(value) {
    logDebug("Setting color...")
    if (value.hue == null || value.hue == "NaN" || value.saturation == null || value.saturation == "NaN") {
       logDebug("Exiting setColor because no hue and/or saturation set")
       return
    }
-   def newHue = scaleHueToBridge(value.hue)
-   def newSat = scaleSatToBridge(value.saturation)
-   def newBri = (value.level != null && value.level != "NaN") ? scaleBriToBridge(value.level) : null
+   Integer newHue = scaleHueToBridge(value.hue)
+   Integer newSat = scaleSatToBridge(value.saturation)
+   Integer newBri = (value.level != null && value.level != "NaN") ? scaleBriToBridge(value.level) : null
    state.remove("lastHue")
    state.remove("lastSat")
    state.remove("lastCT")
    if (newBri) state.remove("lastLevel")
-   def scaledRate = ((transitionTime != null ? transitionTime.toBigDecimal() : 1000) / 100).toInteger()
+   Integer scaledRate
+   if (value.rate != null) {
+      scaledRate = value.rate
+   }
+   else {
+      scaledRate = ((transitionTime != null ? transitionTime.toBigDecimal() : 1000) / 100).toInteger()
+   }
    addToNextBridgeCommand(["hue": newHue, "sat": newSat, "transitiontime": scaledRate], , !(levelStaging || colorStaging))
    if (newBri) addToNextBridgeCommand(["bri": newBri])
-   def isOn = device.currentValue("switch") == "on"    
+   Boolean isOn = device.currentValue("switch") == "on"    
    if (!colorStaging || isOn) {
       addToNextBridgeCommand(["on": true])
       if (newBri) addToNextBridgeCommand(["bri": newBri])
@@ -230,14 +236,14 @@ def setColor(value) {
    }
 }
 
-def setHue(value) {
+void setHue(value) {
    logDebug("Setting hue...")
-   def newHue = scaleHueToBridge(value)
+   Integer newHue = scaleHueToBridge(value)
    state.remove("lastHue")
    state.remove("lastCT")
-   def scaledRate = ((transitionTime != null ? transitionTime.toBigDecimal() : 1000) / 100).toInteger()    
+   Integer scaledRate = ((transitionTime != null ? transitionTime.toBigDecimal() : 1000) / 100).toInteger()    
    addToNextBridgeCommand(["hue": newHue, "transitiontime": scaledRate], , !(levelStaging || colorStaging))
-   def isOn = device.currentValue("switch") == "on"    
+   Boolean isOn = device.currentValue("switch") == "on"    
    if (!colorStaging || isOn) {
       addToNextBridgeCommand(["on": true])
       sendBridgeCommand()
@@ -247,14 +253,14 @@ def setHue(value) {
    }
 }
 
-def setSaturation(value) {
+void setSaturation(value) {
    logDebug("Setting saturation...")
-   def newSat = scaleSatToBridge(value)
+   Integer newSat = scaleSatToBridge(value)
    state.remove("lastSat")
    state.remove("lastCT")
-   def scaledRate = ((transitionTime != null ? transitionTime.toBigDecimal() : 1000) / 100).toInteger()
+   Integer scaledRate = ((transitionTime != null ? transitionTime.toBigDecimal() : 1000) / 100).toInteger()
    addToNextBridgeCommand(["sat": newSat, "transitiontime": scaledRate], !(levelStaging || colorStaging))
-   def isOn = device.currentValue("switch") == "on"    
+   Boolean isOn = device.currentValue("switch") == "on"    
    if (!colorStaging || isOn) {
       addToNextBridgeCommand(["on": true])
       sendBridgeCommand()
@@ -264,12 +270,12 @@ def setSaturation(value) {
    }
 }
 
-def setEffect(String effect) {
+void setEffect(String effect) {
    def id = lightEffects.find { it.value == effect }
    if (id != null) setEffect(id.key)
 }
 
-def setEffect(id) {
+void setEffect(id) {
    logDebug("Setting effect $id...")
    state.remove("lastHue")
    // May want to see if it really makes sense to remove these too:
@@ -280,35 +286,35 @@ def setEffect(id) {
    sendBridgeCommand()
 }
 
-def setNextEffect() {
-   def currentEffect = state.crntEffectId ?: 0
+void setNextEffect() {
+   Integer currentEffect = state.crntEffectId ?: 0
    currentEffect++
    if (currentEffect > 1) currentEffect = 0
    setEffect(currentEffect)
 }
 
-def setPreviousEffect() {
-   def currentEffect = state.crntEffectId ?: 0
+void setPreviousEffect() {
+   Integer currentEffect = state.crntEffectId ?: 0
    currentEffect--
    if (currentEffect < 0) currentEffect = 1
    setEffect(currentEffect)
 }
 
-def flash() {
+void flash() {
    logDesc("${device.displayName} started 15-cycle flash")
-   def cmd = ["alert": "lselect"]
+   Map<String,String> cmd = ["alert": "lselect"]
    sendBridgeCommand(cmd, false) 
 }
 
-def flashOnce() {
+void flashOnce() {
    logDesc("${device.displayName} started 1-cycle flash")
-   def cmd = ["alert": "select"]
+   Map<String,String> cmd = ["alert": "select"]
    sendBridgeCommand(cmd, false) 
 }
 
-def flashOff() {
+void flashOff() {
    logDesc("${device.displayName} was sent command to stop flash")
-   def cmd = ["alert": "none"]
+   Map<String,String> cmd = ["alert": "none"]
    sendBridgeCommand(cmd, false) 
 }
 
@@ -320,7 +326,7 @@ def flashOff() {
  * @param cmdToAdd Map of Bridge commands to place in next command to be sent--example: ["on": true]
  * @param clearFirst If true (optional; default is false), will clear pending command map first
  */
-def addToNextBridgeCommand(Map cmdToAdd, boolean clearFirst=false) {
+void addToNextBridgeCommand(Map cmdToAdd, boolean clearFirst=false) {
    if (clearFirst || !state.nextCmd) state.nextCmd = [:]
    state.nextCmd << cmdToAdd
 }
@@ -335,15 +341,16 @@ def addToNextBridgeCommand(Map cmdToAdd, boolean clearFirst=false) {
  * @param isFromBridge Set to true if this is data read from Hue Bridge rather than intended to be sent
  *  to Bridge; if true, will ignore differences for prestaged attributes if switch state is off
  */
-def createEventsFromMap(Map bridgeCommandMap = state.nextCmd, boolean isFromBridge = false) {
+void createEventsFromMap(Map bridgeCommandMap = state.nextCmd, boolean isFromBridge = false) {
    if (!bridgeCommandMap) {
       logDebug("createEventsFromMap called but map command empty; exiting")
       return
    }
-   def bridgeMap = bridgeCommandMap
+   Map bridgeMap = bridgeCommandMap
    logDebug("Preparing to create events from map${isFromBridge ? ' from Bridge' : ''}: ${bridgeMap}")
-   def eventName, eventValue, eventUnit, descriptionText
-   def colorMode = bridgeMap["colormode"]
+   String eventName, eventUnit, descriptionText
+   def eventValue // could be String or number
+   String colorMode = bridgeMap["colormode"]
    if (isFromBridge && bridgeMap["colormode"] == "xy") {
       colorMode == "ct"
       logDebug("In XY mode but parsing as CT")
@@ -473,7 +480,7 @@ def createEventsFromMap(Map bridgeCommandMap = state.nextCmd, boolean isFromBrid
  * @param createHubEvents Will iterate over Bridge command map and do sendEvent for all
  *        affected device attributes (e.g., will send an "on" event for "switch" if map contains "on": true)
  */
-def sendBridgeCommand(Map customMap = null, boolean createHubEvents=true) {    
+void sendBridgeCommand(Map customMap = null, boolean createHubEvents=true) {    
    logDebug("Sending command to Bridge: ${customMap ?: state.nextCmd}")
    Map cmd = [:]
    if (customMap != null) {
@@ -487,8 +494,8 @@ def sendBridgeCommand(Map customMap = null, boolean createHubEvents=true) {
       log.debug("Commands not sent to Bridge because command map empty")
       return
    }
-   def data = parent.getBridgeData()
-   def params = [
+   Map<String,String> data = parent.getBridgeData()
+   Map params = [
       uri: data.fullHost,
       path: "/api/${data.username}/lights/${getHueDeviceNumber()}/state",
       contentType: 'application/json',
@@ -555,26 +562,24 @@ private Boolean checkIfValidResponse(resp) {
    return isOK
 }
 
-def doSendEvent(String eventName, eventValue, eventUnit=null) {
+void doSendEvent(String eventName, eventValue, String eventUnit=null) {
    logDebug("Creating event for $eventName...")
-   def descriptionText = "${device.displayName} ${eventName} is ${eventValue}${eventUnit ?: ''}"
+   String descriptionText = "${device.displayName} ${eventName} is ${eventValue}${eventUnit ?: ''}"
    logDesc(descriptionText)
-   def event
    if (eventUnit) {
-      event = sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, unit: eventUnit) 
+      sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, unit: eventUnit) 
    } else {
-      event = sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText) 
+      sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText) 
    }
-   return event
 }
 
-def refresh() {
+void refresh() {
    log.warn "Refresh CoCoHue Bridge device instead of individual device to update (all) bulbs/groups"
 }
 
 // Hubiat-provided color/name mappings
-def setGenericName(hue){
-   def colorName
+void setGenericName(hue){
+   String colorName
    hue = hue.toInteger()
    if (!hiRezHue) hue = (hue * 3.6)
    switch (hue.toInteger()){
@@ -612,10 +617,10 @@ def setGenericName(hue){
 }
 
 // Hubitat-provided ct/name mappings
-def setGenericTempName(temp){
+void setGenericTempName(temp){
    if (!temp) return
-   def genericName
-   def value = temp.toInteger()
+   String genericName
+   Integer value = temp.toInteger()
    if (value <= 2000) genericName = "Sodium"
    else if (value <= 2100) genericName = "Starlight"
    else if (value < 2400) genericName = "Sunrise"
@@ -636,7 +641,7 @@ def setGenericTempName(temp){
  * Scales Hubitat's 1-100 brightness levels to Hue Bridge's 1-254
  */
 private Integer scaleBriToBridge(hubitatLevel) {
-   def scaledLevel =  hubitatLevel == 1 ? 1 : hubitatLevel.toBigDecimal() / 100 * 254
+   Integer scaledLevel =  hubitatLevel == 1 ? 1 : hubitatLevel.toBigDecimal() / 100 * 254
    return Math.round(scaledLevel)
 }
 
@@ -644,20 +649,20 @@ private Integer scaleBriToBridge(hubitatLevel) {
  * Scales Hue Bridge's 1-254 brightness levels to Hubitat's 1-100
  */
 private Integer scaleBriFromBridge(bridgeLevel) {
-   def scaledLevel = bridgeLevel.toBigDecimal() / 254 * 100
+   Integer scaledLevel = bridgeLevel.toBigDecimal() / 254 * 100
    if (scaledLevel < 1) scaledLevel = 1
    return Math.round(scaledLevel)
 }
 
 private Integer scaleHueToBridge(hubitatLevel) {
-   def scaledLevel = Math.round(hubitatLevel.toBigDecimal() / (hiRezHue ? 360 : 100) * 65535)
+   Integer scaledLevel = Math.round(hubitatLevel.toBigDecimal() / (hiRezHue ? 360 : 100) * 65535)
    if (scaledLevel < 0) scaledLevel = 0
    else if (scaledLevel > 65535) scaledLevel = 65535
    return scaledLevel
 }
 
 private Integer scaleHueFromBridge(bridgeLevel) {
-   def scaledLevel = Math.round(bridgeLevel.toBigDecimal() / 65535 * (hiRezHue ? 360 : 100))
+   Integer scaledLevel = Math.round(bridgeLevel.toBigDecimal() / 65535 * (hiRezHue ? 360 : 100))
    if (scaledLevel < 0) scaledLevel = 0
    else if (scaledLevel > 360) scaledLevel = 360
    else if (scaledLevel > 100 && !hiRezHue) scaledLevel = 100
@@ -665,7 +670,7 @@ private Integer scaleHueFromBridge(bridgeLevel) {
 }
 
 private Integer scaleSatToBridge(hubitatLevel) {
-   def scaledLevel = Math.round(hubitatLevel.toBigDecimal() / 100 * 254)
+   Integer scaledLevel = Math.round(hubitatLevel.toBigDecimal() / 100 * 254)
    if (scaledLevel < 0) scaledLevel = 0
    else if (scaledLevel > 254) scaledLevel = 254
    return scaledLevel
@@ -673,16 +678,16 @@ private Integer scaleSatToBridge(hubitatLevel) {
 }
 
 private Integer scaleSatFromBridge(bridgeLevel) {
-   def scaledLevel = Math.round(bridgeLevel.toBigDecimal() / 254 * 100)
+   Integer scaledLevel = Math.round(bridgeLevel.toBigDecimal() / 254 * 100)
    if (scaledLevel < 0) scaledLevel = 0
    else if (scaledLevel > 100) scaledLevel = 100
    return scaledLevel
 }
 
-def logDebug(str) {
+void logDebug(str) {
    if (settings.enableDebug) log.debug(str)
 }
 
-def logDesc(str) {
+void logDesc(str) {
    if (settings.enableDesc) log.info(str)
 }

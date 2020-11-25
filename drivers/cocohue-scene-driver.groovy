@@ -14,11 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2020-10-29
- *  Version: 2.0.0
+ *  Last modified: 2020-11-25
  * 
  *  Changelog:
- * 
+ *  v2.1   - Reduced info logging when not state change; code cleanup and more static typing
  *  v2.0    - Improved HTTP error handling; attribute events now generated only after hearing back from Bridge;
  *            Bridge online/offline status improvements; bug fix for off() with light- or group-device-less scenes
  *            Added options for scene "switch" attribute (on/off) behavior
@@ -57,18 +56,18 @@ metadata {
     }
 }
 
-def installed(){
+void installed(){
    log.debug "Installed..."
    setDefaultAttributeValues()
    initialize()
 }
 
-def updated(){
+void updated(){
    log.debug "Updated..."
    initialize()
 }
 
-def initialize() {
+void initialize() {
    log.debug "Initializing"
    sendEvent(name: "numberOfButtons", value: 1)				
    int disableTime = 1800
@@ -79,18 +78,18 @@ def initialize() {
    refresh() // Get scene data
 }
 
-def configure() {
+void configure() {
    log.debug "Configure"
    setDefaultAttributeValues()
 }
 
-def debugOff() {
+void debugOff() {
    log.warn("Disabling debug logging")
    device.updateSetting("enableDebug", [value:"false", type:"bool"])
 }
 
 // Probably won't happen but...
-def parse(String description) {
+void parse(String description) {
    log.warn("Running unimplemented parse for: '${description}'")
 }
 
@@ -99,14 +98,14 @@ def parse(String description) {
  * Hubitat DNI is created in format "CCH/BridgeMACAbbrev/Scenes/HueSceneID", so just
  * looks for number after third "/" character
  */
-def getHueDeviceNumber() {
+String getHueDeviceNumber() {
    return device.deviceNetworkId.split("/")[3]
 }
 
-def on() {    
+void on() {    
    logDebug("Turning on scene...")
-   def data = parent.getBridgeData()
-   def cmd = ["scene": getHueDeviceNumber()]
+   Map<String,String> data = parent.getBridgeData()
+   Map cmd = ["scene": getHueDeviceNumber()]
    Map params = [
       uri: data.fullHost,
       path: "/api/${data.username}/groups/0/action",
@@ -121,13 +120,13 @@ def on() {
    logDebug("Command sent to Bridge: $cmd")
 }
 
-def off() {
+void off() {
    logDebug("off()")
    if (state.type == "GroupScene") {
       logDebug("Scene is GroupScene; turning off group $state.group")
-      def dniParts = device.deviceNetworkId.split("/")
-      def dni = "${dniParts[0]}/${dniParts[1]}/Group/${state.group}"
-      def dev = parent.getChildDevice(dni)
+      List<String> dniParts = device.deviceNetworkId.split("/")
+      String dni = "${dniParts[0]}/${dniParts[1]}/Group/${state.group}"
+      com.hubitat.app.ChildDeviceWrapper dev = parent.getChildDevice(dni)
       if (dev) {
          logDebug("Hubitat device for group ${state.group} found; turning off")
          dev.off()
@@ -135,9 +134,9 @@ def off() {
       }
       else {
          logDebug("Device not found; sending command directly to turn off Hue group")
-         def data = parent.getBridgeData()
-         def cmd = ["on": false]
-         def params = [
+         Map<String,String> data = parent.getBridgeData()
+         Map cmd = ["on": false]
+         Map params = [
                uri: data.fullHost,
                path: "/api/${data.username}/groups/${state.group}/action",
                contentType: 'application/json',
@@ -151,26 +150,26 @@ def off() {
       doSendEvent("switch", "off", null) // optimistic here (would be difficult to determine and aggregate individual light responses and should be rare anyway)
       logDebug("Scene is LightScene; turning off lights $state.lights")
       state.lights.each {
-         def dniParts = device.deviceNetworkId.split("/")
-         def dni = "${dniParts[0]}/${dniParts[1]}/Light/${it}"
-         def dev = parent.getChildDevice(dni)
+         List<String> dniParts = device.deviceNetworkId.split("/")
+         String dni = "${dniParts[0]}/${dniParts[1]}/Light/${it}"
+         com.hubitat.app.ChildDeviceWrapper dev = parent.getChildDevice(dni)
          if (dev) {
-               logDebug("Hubitat device for light ${it} found; turning off")
-               dev.off()
+            logDebug("Hubitat device for light ${it} found; turning off")
+            dev.off()
          }
          else {
-               logDebug("Device not found; sending command directly to turn off Hue light")
-               def data = parent.getBridgeData()
-               def cmd = ["on": false]
-               def params = [
-                  uri: data.fullHost,
-                  path: "/api/${data.username}/lights/${it}/state",
-                  contentType: 'application/json',
-                  body: cmd,
-                  timeout: 15
-               ]
-               asynchttpPut("parseSendCommandResponse", params)
-               logDebug("Command sent to Bridge: $cmd")
+            logDebug("Device not found; sending command directly to turn off Hue light")
+            Map<String,String> data = parent.getBridgeData()
+            Map cmd = ["on": false]
+            Map params = [
+               uri: data.fullHost,
+               path: "/api/${data.username}/lights/${it}/state",
+               contentType: 'application/json',
+               body: cmd,
+               timeout: 15
+            ]
+            asynchttpPut("parseSendCommandResponse", params)
+            logDebug("Command sent to Bridge: $cmd")
          }
       }      
       if (settings["onRefresh"] == "1000" || settings["onRefresh"] == "5000") {
@@ -192,8 +191,8 @@ void parseSendCommandResponse(resp, data) {
    logDebug("Response from Bridge: ${resp.status}; data from app = $data")
    if (checkIfValidResponse(resp) && data?.attribute != null && data?.value != null) {
       logDebug("  Bridge response valid; running creating events")
-      doSendEvent(data.attribute, data.value)   
-      if (data?.attribute == "switch" && data?.value == "on") {
+      if (device.currentValue(data.attribute) != data.value) doSendEvent(data.attribute, data.value)   
+      if (data.attribute == "switch" && data.value == "on") {
          if (settings["onPropagation"] == "groupScenesOff") {
             parent.updateSceneStateToOffForGroup(state.group ?: "0", device.deviceNetworkId)
          }
@@ -249,40 +248,38 @@ private Boolean checkIfValidResponse(resp) {
    return isOK
 }
 
-def push(btnNum) {
+void push(btnNum) {
    on()
    doSendEvent("pushed", 1, null, true)
 }
 
-def doSendEvent(eventName, eventValue, eventUnit=null, forceStateChange=false) {
+void doSendEvent(String eventName, eventValue, String eventUnit=null, forceStateChange=false) {
    logDebug("Creating event for $eventName...")
-   def descriptionText = "${device.displayName} ${eventName} is ${eventValue}${eventUnit ?: ''}"
+   String descriptionText = "${device.displayName} ${eventName} is ${eventValue}${eventUnit ?: ''}"
    logDesc(descriptionText)
-   def event
    // TODO: Map-ify these parameters to make cleaner and less verbose?
    if (eventUnit) {
       if (forceStateChange) {
-         event = sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, unit: eventUnit, isStateChange: true) 
+         sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, unit: eventUnit, isStateChange: true) 
       }
       else {
-         event = sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, unit: eventUnit)          
+         sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, unit: eventUnit)          
       }
    } else {
       if (forceStateChange) {
-         event = sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, isStateChange: true)  
+         sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, isStateChange: true)  
       }
       else {
-         event = sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText)  
+         sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText)  
       }
    }
-   return event
 }
 
 /** Gets data about scene from Bridge; does not update bulb/group status */
-def refresh() {
+void refresh() {
    logDebug("Refresh...")
-   def data = parent.getBridgeData()
-   def sceneParams = [
+   Map<String,String> data = parent.getBridgeData()
+   Map sceneParams = [
       uri: data.fullHost,
       path: "/api/${data.username}/scenes/${getHueDeviceNumber()}",
       contentType: 'application/json',
@@ -294,9 +291,9 @@ def refresh() {
 /**
  * Parses data returned when getting scene data from Bridge
  */
-def parseSceneAttributeResponse(resp, data) {
+void parseSceneAttributeResponse(resp, data) {
    logDebug("parseSceneAttributeResponse response from Bridge: $resp.status")
-   def sceneAttributes
+   Map sceneAttributes
    try {
       sceneAttributes = resp.json
    } catch (ex) {
@@ -344,10 +341,10 @@ String getGroupID() {
    return state.group
 }
 
-def logDebug(str) {
+void logDebug(str) {
    if (settings.enableDebug) log.debug(str)
 }
 
-def logDesc(str) {
+void logDesc(str) {
    if (settings.enableDesc) log.info(str)
 }

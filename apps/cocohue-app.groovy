@@ -22,10 +22,11 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2020-10-29
- *  Version: 2.0.0
+ *  Last modified: 2020-11-25
  * 
  *  Changelog:
+ *  v2.1 -   Reduced group and scene "info" logging if no state change/event; other GroupScenes now also report "off" if received from
+ *           poll from Bridge instead of (only) command from Hubitat; more static typing
  *  v2.0   - New non-parent/child structure and name change; Bridge discovery; Bridge linking improvements (fewer pages);
  *           added documentation links; likely performance improvements (less dynamic typing); ability to use dicovery but
  *           unsubscribe from SSDP/discovery after addition; Hue vs. Hubitat name comparisons added; scene device improvments
@@ -950,7 +951,7 @@ private String convertHexToIP(hex) {
  * Returns map containing Bridge username, IP, and full HTTP post/port, intended to be
  * called by child devices so they can send commands to the Hue Bridge API using info
  */
-Map getBridgeData(String protocol="http", Integer port=80) {
+Map<String,String> getBridgeData(String protocol="http", Integer port=80) {
    logDebug("Running getBridgeData()...")
    if (!state.ipAddress && settings['bridgeIP'] && !(settings['useSSDP'])) state.ipAddress = settings['bridgeIP'] // seamless upgrade from v1.x
    if (!state["username"] || !state.ipAddress) log.error "Missing username or IP address from Bridge"
@@ -1055,7 +1056,7 @@ void updateSceneStateToOffForGroup(String groupID, String excludeDNI=null) {
    }
    logDebug("updateSceneStateToOffForGroup matching scenes: $sceneDevs")
    sceneDevs.each { sc ->
-		   sc.doSendEvent("switch", "off")
+		   if (sc.currentValue("switch") != "off") sc.doSendEvent("switch", "off")
    }
 }
 
@@ -1084,7 +1085,7 @@ Boolean getIsAnyGroupMemberBulbOn(groupDevice) {
    }
  }
 
-def appButtonHandler(btn) {
+void appButtonHandler(btn) {
    switch(btn) {
       case "btnBulbRefresh":
       case "btnGroupRefresh":
