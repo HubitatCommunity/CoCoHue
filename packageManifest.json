@@ -2,10 +2,10 @@
 	"packageName": "CoCoHue (Hue Bridge Integration)",
 	"minimumHEVersion": "2.1.9",
 	"author": "Robert Morris",
-	"dateReleased": "2020-11-25",
+	"dateReleased": "2020-11-29",
 	"communityLink": "https://community.hubitat.com/t/release-cocohue-hue-bridge-integration-including-scenes/27978",
 	"licenseFile": "",
-	"releaseNotes": "Version 2.1: Reduced \"info\" logging when no events actually generated; optional \"rate\" map option now read for setColor command (if used with Hubitat Groups and Scenes); minor code cleanup and likely performance improvements.\n\n\nNew features in v2.0 from v1.x include: Bridge discovery (manual setup still available); improved bulb, scene, and group discovery--previously added devices now show with both Hue and Hubitat names (and link to Hubitat device) for comparison; added options for improved scene on/off behavior (can show other scenes or other scenes in group as off when other scene in group activated, for example); \"startLevelChange\" rate option for dimmable devices; and code optimizations with likely performance improvements.\n\nNOTE: Users upgrading from v1.x should follow instructions forum or on GitHub (parent app deprecatred but still available) and perform initial upgrade manually, not with HPM.",
+	"releaseNotes": "Version 2.1.1.: Improved rounding for level (brightness) to/from Bridge\n\nVersion 2.1: Reduced \"info\" logging when no events actually generated; optional \"rate\" map option now read for setColor command (if used with Hubitat Groups and Scenes); minor code cleanup and likely performance improvements.\n\n\nNew features in v2.0 from v1.x include: Bridge discovery (manual setup still available); improved bulb, scene, and group discovery--previously added devices now show with both Hue and Hubitat names (and link to Hubitat device) for comparison; added options for improved scene on/off behavior (can show other scenes or other scenes in group as off when other scene in group activated, for example); \"startLevelChange\" rate option for dimmable devices; and code optimizations with likely performance improvements.\n\nNOTE: Users upgrading from v1.x should follow instructions forum or on GitHub (parent app deprecatred but still available) and perform initial upgrade manually, not with HPM.",
 	"apps" : [
 		{
 			"id": "568bab8e-5c69-4800-a038-481026904c05",
@@ -32,7 +32,7 @@
 			"name": "CoCoHue CT Bulb",
 			"namespace": "RMoRobert",
 			"location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-ct-bulb-driver.groovy",
-			"version": "2.1.0",
+			"version": "2.1.1",
 			"required": true
 		},
 		{
@@ -40,7 +40,7 @@
 			"name": "CoCoHue Dimmable Bulb",
 			"namespace": "RMoRobert",
 			"location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-dimmable-bulb-driver.groovy",
-			"version": "2.1.0",
+			"version": "2.1.1",
 			"required": true
 		},
 		{
@@ -48,7 +48,7 @@
 			"name": "CoCoHue Group",
 			"namespace": "RMoRobert",
 			"location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-group-driver.groovy",
-			"version": "2.1.0",
+			"version": "2.1.1",
 			"required": true
 		},
 		{
@@ -64,7 +64,7 @@
 			"name": "CoCoHue RGBW Bulb",
 			"namespace": "RMoRobert",
 			"location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-rgbw-bulb-driver.groovy",
-			"version": "2.1.0",
+			"version": "2.1.1",
 			"required": true
 		},
 		{

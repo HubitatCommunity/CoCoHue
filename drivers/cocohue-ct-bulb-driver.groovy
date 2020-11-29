@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2020-11-25
+ *  Last modified: 2020-11-29
  *
  *  Changelog:
+ *  v2.1.1  - Improved rounding for level (brightness) to/from Bridge
  *  v2.1    - More static typing
  *  v2.0    - Added startLevelChange rate option; improved HTTP error handling; attribute events now generated
  *            only after hearing back from Bridge; Bridge online/offline status improvements
@@ -399,7 +400,7 @@ void setGenericTempName(temp){
  * Scales Hubitat's 1-100 brightness levels to Hue Bridge's 1-254
  */
 private Integer scaleBriToBridge(hubitatLevel) {
-   Integer scaledLevel =  hubitatLevel == 1 ? 1 : hubitatLevel.toBigDecimal() / 100 * 254
+   Integer scaledLevel =  Math.round(hubitatLevel == 1 ? 1 : hubitatLevel.toBigDecimal() / 100 * 254)
    return Math.round(scaledLevel)
 }
 
@@ -407,7 +408,7 @@ private Integer scaleBriToBridge(hubitatLevel) {
  * Scales Hue Bridge's 1-254 brightness levels to Hubitat's 1-100
  */
 private Integer scaleBriFromBridge(bridgeLevel) {
-   Integer scaledLevel = bridgeLevel.toBigDecimal() / 254 * 100
+   Integer scaledLevel = Math.round(bridgeLevel.toBigDecimal() / 254 * 100)
    if (scaledLevel < 1) scaledLevel = 1
    return Math.round(scaledLevel)
 }
