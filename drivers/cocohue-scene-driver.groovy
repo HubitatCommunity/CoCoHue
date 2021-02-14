@@ -14,7 +14,7 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2021-02-07 - Version 3.0 Preview 2
+ *  Last modified: 2021-02-13
  * 
  *  Changelog:
  *  v3.0    - Improved HTTP error handling 
@@ -104,7 +104,7 @@ String getHueDeviceNumber() {
 }
 
 void on() {    
-   logDebug("Turning on scene...")
+   logDebug("on()")
    Map<String,String> data = parent.getBridgeData()
    Map cmd = ["scene": getHueDeviceNumber()]
    Map params = [
