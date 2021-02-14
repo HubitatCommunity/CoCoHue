@@ -14,10 +14,11 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2020-11-25
+ *  Last modified: 2021-02-07 - Version 3.0 Preview 2
  * 
  *  Changelog:
- *  v2.1   - Reduced info logging when not state change; code cleanup and more static typing
+ *  v3.0    - Improved HTTP error handling 
+ *  v2.1    - Reduced info logging when not state change; code cleanup and more static typing
  *  v2.0    - Improved HTTP error handling; attribute events now generated only after hearing back from Bridge;
  *            Bridge online/offline status improvements; bug fix for off() with light- or group-device-less scenes
  *            Added options for scene "switch" attribute (on/off) behavior
@@ -36,9 +37,9 @@ metadata {
       capability "PushableButton"
       capability "Configuration"
 
-      command "push", [[name:"NUMBER", type: "NUMBER", description: "Button number (button 1 is the only number used by this device)" ]]
+      command "push", [[name:"NUMBER", type: "NUMBER", description: "Button number (must be 1; will activate scene)" ]]
    }
-       
+
    preferences {
       input(name: "onPropagation", type: "enum", title: "Scene \"on\"/\"off\" behavior: when this scene is activated...",
          options: [["none": "Do not manipulate other scene device states"],
@@ -46,7 +47,7 @@ metadata {
                    ["allScenesOff": "Mark all other CoCoHue scenes as off"],
                    ["autoOff": "Automatically mark as off in 5 seconds"]],
          defaultValue: "groupScenesOff")
-      input(name: "onRefresh", type: "enum", title: "Bridge refresh on activation: when this scene is activated or receives \"off\" command...",
+      input(name: "onRefresh", type: "enum", title: "Bridge refresh on activation/deacivation: when this scene is activated or deactivated by a Hubitat command...",
          options: [["none": "Do not refresh Bridge"],
                    ["1000": "Refresh Bridge device in 1s"],
                    ["5000": "Refrehs Bridge device in 5s"]],
@@ -56,13 +57,13 @@ metadata {
     }
 }
 
-void installed(){
+void installed() {
    log.debug "Installed..."
    setDefaultAttributeValues()
    initialize()
 }
 
-void updated(){
+void updated() {
    log.debug "Updated..."
    initialize()
 }
@@ -206,9 +207,9 @@ void parseSendCommandResponse(resp, data) {
             logDebug("No scene onPropagation configured; leaving other scene states as-is")
          }
       }
-      else {
-         logDebug("  Not creating events from map because not specified to do or Bridge response invalid")
-      }
+   }
+   else {
+      logDebug("  Not creating events from map because not specified to do or Bridge response invalid")
    }
 }
 
@@ -222,7 +223,7 @@ private Boolean checkIfValidResponse(resp) {
    Boolean isOK = true
    if (resp?.json == null) {
       isOK = false
-      if (resp?.headers == null) log.error "Error: HTTP ${resp.status} when attempting to communicate with Bridge"
+      if (resp?.headers == null) log.error "Error: HTTP ${resp?.status} when attempting to communicate with Bridge"
       else log.error "No JSON data found in response. ${resp.headers.'Content-Type'} (HTTP ${resp.status})"
       parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery 
       parent.setBridgeStatus(false)
@@ -254,7 +255,7 @@ void push(btnNum) {
 }
 
 void doSendEvent(String eventName, eventValue, String eventUnit=null, forceStateChange=false) {
-   logDebug("Creating event for $eventName...")
+   //logDebug("doSendEvent($eventName, $eventValue, $eventUnit)")
    String descriptionText = "${device.displayName} ${eventName} is ${eventValue}${eventUnit ?: ''}"
    logDesc(descriptionText)
    // TODO: Map-ify these parameters to make cleaner and less verbose?
@@ -342,9 +343,9 @@ String getGroupID() {
 }
 
 void logDebug(str) {
-   if (settings.enableDebug) log.debug(str)
+   if (settings.enableDebug == true) log.debug(str)
 }
 
 void logDesc(str) {
-   if (settings.enableDesc) log.info(str)
+   if (settings.enableDesc == true) log.info(str)
 }

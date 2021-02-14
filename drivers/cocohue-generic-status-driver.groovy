@@ -17,37 +17,33 @@
  *  Last modified: 2021-02-13
  * 
  *  Changelog:
- *  v3.0    - Fix so events no created until Bridge response received (as was done for other drivers in 2.0); improved HTTP error handling
- *  v2.1    - Minor code cleanup; more static typing
- *  v2.0    - Improved HTTP error handling; attribute events now generated
- *            only after hearing back from Bridge; Bridge online/offline status improvements
- *  v1.8    - Added ability to disable plug->group state propagation;
- *            Removed ["alert:" "none"] from on() command, now possible explicitly with flashOff()
- *  v1.7    - Initial Release  
+ *  v3.0    - Initial release
  */
  
 metadata {
-   definition (name: "CoCoHue On/Off Plug", namespace: "RMoRobert", author: "Robert Morris", importUrl: "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-plug-driver.groovy") {
+   definition (name: "CoCoHue Generic Status Device", namespace: "RMoRobert", author: "Robert Morris", importUrl: "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-generic-status-driver.groovy") {
       capability "Actuator"
       capability "Refresh"
       capability "Switch"
-      capability "Light"
+      capability "PushableButton"
       
-      // Not supported on (most?) plugs; can uncomment if you are using for lights that support this:
-      //command "flash" 
-      //command "flashOnce" 
-      //command "flashOff" 
+      command "push", [[name:"NUMBER", type: "NUMBER", description: "Button number (must be 1; will activate device)" ]]
    }
        
    preferences {
+      input(name: "onRefresh", type: "enum", title: "Bridge refresh on activation/deacivation: when this device is activated or deactivated by a Hubitat command...",
+         options: [["none": "Do not refresh Bridge"],
+                   ["1000": "Refresh Bridge device in 1s"],
+                   ["5000": "Refrehs Bridge device in 5s"]],
+         defaultValue: "none")
       input(name: "enableDebug", type: "bool", title: "Enable debug logging", defaultValue: true)
       input(name: "enableDesc", type: "bool", title: "Enable descriptionText logging", defaultValue: true)
-      input(name: "updateGroups", type: "bool", description: "", title: "Update state of groups immediately when plug state changes", defaultValue: false)
    }
 }
 
 void installed() {
    log.debug "Installed..."
+   setDefaultAttributeValues()
    initialize()
 }
 
@@ -58,7 +54,8 @@ void updated() {
 
 void initialize() {
    log.debug "Initializing"
-   int disableTime = 1800
+   sendEvent(name: "numberOfButtons", value: 1)
+   Integer disableTime = 1800
    if (enableDebug) {
       log.debug "Debug logging will be automatically disabled in ${disableTime} seconds"
       runIn(disableTime, debugOff)
@@ -81,88 +78,57 @@ void parse(String description) {
 
 /**
  * Parses Hue Bridge device ID number out of Hubitat DNI for use with Hue API calls
- * Hubitat DNI is created in format "CCH/BridgeMACAbbrev/Light/HueDeviceID", so just
+ * Hubitat DNI is created in format "CCH/BridgeMACAbbrev/SensorRL/HueDeviceID", so just
  * looks for number after third "/" character
  */
 String getHueDeviceNumber() {
    return device.deviceNetworkId.split("/")[3]
 }
 
-void on() {    
-   logDebug("Turning on...")
-   addToNextBridgeCommand(["on": true], true)
-   sendBridgeCommand()
+void on() {
+   logDebug("on()")
+   sendBridgeCommand(["status": 1])
+   if (settings["onRefresh"] == "1000" || settings["onRefresh"] == "5000") {
+      parent.runInMillis(settings["onRefresh"] as Integer, "refreshBridge")
+   }
 }
 
-void off() {    
+void off() {
    logDebug("off()")
-   addToNextBridgeCommand(["on": false], true)
-   sendBridgeCommand()
+   sendBridgeCommand(["status": 0])
+   if (settings["onRefresh"] == "1000" || settings["onRefresh"] == "5000") {
+      parent.runInMillis(settings["onRefresh"] as Integer, "refreshBridge")
+   }
 }
 
-void flash() {
-   logDebug "flash()"
-   logDesc("${device.displayName} started 15-cycle flash")
-   Map cmd = ["alert": "lselect"]
-   sendBridgeCommand(cmd, false) 
-}
-
-void flashOnce() {
-   logDebug "flashOnce()"
-   logDesc("${device.displayName} started 1-cycle flash")
-   Map cmd = ["alert": "select"]
-   sendBridgeCommand(cmd, false) 
-}
-
-void flashOff() {
-   logDebug "flashOff()"
-   logDesc("${device.displayName} was sent command to stop flash")
-   Map cmd = ["alert": "none"]
-   sendBridgeCommand(cmd, false) 
+void push(btnNum) {
+   logDebug("push($btnNum)")
+   on()
+   doSendEvent("pushed", 1, null, true)
 }
 
 /**
- * Used to build body of (future) HTTP PUT to Bridge; useful to build up
- * parts a command in multiple places/methods and then send to Bridge as one
- * command (e.g., if "on" with lots of prestaging enabled and set) to maximize
- * efficiency and provide one transition instead of multiple.
- * @param cmdToAdd Map of Bridge commands to place in next command to be sent--example: ["on": true]
- * @param clearFirst If true (optional; default is false), will clear pending command map first
- */
-void addToNextBridgeCommand(Map cmdToAdd, boolean clearFirst=false) {
-   if (clearFirst || !state.nextCmd) state.nextCmd = [:]
-   state.nextCmd << cmdToAdd
-}
-
-/**
- * Iterates over Hue light state commands/states in Hue format (e.g., ["on": true]) and does
+ * Iterates over Hue device commands/states in Hue format (e.g., ["on": true]) and does
  * a sendEvent for each relevant attribute; intended to be called either when commands are sent
- * to Bridge or if pre-staged attribute is changed and "real" command not yet able to be sent, or
- * to parse/update light states based on data received from Bridge
- * @param bridgeCmd Map of light states that are or would be sent to bridge OR state as received from
- *  Bridge; defaults to the  state attribute created by addToNextBridgeCommand if not provided
- * @param isFromBridge Set to true if this is data read from Hue Bridge rather than intended to be sent
- *  to Bridge; if true, will ignore differences for prestaged attributes if switch state is off
+ * to Bridge (or if pre-staged attribute is changed and "real" command not yet able to be sent, but
+ * this isn't supported for sensors, so this driver's methods are a bit different)
+ * @param stateMap Map of JSON device state as received from Bridge
  */
-void createEventsFromMap(Map bridgeCmd = state.nextCmd, boolean isFromBridge = false) {
-   if (!bridgeCmd) {
-      logDebug("createEventsFromMap called but map command empty; exiting")
+void createEventsFromMap(Map stateMap) {
+   if (!stateMap) {
+      logDebug("createEventsFromMap called but state map empty; exiting")
       return
    }
-   logDebug("Preparing to create events from map${isFromBridge ? ' from Bridge' : ''}: ${bridgeCmd}")
+   logDebug("Preparing to create events from map: ${stateMap}")
    String eventName, eventUnit, descriptionText
    def eventValue // could be String or number
-   bridgeCmd.each {
+   stateMap.each {
       switch (it.key) {
-         case "on":
+         case "status":
             eventName = "switch"
-            eventValue = it.value ? "on" : "off"
+            eventValue = ((it.value as Integer) != 0) ? "on" : "off"
             eventUnit = null
             if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue, eventUnit)
-            break
-         case "transitiontime":
-         case "mode":
-         case "alert":
             break
          default:
             break
@@ -172,38 +138,26 @@ void createEventsFromMap(Map bridgeCmd = state.nextCmd, boolean isFromBridge = f
 }
 
 /**
- * Sends HTTP PUT to Bridge using the either command map previously built
- * with one or more calls to addToNextBridgeCommand and clears
- * that map (this is normally the case) or sends custom map without changing this
- * map (useful for one-off Hubitat commands like start/stopLevelChange)
- * @param customMap If provided, uses this map instead of the one previously built =
- *        with addToNextBridgeCommand; if not provided, uses and then clears the
- *        previously built map
+ * Sends HTTP PUT to Bridge using the command map (auto-converted to JSON)
+ * @param bridgeCmds Map of Bridge command to send, e.g., ["state": 1]
  * @param createHubEvents Will iterate over Bridge command map and do sendEvent for all
- *        affected device attributes (e.g., will send an "on" event for "switch" if map contains "on": true)
+ *        affected device attributes (e.g., will send an "on" event for sensor's "switch" if contains "state": 1)
  */
-void sendBridgeCommand(Map customMap = null, boolean createHubEvents=true) {    
-   logDebug("Sending command to Bridge: ${customMap ?: state.nextCmd}")
-   Map cmd = [:]
-   if (customMap != null) {
-      cmd = customMap
-   } else {
-      cmd = state.nextCmd
-      state.remove("nextCmd")
-   }
-   if (!cmd) {
+void sendBridgeCommand(Map bridgeCmds = [:], Boolean createHubEvents=true) {
+   logDebug("Sending command to Bridge: ${bridgeCmds}")
+   if (!bridgeCmds) {
       log.debug("Commands not sent to Bridge because command map empty")
       return
    }
    Map<String,String> data = parent.getBridgeData()
    Map params = [
       uri: data.fullHost,
-      path: "/api/${data.username}/lights/${getHueDeviceNumber()}/state",
+      path: "/api/${data.username}/sensors/${getHueDeviceNumber()}/state",
       contentType: 'application/json',
-      body: cmd,
+      body: bridgeCmds,
       timeout: 15
       ]
-   asynchttpPut("parseSendCommandResponse", params, createHubEvents ? cmd : null)
+   asynchttpPut("parseSendCommandResponse", params, createHubEvents ? bridgeCmds : null)
    logDebug("-- Command sent to Bridge!" --)
 }
 
@@ -218,9 +172,6 @@ void parseSendCommandResponse(resp, data) {
    if (checkIfValidResponse(resp) && data) {
       logDebug("  Bridge response valid; creating events from data map")          
       createEventsFromMap(data)
-      if ((data.containsKey("on") || data.containsKey("bri")) && settings["updateGroups"]) {
-         parent.updateGroupStatesFromBulb(data, getHueDeviceNumber())
-      }
    }
    else {
       logDebug("  Not creating events from map because not specified to do or Bridge response invalid")
@@ -263,15 +214,28 @@ private Boolean checkIfValidResponse(resp) {
    return isOK
 }
 
-void doSendEvent(String eventName, eventValue, String eventUnit=null) {
+void doSendEvent(String eventName, eventValue, String eventUnit=null, Boolean forceStateChange=false) {
    //logDebug("doSendEvent($eventName, $eventValue, $eventUnit)")
    String descriptionText = "${device.displayName} ${eventName} is ${eventValue}${eventUnit ?: ''}"
    logDesc(descriptionText)
    if (eventUnit) {
-      sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, unit: eventUnit) 
+      if (forceStateChange) sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, unit: eventUnit, isStateChange: true) 
+      else sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, unit: eventUnit) 
    } else {
-      sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText) 
+      if (forceStateChange) sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText) 
+      else sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, isStateChange: true) 
    }
+}
+
+/**
+ * Sets all group attribute values to something, intended to be called when device initially created to avoid
+ * missing attribute values (may cause problems with GH integration, etc. otherwise). Default values are
+ * approximately warm white and off.
+ */
+private void setDefaultAttributeValues() {
+   logDebug("Setting scene device states to sensibile default values...")
+   event = sendEvent(name: "switch", value: "off", isStateChange: false)
+   event = sendEvent(name: "pushed", value: 1, isStateChange: false)
 }
 
 void logDebug(str) {

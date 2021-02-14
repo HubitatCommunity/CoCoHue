@@ -1,7 +1,7 @@
 /**
  * ===========================  CoCoHue - Hue Bridge Integration =========================
  *
- *  Copyright 2019-2020 Robert Morris
+ *  Copyright 2019-2021 Robert Morris
  *
  *  DESCRIPTION:
  *  Community-developed Hue Bridge integration app for Hubitat, including support for lights,
@@ -22,10 +22,13 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2020-11-25
+ *  Last modified: 2021-02-07 - Version 3.0 Preview 2
  * 
  *  Changelog:
- *  v2.1 -   Reduced group and scene "info" logging if no state change/event; other GroupScenes now also report "off" if received from
+ *  v3.0   - Added support for Hue motion sensors (also temp/illuminance) and Hue Labs activators; added custom port options and
+ *           other changes to enhance compatibility with DeCONZ and similar third-party APIs
+ *  v2.2   - Added support for illumiance/temp/motion readings from Hue Motion sensors from Bridge
+ *  v2.1   - Reduced group and scene "info" logging if no state change/event; other GroupScenes now also report "off" if received from
  *           poll from Bridge instead of (only) command from Hubitat; more static typing
  *  v2.0   - New non-parent/child structure and name change; Bridge discovery; Bridge linking improvements (fewer pages);
  *           added documentation links; likely performance improvements (less dynamic typing); ability to use dicovery but
@@ -44,7 +47,7 @@ import groovy.transform.Field
 @Field static final String childNamespace = "RMoRobert" // namespace of child device drivers
 @Field static final Map driverMap = [
    "extended color light":     "CoCoHue RGBW Bulb",
-   "color light":              "CoCoHue RGBW Bulb",  // eventually should make RGB            
+   "color light":              "CoCoHue RGBW Bulb",  // eventually should make this one RGB
    "color temperature light":  "CoCoHue CT Bulb",
    "dimmable light":           "CoCoHue Dimmable Bulb",
    "on/off light":             "CoCoHue On/Off Plug",
@@ -68,15 +71,17 @@ definition (
 )
 
 preferences {
-   page(name: "pageFirstPage", content: "pageFirstPage")
-   page(name: "pageIncomplete", content: "pageIncomplete")
-   page(name: "pageAddBridge", content: "pageAddBridge")
-   page(name: "pageReAddBridge", content: "pageReAddBridge")
-   page(name: "pageLinkBridge", content: "pageLinkBridge")
-   page(name: "pageManageBridge", content: "pageManageBridge")
-   page(name: "pageSelectLights", content: "pageSelectLights")
-   page(name: "pageSelectGroups", content: "pageSelectGroups")
-   page(name: "pageSelectScenes", content: "pageSelectScenes")
+   page name: "pageFirstPage"
+   page name: "pageIncomplete"
+   page name: "pageAddBridge"
+   page name: "pageReAddBridge"
+   page name: "pageLinkBridge"
+   page name: "pageManageBridge"
+   page name: "pageSelectLights"
+   page name: "pageSelectGroups"
+   page name: "pageSelectScenes"
+   page name: "pageSelectMotionSensors"
+   page name: "pageSelectLabsActivators"
 }
 
 void installed() {
@@ -109,7 +114,7 @@ void initialize() {
       if (settings["keepSSDP"] != false) {
          log.debug("Subscribing to ssdp...")
          subscribe(location, "ssdpTerm.urn:schemas-upnp-org:device:basic:1", "ssdpHandler")
-         schedule("${Math.round(Math.random() * 60)} ${Math.round(Math.random() * 60)} 6 ? * * *",
+         schedule("${Math.round(Math.random() * 59)} ${Math.round(Math.random() * 59)} 6 ? * * *",
                "periodicSendDiscovery")
       }
       else {
@@ -125,7 +130,7 @@ void initialize() {
       unschedule("periodicSendDiscovery")
    }
 
-   int disableTime = 1800
+   Integer disableTime = 1800
    if (enableDebug) {
       log.debug "Debug logging will be automatically disabled in ${disableTime} seconds"
       runIn(disableTime, debugOff)
@@ -232,7 +237,7 @@ def pageAddBridge() {
       sendBridgeDiscoveryCommand()
    }  
    dynamicPage(name: "pageAddBridge", uninstall: true, install: false,
-               refreshInterval: ((!(settings['useSSDP']) || selectedDiscoveredBridge) ? null : state.authRefreshInterval),
+               refreshInterval: (((settings['useSSDP'] == false) || selectedDiscoveredBridge) ? null : state.authRefreshInterval),
                nextPage: "pageLinkBridge") {
       section("Add Hue Bridge") {
          input(name: "useSSDP", type: "bool", title: "Discover Hue Bridges automatically", defaultValue: true, submitOnChange: true)
@@ -263,7 +268,8 @@ def pageAddBridge() {
             paragraph "<script>\$('button[name=\"_action_next\"]').show()</script>"
          } else { 
                unsubscribe() // remove or modify if ever subscribe to more than SSDP above
-               input(name: "bridgeIP", type: "string", title: "Hue Bridge IP address:", required: false, defaultValue: null, submitOnChange: true)            
+               input(name: "bridgeIP", type: "string", title: "Hue Bridge IP address:", required: false, defaultValue: null, submitOnChange: true)
+               input(name: "customPort", type: "number", title: "Custom port? (Blank for default)")
                if (settings['bridgeIP'] && !state.bridgeLinked || !state.bridgeAuthorized) {
                   paragraph("<strong>Press the button on your Hue Bridge,</strong> then press \"Next\" to continue.")
                }
@@ -325,7 +331,8 @@ def pageLinkBridge() {
       section("Linking Hue Bridge") {
          if (!(state["bridgeAuthorized"])) {
                log.debug("Attempting Hue Bridge authorization; attempt number ${state.authTryCount+1}")
-               sendUsernameRequest()
+               if (settings["useSSDP"]) sendUsernameRequest()
+               else sendUsernameRequest("http", settings["customPort"] as Integer ?: 80)
                state.authTryCount += 1
                paragraph("Waiting for Bridge to authorize. This page will automatically refresh.")
                if (state.authTryCount > 5 && state.authTryCount < authMaxTries) {
@@ -346,7 +353,8 @@ def pageLinkBridge() {
                if (!state.bridgeLinked) {
                   log.debug("Bridge authorized. Requesting information from Bridge and creating Hue Bridge device on Hubitat...")
                   paragraph("Bridge authorized. Requesting information from Bridge and creating Hue Bridge device on Hubitat...")
-                  sendBridgeInfoRequest(true)
+                  if (settings["useSSDP"]) sendBridgeInfoRequest(true)
+                  else sendBridgeInfoRequest(true, null, settings["bridgeIP"] ?: state.ipAddress, settings["customPort"] as Integer ?: 80)
                }
                else {
                   logDebug("Bridge already linked; skipping Bridge device creation")
@@ -385,23 +393,35 @@ def pageManageBridge() {
       logDebug("New scenes selected. Creating...")
       createNewSelectedSceneDevices()
    }
+   if (settings["newSensors"]) {
+      logDebug("New sensors selected. Creating...")
+      createNewSelectedSensorDevices()
+   }
+   if (settings["newLabsDevs"]) {
+      logDebug("New Labs devices selected. Creating...")
+      createNewSelectedLabsDevices()
+   }
    // General cleanup in case left over from discovery:
-   state.remove('authTryCount')
-   state.remove('discoTryCount')
+   state.remove("authTryCount")
+   state.remove("discoTryCount")
    // More cleanup...
    com.hubitat.app.ChildDeviceWrapper bridge = getChildDevice("CCH/${state.bridgeID}")
    if (bridge != null) {
       bridge.clearBulbsCache()
       bridge.clearGroupsCache()
       bridge.clearScenesCache()
+      bridge.clearSensorsCache()
+      bridge.clearLabsSensorsCache()
    }
    else {
       log.warn "Bridge device not found!"
    }
-   state.remove('sceneFullNames')
-   state.remove('addedBulbs')
-   state.remove('addedGroups')
-   state.remove('addedScenes')
+   state.remove("sceneFullNames")
+   state.remove("addedBulbs")
+   state.remove("addedGroups")
+   state.remove("addedScenes")
+   state.remove("addedSensors")
+   state.remove("addedLabsDevs")
 
    dynamicPage(name: "pageManageBridge", uninstall: true, install: true) {  
       section("Manage Hue Bridge Devices:") {
@@ -411,6 +431,10 @@ def pageManageBridge() {
                description: "", page: "pageSelectGroups")
          href(name: "hrefSelectScenes", title: "Select Scenes",
                description: "", page: "pageSelectScenes")
+         href(name: "hrefSelectMotionSensors", title: "Select Motion Sensors",
+               description: "", page: "pageSelectMotionSensors")
+         href(name: "hrefSelectLabsActivators", title: "Select Hue Labs Activators",
+               description: "", page: "pageSelectLabsActivators")
       }
       section("Advanced Options", hideable: true, hidden: true) {
          href(name: "hrefReAddBridge", title: "Edit Bridge IP, re-authorize, or re-discover...",
@@ -427,7 +451,7 @@ def pageManageBridge() {
             options: [0:"Disabled", 10:"10 seconds", 15:"15 seconds", 20:"20 seconds", 30:"30 seconds", 45:"45 seconds", 60:"1 minute (recommended)",
                         300:"5 minutes", 3600:"1 hour"], defaultValue:60)
          input(name: "boolCustomLabel", type: "bool", title: "Customize the name of this CoCoHue app instance", defaultValue: false, submitOnChange: true)
-         if (settings['boolCustomLabel']) label(title: "Custom name for this app", required: false)
+         if (settings["boolCustomLabel"]) label(title: "Custom name for this app", required: false)
          input(name: "enableDebug", type: "bool", title: "Enable debug logging", defaultValue: true)
       }
    }
@@ -510,7 +534,7 @@ def pageSelectLights() {
    }
 }
 
-def pageSelectGroups() {        
+def pageSelectGroups() {
    com.hubitat.app.ChildDeviceWrapper bridge = getChildDevice("CCH/${state.bridgeID}")
    bridge.getAllGroups()
    List arrNewGroups = []
@@ -685,12 +709,167 @@ def pageSelectScenes() {
    }
 }
 
+def pageSelectMotionSensors() {
+   com.hubitat.app.ChildDeviceWrapper bridge = getChildDevice("CCH/${state.bridgeID}")
+   bridge.getAllSensors()
+   List arrNewSensors = []
+   Map sensorCache = bridge.getAllSensorsCache()
+   List<com.hubitat.app.ChildDeviceWrapper> unclaimedSensors = getChildDevices().findAll { it.deviceNetworkId.startsWith("CCH/${state.bridgeID}/Sensor/") }
+   dynamicPage(name: "pageSelectMotionSensors", refreshInterval: sensorCache ? 0 : 6, uninstall: true, install: false, nextPage: "pageManageBridge") {
+      Map addedSensors = [:]  // To be populated with lights user has added, matched by Hue ID
+      if (!bridge) {
+         log.error "No Bridge device found"
+         return
+      }
+      if (sensorCache) {
+         sensorCache.each { cachedSensor ->
+            //log.warn "* cached sensor = $cachedSensor"
+            com.hubitat.app.ChildDeviceWrapper sensorChild = unclaimedSensors.find { s -> s.deviceNetworkId == "CCH/${state.bridgeID}/Sensor/${cachedSensor.key}" }
+            if (sensorChild) {
+               addedSensors.put(cachedSensor.key, [hubitatName: sensorChild.name, hubitatId: sensorChild.id, hueName: cachedSensor.value?.name])
+               unclaimedSensors.removeElement(sensorChild)
+            } else {
+               Map newSensor = [:]
+               newSensor << [(cachedSensor.key): (cachedSensor.value.name)]
+               arrNewSensors << newSensor
+            }
+         }
+         arrNewSensors = arrNewSensors.sort { a, b ->
+            // Sort by sensor name (default would be hue ID)
+            a.entrySet().iterator().next()?.value <=> b.entrySet().iterator().next()?.value
+         }
+         addedSensors = addedSensors.sort { it.value.hubitatName }
+      }
+      if (!sensorCache) {
+         section("Discovering sensors. Please wait...") {            
+            paragraph("Press \"Refresh\" if you see this message for an extended period of time")
+            input(name: "btnSensorRefresh", type: "button", title: "Refresh", submitOnChange: true)
+         }
+      }
+      else {
+         section("Manage Sensors") {
+            paragraph "NOTE: Like all Hue devices on Hubitat, motion sensor changes are not \"pushed\" from Hue to Hubitat as they happen. Their states on Hubitat are updated only when the Bridge is polled, per your CoCoHue configuration options (or a manual \"Refresh\" on the Bridge device). It is not recommended to rely on Hue motion sensors for time-sensitve motion-based automations on Hubitat when used via the Hue Bridge (but note that it is possible to directly pair them with Hubitat)."
+            input(name: "newSensors", type: "enum", title: "Select Hue motion sensors to add:",
+                  multiple: true, options: arrNewSensors)
+            paragraph ""
+            paragraph("Previously added sensors${addedSensors ? ' <span style=\"font-style: italic\">(Hue Bridge device name in parentheses)</span>' : ''}:")
+            if (addedSensors) {
+               StringBuilder sensorText = new StringBuilder()
+               sensorText << "<ul>"
+               addedSensors.each {
+                  sensorText << "<li><a href=\"/device/edit/${it.value.hubitatId}\" target=\"_blank\">${it.value.hubitatName}</a>"
+                  sensorText << " <span style=\"font-style: italic\">(${it.value.hueName ?: 'not found on Hue'})</span></li>"
+                  //input(name: "btnRemove_Sensor_ID", type: "button", title: "Remove", width: 3)
+               }
+               sensorText << "</ul>"
+               paragraph(sensorText.toString())
+            }
+            else {
+               paragraph "<span style=\"font-style: italic\">No added sensors found</span>"
+            }
+            if (unclaimedSensors) {                  
+               paragraph "Hubitat sensor devices not found on Hue:"
+               StringBuilder sensorText = new StringBuilder()
+               sensorText << "<ul>"
+               unclaimedSensors.each {                  
+                  sensorText << "<li><a href=\"/device/edit/${it.id}\" target=\"_blank\">${it.displayName}</a></li>"
+               }
+               sensorText << "</ul>"
+               paragraph(sensorText.toString())
+            }
+         }
+         section("Rediscover Sensors") {
+               paragraph("If you added new sensors to the Hue Bridge and do not see them above, click/tap the button " +
+                        "below to retrieve new information from the Bridge.")
+               input(name: "btnSensorRefresh", type: "button", title: "Refresh Sensor List", submitOnChange: true)
+         }
+      }
+   }
+}
+
+def pageSelectLabsActivators() {
+   com.hubitat.app.ChildDeviceWrapper bridge = getChildDevice("CCH/${state.bridgeID}")
+   bridge.getAllLabsDevices()
+   List arrNewLabsDevs = []
+   Map labsCache = bridge.getAllLabsSensorsCache()
+   List<com.hubitat.app.ChildDeviceWrapper> unclaimedLabsDevs = getChildDevices().findAll { it.deviceNetworkId.startsWith("CCH/${state.bridgeID}/SensorRL/") }
+   dynamicPage(name: "pageSelectLabsActivators", refreshInterval: labsCache ? 0 : 6, uninstall: true, install: false, nextPage: "pageManageBridge") {
+      Map addedLabsDevs = [:]  // To be populated with lights user has added, matched by Hue ID
+      if (!bridge) {
+         log.error "No Bridge device found"
+         return
+      }
+      if (labsCache) {
+         labsCache.each { cachedLabDev ->
+            com.hubitat.app.ChildDeviceWrapper labsChild = unclaimedLabsDevs.find { d -> d.deviceNetworkId == "CCH/${state.bridgeID}/SensorRL/${cachedLabDev.key}" }
+            if (labsChild) {
+               addedLabsDevs.put(cachedLabDev.key, [hubitatName: labsChild.name, hubitatId: labsChild.id, hueName: cachedLabDev.value?.name])
+               unclaimedLabsDevs.removeElement(labsChild)
+            } else {
+               Map newLabsDev = [:]
+               newLabsDev << [(cachedLabDev.key): (cachedLabDev.value.name)]
+               arrNewLabsDevs << newLabsDev
+            }
+         }
+         arrNewLabsDevs = arrNewLabsDevs.sort { a, b ->
+            // Sort by device name (default would be Hue ID)
+            a.entrySet().iterator().next()?.value <=> b.entrySet().iterator().next()?.value
+         }
+         addedLabsDevs = addedLabsDevs.sort { it.value.hubitatName }
+      }
+      if (!labsCache) {
+         section("Discovering Hue Labs activators. Please wait...") {            
+            paragraph("Press \"Refresh\" if you see this message for an extended period of time")
+            input(name: "btnLabsRefresh", type: "button", title: "Refresh", submitOnChange: true)
+         }
+      }
+      else {
+         section("Manage Hue Labs Formula Activators") {
+            input(name: "newLabsDevs", type: "enum", title: "Select Hue Labs formula acvivators to add:",
+                  multiple: true, options: arrNewLabsDevs)
+            input(name: "boolAppendLabs", type: "bool", title: "Append \"(Hue Labs Formula)\" to Hubitat device name")
+            paragraph ""
+            paragraph("Previously added devices${addedLabsDevs ? ' <span style=\"font-style: italic\">(Hue Labs formula name on Bridge in parentheses)</span>' : ''}:")
+            if (addedLabsDevs) {
+               StringBuilder labDevsText = new StringBuilder()
+               labDevsText << "<ul>"
+               addedLabsDevs.each {
+                  labDevsText << "<li><a href=\"/device/edit/${it.value.hubitatId}\" target=\"_blank\">${it.value.hubitatName}</a>"
+                  labDevsText << " <span style=\"font-style: italic\">(${it.value.hueName ?: 'not found on Hue'})</span></li>"
+                  //input(name: "btnRemove_LabsDev_ID", type: "button", title: "Remove", width: 3)
+               }
+               labDevsText << "</ul>"
+               paragraph(labDevsText.toString())
+            }
+            else {
+               paragraph "<span style=\"font-style: italic\">No added Hue Labs Forumla devices found</span>"
+            }
+            if (unclaimedLabsDevs) {                  
+               paragraph "Hubitat devices not found on Hue:"
+               StringBuilder labDevsText = new StringBuilder()
+               labDevsText << "<ul>"
+               unclaimedLabsDevs.each {                  
+                  labDevsText << "<li><a href=\"/device/edit/${it.id}\" target=\"_blank\">${it.displayName}</a></li>"
+               }
+               labDevsText << "</ul>"
+               paragraph(labDevsText.toString())
+            }
+         }
+         section("Rediscover Labs Devices") {
+               paragraph("If you added new Labs formulas to the Hue Bridge and do not see them above, click/tap the button " +
+                        "below to retrieve new information from the Bridge.")
+               input(name: "btnLabsRefresh", type: "button", title: "Refresh Labs Formula List", submitOnChange: true)
+         }
+      }
+   }
+}
+
 /** Creates new Hubitat devices for new user-selected bulbs on lights-selection
  * page (intended to be called after navigating away/using "Done" from that page)
  */
 void createNewSelectedBulbDevices() {
    com.hubitat.app.ChildDeviceWrapper bridge = getChildDevice("CCH/${state.bridgeID}")
-   if (bridge == null) log.error("Unable to find bridge device")
+   if (bridge == null) log.error("Unable to find Bridge device")
    Map bulbCache = bridge?.getAllBulbsCache()
    settings["newBulbs"].each {
       Map b = bulbCache.get(it)
@@ -720,7 +899,7 @@ void createNewSelectedBulbDevices() {
 void createNewSelectedGroupDevices() {
    String driverName = "CoCoHue Group"
    com.hubitat.app.ChildDeviceWrapper bridge = getChildDevice("CCH/${state.bridgeID}")
-   if (bridge == null) log.error("Unable to find bridge device")
+   if (bridge == null) log.error("Unable to find Bridge device")
    Map groupCache = bridge?.getAllGroupsCache()
    settings["newGroups"].each {
       def g = groupCache.get(it)
@@ -748,10 +927,10 @@ void createNewSelectedGroupDevices() {
 /** Creates new Hubitat devices for new user-selected scenes on scene-selection
  * page (intended to be called after navigating away/using "Done" from that page)
  */
-def createNewSelectedSceneDevices() {
+void createNewSelectedSceneDevices() {
    String driverName = "CoCoHue Scene"
    com.hubitat.app.ChildDeviceWrapper bridge = getChildDevice("CCH/${state.bridgeID}")
-   if (!bridge) log.error("Unable to find bridge device")
+   if (!bridge) log.error("Unable to find Bridge device")
    Map sceneCache = bridge?.getAllScenesCache()
    settings["newScenes"].each {
       Map sc = sceneCache.get(it)
@@ -775,27 +954,92 @@ def createNewSelectedSceneDevices() {
    state.remove("sceneFullNames")
 }
 
+/** Creates new Hubitat devices for new user-selected sensors on sensor-selection
+ * page (intended to be called after navigating away/using "Done" from that page)
+ */
+void createNewSelectedSensorDevices() {
+   String driverName = "CoCoHue Motion Sensor"
+   com.hubitat.app.ChildDeviceWrapper bridge = getChildDevice("CCH/${state.bridgeID}")
+   if (bridge == null) log.error("Unable to find Bridge device")
+   Map sensorCache = bridge?.getAllSensorsCache()
+   //log.warn "* sensorCache = $sensorCache"
+   settings["newSensors"].each {
+      def s = sensorCache.get(it)
+      if (s) {
+         try {
+            logDebug("Creating new device for Hue sensor ${it} (${s.name})")
+            String devDNI = "CCH/${state.bridgeID}/Sensor/${it}"
+            Map devProps = [name: s.name]
+            addChildDevice(childNamespace, driverName, devDNI, devProps)
+
+         }
+         catch (Exception ex) {
+            log.error("Unable to create new sensor device for $it: $ex")
+         }
+      } else {
+         log.error("Unable to create new device for sensor $it: MAC not found in Hue Bridge cache")
+      }
+   }    
+   bridge.clearSensorsCache()
+   bridge.getAllSensors()
+   bridge.refresh()
+   app.removeSetting("newSensors")
+}
+
+/** Creates new Hubitat devices for new user-selected Labs devices on Labs device-selection
+ * page (intended to be called after navigating away/using "Done" from that page)
+ */
+void createNewSelectedLabsDevices() {
+   com.hubitat.app.ChildDeviceWrapper bridge = getChildDevice("CCH/${state.bridgeID}")
+   if (bridge == null) log.error("Unable to find Bridge device")
+   Map labsCache = bridge?.getAllLabsSensorsCache()
+   settings["newLabsDevs"].each {
+      Map d = labsCache.get(it)
+      if (d) {
+         try {
+            logDebug("Creating new device for Hue Labs sensor device ${it} (${d.name})")
+            String devDriver = "CoCoHue Generic Status Device"
+            String devDNI = "CCH/${state.bridgeID}/SensorRL/${it}"
+            Map devProps = [name: (settings["boolAppendLabs"] ? d.name + " (Hue Labs Formula)" : d.name)]
+            com.hubitat.app.ChildDeviceWrapper dev = addChildDevice(childNamespace, devDriver, devDNI, devProps)
+            dev?.updateDataValue("type", "CLIPGenericStatus")
+         } catch (Exception ex) {
+            log.error("Unable to create new device for $it: $ex")
+         }
+      } else {
+         log.error("Unable to create new device for Labs device $it: ID not found on Hue Bridge")
+      }
+   }
+   bridge.clearLabsSensorsCache()
+   app.removeSetting("newLabsDevs")
+}
+
 /** Sends request for username creation to Bridge API. Intended to be called after user
  *  presses link button on Bridge
  */
-void sendUsernameRequest() {
-    logDebug("sendUsernameRequest()... (IP = ${state.ipAddress})")
-    String locationNameNormalized = location.name?.replaceAll("\\P{InBasic_Latin}", "_")
-    String userDesc = locationNameNormalized ? "Hubitat CoCoHue#${locationNameNormalized}" : "Hubitat CoCoHue"
-    String host = "${state.ipAddress}:80"
-    sendHubCommand(new hubitat.device.HubAction([
-      method: "POST",
+void sendUsernameRequest(String protocol="http", Integer port=null) {
+   logDebug("sendUsernameRequest()... (IP = ${state.ipAddress})")
+   String locationNameNormalized = location.name?.replaceAll("\\P{InBasic_Latin}", "_")
+   String userDesc = locationNameNormalized ? "Hubitat CoCoHue#${locationNameNormalized}" : "Hubitat CoCoHue"
+   String ip = state.ipAddress
+   Map params = [
+      uri:  ip ? """${protocol}://${ip}${port ? ":$port" : ''}""" : getBridgeData().fullHost,
+      requestContentType: "application/json",
+      contentType: "application/json",
       path: "/api",
-      headers: [HOST: host],
-      body: [devicetype: userDesc]
-      ], null, [callback: "parseUsernameResponse"])
-    )
+      body: [devicetype: userDesc],
+      contentType: 'text/xml',
+      timeout: 15
+   ]
+   log.warn params = params
+   asynchttpPost("parseUsernameResponse", params, null)
 }
+
 
 /** Callback for sendUsernameRequest. Saves username in app state if Bridge is
  * successfully authorized, or logs error if unable to do so.
  */
-void parseUsernameResponse(hubitat.device.HubResponse resp) {
+void parseUsernameResponse(resp, data) {
    def body = resp.json
    logDebug("Attempting to request Hue Bridge username; result = ${body}")    
    if (body.success != null) {
@@ -822,17 +1066,17 @@ void parseUsernameResponse(hubitat.device.HubResponse resp) {
  *  of discovered Bridge devices (when createBridge == false). protocol, ip, and port are optional
  *  and will default to getBridgeData() values if not specified
  */
-void sendBridgeInfoRequest(Boolean createBridge=true, String protocol="http", String ip = null, Integer port=80,
+void sendBridgeInfoRequest(Boolean createBridge=true, String protocol="http", String ip = null, Integer port=null,
                            String ssdpPath="/description.xml") {
    log.debug("Sending request for Bridge information")
-   String fullHost = ip ? "${protocol}://${ip}:${port}" : getBridgeData().fullHost
+   String fullHost = ip ? """${protocol ?: "http"}://${ip}${port ? ":$port" : ''}""" : getBridgeData().fullHost
    Map params = [
       uri: fullHost,
       path: ssdpPath,
       contentType: 'text/xml',
       timeout: 15
    ]
-   asynchttpGet("parseBridgeInfoResponse", params, [createBridge: createBridge, protocol: protocol,
+   asynchttpGet("parseBridgeInfoResponse", params, [createBridge: createBridge, protocol: protocol ?: "http",
                                                     port: port, ip: (ip ?: state.ipAddress)])
 }
 
@@ -857,7 +1101,7 @@ private void parseBridgeInfoResponse(resp, data) {
          logDebug("  Hue Bridge serial parsed as ${serial}; getting additional device info...")
          friendlyBridgeName = body?.device?.friendlyName
          if (friendlyBridgeName) friendlyBridgeName = friendlyBridgeName.substring(0,friendlyBridgeName.lastIndexOf(' ('-1)) // strip out parenthetical IP address
-         com.hubitat.app.ChildDeviceWrapper bridgeDevice           
+         com.hubitat.app.ChildDeviceWrapper bridgeDevice
          if (data?.createBridge) {
             log.debug("    Creating CoCoHue Bridge device for Brige with MAC $serial")
             state.bridgeID = serial.drop(6) // last (12-6=) 6 of MAC
@@ -928,7 +1172,7 @@ void ssdpHandler(evt) {
       String ssdpPath = parsedMap.ssdpPath
       if (ip) {
          logDebug("Device at $ip responded to SSDP; sending info request to see if is Hue Bridge")
-         sendBridgeInfoRequest(false, "http", ip, 80, ssdpPath ?: "/description.xml")
+         sendBridgeInfoRequest(false, "http", ip, null, ssdpPath ?: "/description.xml")
       }
       else {
          logDebug("In ssdpHandler but unable to obtain IP address from device response: $parsedMap")
@@ -951,10 +1195,11 @@ private String convertHexToIP(hex) {
  * Returns map containing Bridge username, IP, and full HTTP post/port, intended to be
  * called by child devices so they can send commands to the Hue Bridge API using info
  */
-Map<String,String> getBridgeData(String protocol="http", Integer port=80) {
+Map<String,String> getBridgeData(String protocol="http", Integer port=null) {
    logDebug("Running getBridgeData()...")
    if (!state.ipAddress && settings['bridgeIP'] && !(settings['useSSDP'])) state.ipAddress = settings['bridgeIP'] // seamless upgrade from v1.x
    if (!state["username"] || !state.ipAddress) log.error "Missing username or IP address from Bridge"
+   port = port ?: ((!(settings["useSSDP"]) && settings["customPort"]) ? settings["customPort"] as Integer : 80)
    Map map = [username: state.username, ip: "${state.ipAddress}", fullHost: "${protocol}://${state.ipAddress}:${port}"]
    return map
 }
@@ -1007,7 +1252,7 @@ void setBridgeStatus(setToOnline=true) {
       List<com.hubitat.app.ChildDeviceWrapper> devList = getChildDevices().findAll { it.getDeviceNetworkId().startsWith("CCH/${state.bridgeID}/Light/") }
       // Update other gropus even though they aren't "bulbs":
       devList += getChildDevices().findAll { it.getDeviceNetworkId().startsWith("CCH/${state.bridgeID}/Group/") && !(it.getDeviceNetworkId() == "CCH/${state.bridgeID}/Group/0") }
-      log.warn devList
+      //logDebug("Updating states for: $devList")
       devList.each { it.createEventsFromMap(states, false) }
    }    
  }
@@ -1090,6 +1335,8 @@ void appButtonHandler(btn) {
       case "btnBulbRefresh":
       case "btnGroupRefresh":
       case "btnSceneRefresh":
+      case "btnSesnsorRefresh":
+      case "btnLabsRefresh":
          // Just want to resubmit page, so nothing
          break        
       case "btnDiscoBridgeRefresh":

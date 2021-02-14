@@ -1,7 +1,7 @@
 /**
  * =============================  CoCoHue Bridge (Driver) ===============================
  *
- *  Copyright 2019-2020 Robert Morris
+ *  Copyright 2019-2021 Robert Morris
  * 
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
@@ -14,9 +14,11 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2020-11-25
+ *  Last modified: 2021-02-13
  *
  *  Changelog:
+ *  v3.0    - Added support for sensors (Hue Motion sensors with motion/temp/lux) and Hue Labs effects (looks for resoucelinks with 1 sensor link)
+ *          - Revamped refresh/sync to fetch all Bridge data instead of indiviudal /lights, /groups, etc. APIs (goal: reduce to one HTTP call and response total)
  *  v2.1    - Minor code cleanup and more static typing
  *  v2.0    - Added Actuator capability; Bridge and HTTP error handling improvements; added specific HTTP timeout
  *  v1.5    - Additional methods to support scenes and improved group behavior
@@ -41,12 +43,12 @@ void debugOff() {
    device.updateSetting("enableDebug", [value:"false", type:"bool"])
 }
 
-void installed(){
+void installed() {
    log.debug "Installed..."
    initialize()
 }
 
-void updated(){
+void updated() {
    log.debug "Updated..."
    initialize()
 }
@@ -64,51 +66,119 @@ void parse(String description) {
 }
 
 void refresh() {
-   logDebug("Refresh...")
+   logDebug("refresh()")
    Map<String,String> data = parent.getBridgeData()
-   Map lightParams = [
+   Map params = [
       uri: data.fullHost,
-      path: "/api/${data.username}/lights",
+      path: "/api/${data.username}/",
       contentType: 'application/json',
       timeout: 15
-      ]
-   Map groupParams = [
-      uri: data.fullHost,
-      path: "/api/${data.username}/groups",
-      contentType: 'application/json',
-      timeout: 15
-      ]
+   ]
    try {
-      asynchttpGet("parseLightStates", lightParams)
-      asynchttpGet("parseGroupStates", groupParams)
+      asynchttpGet("parseStates", params)
    } catch (Exception ex) {
       log.error "Error in refresh: $ex"
+   }
+}
+
+/** Callback method that handles full Bridge refresh. Eventually delegated to individual
+ *  methods below.
+ */
+private void parseStates(resp, data) { 
+   logDebug("parseStates: States from Bridge received. Now parsing...")
+   if (checkIfValidResponse(resp)) {
+      parseLightStates(resp.json.lights)
+      parseGroupStates(resp.json.groups)
+      parseSensorStates(resp.json.sensors)
+      parseLabsSensorStates(resp.json.sensors)
+   }
+}
+
+private void parseLightStates(Map lightsJson) { 
+   logDebug("Parsing light states from Bridge...")
+   try {
+      lightsJson.each { id, val ->
+         com.hubitat.app.DeviceWrapper device = parent.getChildDevice("${device.deviceNetworkId}/Light/${id}")
+         if (device) {
+            device.createEventsFromMap(val.state, true)
+         }
+      }
+      if (device.currentValue("status") != "Online") doSendEvent("status", "Online")
+   }
+   catch (Exception ex) {
+      log.error "Error parsing light states: ${ex}"
+   }
+}
+
+private void parseGroupStates(Map groupsJson) {
+   logDebug("Parsing group states from Bridge...")
+   try {
+      groupsJson.each { id, val ->
+         com.hubitat.app.DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Group/${id}")
+         if (dev) {
+            dev.createEventsFromMap(val.action, true)
+            dev.createEventsFromMap(val.state, true)
+            dev.setMemberBulbIDs(val.lights)
+         }
+      }
+      Boolean anyOn = groupsJson.any { it.value?.state?.any_on == false }
+      com.hubitat.app.DeviceWrapper allLightsDev = parent.getChildDevice("${device.deviceNetworkId}/Group/0")
+      if (allLightsDev) {
+         allLightsDev.createEventsFromMap(['any_on': anyOn], true)
+      }
+      
+   }
+   catch (Exception ex) {
+      log.error "Error parsing group states: ${ex}"   
+   }
+}
+
+private void parseSensorStates(Map sensorsJson) {
+   logDebug("Parsing sensor states from Bridge...")
+   try {
+      Map allSensors = [:]
+      sensorsJson.each { key, val ->
+         if (val.type == "ZLLPresence" || val.type == "ZLLLightLevel" || val.type == "ZLLTemperature") {
+            String mac = val?.uniqueid?.substring(0,23)
+            if (mac != null) {
+               com.hubitat.app.DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Sensor/${mac}")
+               if (dev != null) {
+                  dev.createEventsFromMap(val.state)
+                  // All entries have config.battery, so just picking one to parse here to avoid redundancy:
+                  if (val.type == "ZLLPresence") dev.createEventsFromMap(["battery": val.config.battery])
+               }
+            }
+         }
+      }
+   }
+   catch (Exception ex) {
+      log.error "Error parsing sensor states: ${ex}"   
    }
 }
 
 /** Performs basic check on data returned from HTTP response to determine if should be
   * parsed as likely Hue Bridge data or not; returns true (if OK) or logs errors/warnings and
   * returns false if not
-  * @params resp The async HTTP response object to examine
+  * @param resp The async HTTP response object to examine
   */
 private Boolean checkIfValidResponse(resp) {
    logDebug("Checking if valid HTTP response/data from Bridge...")
    Boolean isOK = true
-   if (resp?.hasError()) {
-      log.warn "Error in Bridge response. HTTP ${resp.status}."
+   if (resp?.json == null) {
       isOK = false
-   }
-   else if (resp?.json == null) {
-      isOK = false
-      if (resp?.headers == null) log.error "Error: HTTP ${resp.status} when attempting to communicate with Bridge"
-      else log.error "No JSON data found in response. (HTTP ${resp.status}; headers = ${resp.headers})"
+      if (resp?.headers == null) log.error "Error: HTTP ${resp?.status} when attempting to communicate with Bridge"
+      else log.error "No JSON data found in response. ${resp.headers.'Content-Type'} (HTTP ${resp.status})"
       parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery 
+      parent.setBridgeStatus(false)
    }
    else if (resp.status < 400 && resp.json) {
       if (resp.json[0]?.error) {
          // Bridge (not HTTP) error (bad username, bad command formatting, etc.):
          isOK = false
          log.warn "Error from Hue Bridge: ${resp.json[0].error}"
+         // Not setting Bridge to offline when light/scene/group devices end up here because could
+         // be old/bad ID and don't want to consider Bridge offline just for that (but also won't set
+         // to online because wasn't successful attempt)
       }
       // Otherwise: probably OK (not changing anything because isOK = true already)
    }
@@ -116,9 +186,9 @@ private Boolean checkIfValidResponse(resp) {
       isOK = false
       log.warn("HTTP status code ${resp.status} from Bridge")
       if (resp?.status >= 400) parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery 
+      parent.setBridgeStatus(false)
    }
-   if (device.currentValue("status") != (isOK ? "Online" : "Offline")) doSendEvent("status", (isOK ? "Online" : "Offline"))
-   logDebug("Reponse ${isOK ? 'valid' : 'invalid'}")
+   if (isOK) parent.setBridgeStatus(true)
    return isOK
 }
 
@@ -159,8 +229,7 @@ private void parseGetAllBulbsResponse(resp, data) {
    }
 }
 
-
-/** Intended to be called from parent Bridge Child app to retrive previously
+/** Intended to be called from parent app to retrive previously
  *  requested list of bulbs
  */
 Map getAllBulbsCache() {
@@ -173,26 +242,6 @@ Map getAllBulbsCache() {
 void clearBulbsCache() {
    logDebug("Running clearBulbsCache...")
    state.remove('allBulbs')
-}
-
-/** Callback method that handles updating attributes on child light
- *  devices when Bridge refreshed
- */
-private void parseLightStates(resp, data) { 
-   logDebug("Parsing light states from Bridge...")
-   if (checkIfValidResponse(resp)) {
-      try {
-         resp.json.each { id, val ->
-            def device = parent.getChildDevice("${device.deviceNetworkId}/Light/${id}")
-            if (device) {
-               device.createEventsFromMap(val.state, true)
-            }
-         }
-         if (device.currentValue("status") != "Online") doSendEvent("status", "Online")
-      } catch (Exception ex) {
-         log.error "Error parsing light states: ${ex}"           
-      }
-   }
 }
 
 // ------------ GROUPS ------------
@@ -232,7 +281,7 @@ private void parseGetAllGroupsResponse(resp, data) {
    }
 }
 
-/** Intended to be called from parent Bridge Child app to retrive previously
+/** Intended to be called from parent app to retrive previously
  *  requested list of groups
  */
 Map getAllGroupsCache() {
@@ -245,34 +294,6 @@ Map getAllGroupsCache() {
 void clearGroupsCache() {
     logDebug("Running clearGroupsCache...")
     state.remove('allGroups')
-}
-
-/** Callback method that handles updating attributes on child group
- *  devices when Bridge refreshed
- */
-private void parseGroupStates(resp, data) {
-   logDebug("Parsing group states from Bridge...")    
-   if (checkIfValidResponse(resp)) {
-      try {
-         resp.json.each { id, val ->
-               com.hubitat.app.DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Group/${id}")
-               if (dev) {
-                  dev.createEventsFromMap(val.action, true)
-                  dev.createEventsFromMap(val.state, true)
-                  dev.setMemberBulbIDs(val.lights)
-               }
-         }
-         Boolean anyOn = resp.json.any { it.value?.state?.any_on == false }
-         com.hubitat.app.DeviceWrapper allLightsDev = parent.getChildDevice("${device.deviceNetworkId}/Group/0")
-         if (allLightsDev) {
-                  allLightsDev.createEventsFromMap(['any_on': anyOn], true)
-         }
-         
-      }
-      catch (Exception ex) {
-         log.error "Error parsing group states: ${ex}"   
-      }
-   }
 }
 
 // ------------ SCENES ------------
@@ -313,8 +334,7 @@ private void parseGetAllScenesResponse(resp, data) {
    }
 }
 
-
-/** Intended to be called from parent Bridge Child app to retrive previously
+/** Intended to be called from parent app to retrive previously
  *  requested list of scenes
  */
 Map getAllScenesCache() {
@@ -329,17 +349,166 @@ void clearScenesCache() {
    state.remove('allScenes')
 }
 
+// ------------ SENSORS (Motion/etc.) ------------
+
+/** Requests list of all sensors from Hue Bridge; updates
+ *  allSensors in state when finished. (Filters down to only Hue
+ *  Motion sensors.) Intended to be called during sensor discovery in app.
+ */
+void getAllSensors() {
+   logDebug("Getting sensor list from Bridge...")
+   Map<String,String> data = parent.getBridgeData()
+   Map params = [
+      uri: data.fullHost,
+      path: "/api/${data.username}/sensors",
+      contentType: "application/json",
+      timeout: 15
+      ]
+   asynchttpGet("parseGetAllSensorsResponse", params)
+}
+
+private void parseGetAllSensorsResponse(resp, data) {
+   logDebug("Parsing all sensors response...")    
+   if (checkIfValidResponse(resp)) {
+      try {
+         Map allSensors = [:]
+         resp.json.each { key, val ->
+            if (val.type == "ZLLPresence" || val.type == "ZLLLightLevel" || val.type == "ZLLTemperature") {
+               String mac = val?.uniqueid?.substring(0,23)
+               if (mac != null) {
+                  if (!(allSensors[mac])) allSensors[mac] = [:]
+                  if (allSensors[mac]?.ids) allSensors[mac].ids.add(key)
+                  else allSensors[mac].ids = [key]
+               }
+               if (allSensors[mac].name) {
+                  // The ZLLPresence endpoint appears to be the one carrying the user-defined name
+                  if (val.type == "ZLLPresence") allSensors[mac].name = val.name
+               }
+               else {
+                  //...but get the other names if none has been set, just in case
+                  allSensors[mac].name = val.name
+               }
+            }
+         }
+         Map hueMotionSensors = [:]
+         allSensors.each { key, value ->
+            // Hue  Motion sensors should have all three types, so just further filtering:
+            if (value.ids?.size >= 3) hueMotionSensors << [(key): value]
+         }
+         state.allSensors = hueMotionSensors
+         logDebug("  All sensors received from Bridge: $hueMotionSensors")
+      }
+      catch (Exception ex) {
+         log.error "Error parsing all sensors response: ${ex}"   
+      }
+   }
+}
+
+/** Intended to be called from parent app to retrive previously
+ *  requested list of sensors
+ */
+Map getAllSensorsCache() {
+   return state.allSensors
+}
+
+/** Clears cache of sensor IDs/names; useful for parent app to call if trying to ensure
+ * not working with old data
+ */
+void clearSensorsCache() {
+   logDebug("Running clearSensorsCache...")
+   state.remove('allSensors')
+}
+
+// ------------ HUE LABS SENSORS ------------
+
+/** Requests list of all Hue Bridge state; callback will parse resourcelinks and sensors
+ */
+void getAllLabsDevices() {
+   logDebug("Getting resourcelink list from Bridge...")
+   Map<String,String> data = parent.getBridgeData()
+   Map params = [
+      uri: data.fullHost,
+      path: "/api/${data.username}/",
+      contentType: "application/json",
+      timeout: 15
+      ]
+   asynchttpGet("parseGetAllLabsDevicesResponse", params)
+}
+
+private void parseGetAllLabsDevicesResponse(resp, data) {
+   logDebug("Parsing all Labs devices response...")    
+   if (checkIfValidResponse(resp)) {
+      try {
+         Map names = [:]
+         Map activatorSensors = resp.json.sensors.findAll { key, val ->
+            val["type"]  == "CLIPGenericStatus" && val["modelid"] == "HUELABSVTOGGLE"
+         }
+         activatorSensors.each { key, val ->
+            resp.json.resourcelinks.each { rlId, rlVal ->
+               if (rlVal.links?.any { it == "/sensors/${key}" }) {
+                  names[(key)] = rlVal.name
+               } 
+            }
+            //val["name"] = resp.json.resourcelinks.find { rlid, rlval -> rlval.links.find { idx, dev -> dev == "/sensors/${key}"} }
+         }
+         names.each { id, name ->
+            activatorSensors[id].name = name
+         }
+         state.labsSensors = activatorSensors
+      }
+      catch (Exception ex) {
+         log.error "Error parsing all Labs sensors response: ${ex}"   
+      }
+      logDebug("  All Labs sensors received from Bridge: $activatorSensors")
+   }
+}
+
+/** Callback method that handles updating attributes on child sensor
+ *  devices when Bridge refreshed
+ */
+private void parseLabsSensorStates(sensorJson) {
+   logDebug("Parsing Labs sensor states...")
+   //logDebug("states: $sensorJson")
+   try {
+      sensorJson.each { id, val ->
+         com.hubitat.app.DeviceWrapper device = parent.getChildDevice("${device.deviceNetworkId}/SensorRL/${id}")
+         if (device) {
+            device.createEventsFromMap(val.state)
+         }
+      }
+   }
+   catch (Exception ex) {
+      log.error "Error parsing Labs sensor states: ${ex}"   
+   }
+}
+
+
+/** Intended to be called from parent app to retrive previously
+ *  requested list of Labs actiavtor devices
+ */
+Map getAllLabsSensorsCache() {
+   return state.labsSensors 
+}
+
+/** Clears cache of Labs activator devices; useful for parent app to call if trying to ensure
+ * not working with old data
+ */
+void clearLabsSensorsCache() {
+   logDebug("Running clearLabsSensorsCache...")
+   state.remove("labsSensors")
+}
+
 private void doSendEvent(String eventName, eventValue) {
-   //logDebug("Creating event for $eventName...")
+   //logDebug("doSendEvent($eventName, $eventValue, $eventUnit)")
    String descriptionText = "${device.displayName} ${eventName} is ${eventValue}"
    logDesc(descriptionText)
    sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText)
 }
 
 void logDebug(str) {
-   if (settings.enableDebug) log.debug(str)
+   if (settings.enableDebug == true) log.debug(str)
 }
 
 void logDesc(str) {
-   if (settings.enableDesc) log.info(str)
+   if (settings.enableDesc == true) log.info(str)
 }

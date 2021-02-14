@@ -1,7 +1,7 @@
 /*
  * =============================  CoCoHue Dimmable Bulb (Driver) ===============================
  *
- *  Copyright 2019-2020 Robert Morris
+ *  Copyright 2019-2021 Robert Morris
  * 
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2020-11-29
- * 
+ *  Last modified: 2021-02-13
+ *
  *  Changelog:
+ *  v3.0    - Fix so events no created until Bridge response received (as was done for other drivers in 2.0); improved HTTP error handling
  *  v2.1.1  - Improved rounding for level (brightness) to/from Bridge
  *  v2.1    - Minor code cleanup and more static typing
  *  v2.0    - Added startLevelChange rate option; improved HTTP error handling; attribute events now generated
@@ -51,12 +52,12 @@ metadata {
    }
 }
 
-void installed(){
+void installed() {
    log.debug "Installed..."
    initialize()
 }
 
-void updated(){
+void updated() {
    log.debug "Updated..."
    initialize()
 }
@@ -90,7 +91,7 @@ String getHueDeviceNumber() {
 }
 
 void on() {    
-   logDebug("Turning on...")
+   logDebug("on()")
    /* TODO: Add setting for "agressive" vs. normal prestaging (?), and for regular pre-staging,
    check if current level is different from lastXYZ value, in which case it was probably
    changed outside of Hubitat and we should not set the pre-staged value(s)--Hue does not
@@ -102,7 +103,7 @@ void on() {
 }
 
 void off() {    
-   logDebug("Turning off...")
+   logDebug("off()")
    state.remove("lastCT")
    state.remove("lastLevel")
    addToNextBridgeCommand(["on": false], true)
@@ -111,7 +112,7 @@ void off() {
 
 
 void startLevelChange(direction) {
-   logDebug("Running startLevelChange($direction)...")
+   logDebug("startLevelChange($direction)")
    Map cmd = ["bri": (direction == "up" ? 254 : 1),
             "transitiontime": ((settings["levelChangeRate"] == "fast" || !settings["levelChangeRate"]) ?
                                  30 : (settings["levelChangeRate"] == "slow" ? 60 : 45))]
@@ -119,17 +120,18 @@ void startLevelChange(direction) {
 }
 
 void stopLevelChange() {
-   logDebug("Running stopLevelChange...")
+   logDebug("stopLevelChange()...")
    Map cmd = ["bri_inc": 0]
    sendBridgeCommand(cmd, false) 
 }
 
 void setLevel(value) {
+   logDebug("setLevel($value)")
    setLevel(value, ((transitionTime != null ? transitionTime.toBigDecimal() : 1000)) / 1000)
 }
 
 void setLevel(value, rate) {
-   logDebug("Setting level to ${value}% over ${rate}s...")
+   logDebug("setLevel($value, $rate)")
    state.remove("lastLevel")
    if (value < 0) value = 1
    else if (value > 100) value = 100
@@ -152,18 +154,21 @@ void setLevel(value, rate) {
 }
 
 void flash() {
+   logDebug "flash()"
    logDesc("${device.displayName} started 15-cycle flash")
    Map cmd = ["alert": "lselect"]
    sendBridgeCommand(cmd, false) 
 }
 
 void flashOnce() {
+   logDebug "flashOnce()"
    logDesc("${device.displayName} started 1-cycle flash")
    Map cmd = ["alert": "select"]
    sendBridgeCommand(cmd, false) 
 }
 
 void flashOff() {
+   logDebug "flashOff()"
    logDesc("${device.displayName} was sent command to stop flash")
    Map cmd = ["alert": "none"]
    sendBridgeCommand(cmd, false) 
@@ -258,7 +263,6 @@ void sendBridgeCommand(Map customMap = null, boolean createHubEvents=true) {
       log.debug("Commands not sent to Bridge because command map empty")
       return
    }
-   if (createHubEvents) createEventsFromMap(cmd)
    Map<String,String> data = parent.getBridgeData()
    Map params = [
       uri: data.fullHost,
@@ -301,7 +305,7 @@ private Boolean checkIfValidResponse(resp) {
    Boolean isOK = true
    if (resp?.json == null) {
       isOK = false
-      if (resp?.headers == null) log.error "Error: HTTP ${resp.status} when attempting to communicate with Bridge"
+      if (resp?.headers == null) log.error "Error: HTTP ${resp?.status} when attempting to communicate with Bridge"
       else log.error "No JSON data found in response. ${resp.headers.'Content-Type'} (HTTP ${resp.status})"
       parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery 
       parent.setBridgeStatus(false)
@@ -328,7 +332,7 @@ private Boolean checkIfValidResponse(resp) {
 }
 
 void doSendEvent(String eventName, eventValue, String eventUnit=null) {
-   logDebug("Creating event for $eventName...")
+   //logDebug("doSendEvent($eventName, $eventValue, $eventUnit)")
    String descriptionText = "${device.displayName} ${eventName} is ${eventValue}${eventUnit ?: ''}"
    logDesc(descriptionText)
    if (eventUnit) {
@@ -360,9 +364,9 @@ private Integer scaleBriFromBridge(bridgeLevel) {
 }
 
 void logDebug(str) {
-   if (settings.enableDebug) log.debug(str)
+   if (settings.enableDebug == true) log.debug(str)
 }
 
 void logDesc(str) {
-   if (settings.enableDesc) log.info(str)
+   if (settings.enableDesc == true) log.info(str)
 }
