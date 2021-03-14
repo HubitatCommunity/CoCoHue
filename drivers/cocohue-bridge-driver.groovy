@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2021-02-13
+ *  Last modified: 2021-03-14
  *
  *  Changelog:
+ *  v3.1    - Improved error handling and debug logging
  *  v3.0    - Added support for sensors (Hue Motion sensors with motion/temp/lux) and Hue Labs effects (looks for resoucelinks with 1 sensor link)
  *          - Revamped refresh/sync to fetch all Bridge data instead of indiviudal /lights, /groups, etc. APIs (goal: reduce to one HTTP call and response total)
  *  v2.1    - Minor code cleanup and more static typing
@@ -29,7 +30,7 @@ metadata {
    definition (name: "CoCoHue Bridge", namespace: "RMoRobert", author: "Robert Morris", importUrl: "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-bridge-driver.groovy") {
       capability "Actuator"
       capability "Refresh"
-      attribute "status", "string"
+      attribute "status", "STRING"
    }
    
    preferences() {
@@ -96,6 +97,8 @@ private void parseStates(resp, data) {
 
 private void parseLightStates(Map lightsJson) { 
    logDebug("Parsing light states from Bridge...")
+   // Uncomment this line if asked to for debugging (or you're curious):
+   //log.debug "lightsJson = $lightsJson"
    try {
       lightsJson.each { id, val ->
          com.hubitat.app.DeviceWrapper device = parent.getChildDevice("${device.deviceNetworkId}/Light/${id}")
@@ -112,6 +115,8 @@ private void parseLightStates(Map lightsJson) {
 
 private void parseGroupStates(Map groupsJson) {
    logDebug("Parsing group states from Bridge...")
+   // Uncomment this line if asked to for debugging (or you're curious):
+   //log.debug "groupsJson = $groupsJson"
    try {
       groupsJson.each { id, val ->
          com.hubitat.app.DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Group/${id}")
@@ -129,23 +134,26 @@ private void parseGroupStates(Map groupsJson) {
       
    }
    catch (Exception ex) {
-      log.error "Error parsing group states: ${ex}"   
+      log.error "Error parsing group states: ${ex}"
    }
 }
 
 private void parseSensorStates(Map sensorsJson) {
    logDebug("Parsing sensor states from Bridge...")
+   // Uncomment this line if asked to for debugging (or you're curious):
+   //log.debug "sensorsJson = $sensorsJson"
    try {
       Map allSensors = [:]
       sensorsJson.each { key, val ->
-         if (val.type == "ZLLPresence" || val.type == "ZLLLightLevel" || val.type == "ZLLTemperature") {
+         if (val.type == "ZLLPresence" || val.type == "ZLLLightLevel" || val.type == "ZLLTemperature" ||
+             val.type == "ZHAPresence" || val.type == "ZHALightLevel" || val.type == "ZHATemperature") {
             String mac = val?.uniqueid?.substring(0,23)
             if (mac != null) {
                com.hubitat.app.DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Sensor/${mac}")
                if (dev != null) {
                   dev.createEventsFromMap(val.state)
                   // All entries have config.battery, so just picking one to parse here to avoid redundancy:
-                  if (val.type == "ZLLPresence") dev.createEventsFromMap(["battery": val.config.battery])
+                  if (val.type == "ZLLPresence" || val.type == "ZHAPresence") dev.createEventsFromMap(["battery": val.config.battery])
                }
             }
          }
@@ -164,31 +172,37 @@ private void parseSensorStates(Map sensorsJson) {
 private Boolean checkIfValidResponse(resp) {
    logDebug("Checking if valid HTTP response/data from Bridge...")
    Boolean isOK = true
-   if (resp?.json == null) {
-      isOK = false
-      if (resp?.headers == null) log.error "Error: HTTP ${resp?.status} when attempting to communicate with Bridge"
-      else log.error "No JSON data found in response. ${resp.headers.'Content-Type'} (HTTP ${resp.status})"
-      parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery 
-      parent.setBridgeStatus(false)
-   }
-   else if (resp.status < 400 && resp.json) {
-      if (resp.json[0]?.error) {
-         // Bridge (not HTTP) error (bad username, bad command formatting, etc.):
+   if (resp.status < 400) {
+      if (resp?.json == null) {
          isOK = false
-         log.warn "Error from Hue Bridge: ${resp.json[0].error}"
-         // Not setting Bridge to offline when light/scene/group devices end up here because could
-         // be old/bad ID and don't want to consider Bridge offline just for that (but also won't set
-         // to online because wasn't successful attempt)
+         if (resp?.headers == null) log.error "Error: HTTP ${resp?.status} when attempting to communicate with Bridge"
+         else log.error "No JSON data found in response. ${resp.headers.'Content-Type'} (HTTP ${resp.status})"
+         parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery 
+         parent.setBridgeStatus(false)
       }
-      // Otherwise: probably OK (not changing anything because isOK = true already)
+      else if (resp.json) {
+         if (resp.json[0]?.error) {
+            // Bridge (not HTTP) error (bad username, bad command formatting, etc.):
+            isOK = false
+            log.warn "Error from Hue Bridge: ${resp.json[0].error}"
+            // Not setting Bridge to offline when light/scene/group devices end up here because could
+            // be old/bad ID and don't want to consider Bridge offline just for that (but also won't set
+            // to online because wasn't successful attempt)
+         }
+         // Otherwise: probably OK (not changing anything because isOK = true already)
+      }
+      else {
+         isOK = false
+         log.warn("HTTP status code ${resp.status} from Bridge")
+         if (resp?.status >= 400) parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery 
+         parent.setBridgeStatus(false)
+      }
+      if (isOK) parent.setBridgeStatus(true)
    }
    else {
+      log.warn "Error communiating with Hue Bridge: HTTP ${resp?.status}"
       isOK = false
-      log.warn("HTTP status code ${resp.status} from Bridge")
-      if (resp?.status >= 400) parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery 
-      parent.setBridgeStatus(false)
    }
-   if (isOK) parent.setBridgeStatus(true)
    return isOK
 }
 
@@ -468,7 +482,8 @@ private void parseGetAllLabsDevicesResponse(resp, data) {
  */
 private void parseLabsSensorStates(sensorJson) {
    logDebug("Parsing Labs sensor states...")
-   //logDebug("states: $sensorJson")
+   // Uncomment this line if asked to for debugging (or you're curious):
+   //log.debug "sensorJson = $sensorJson"
    try {
       sensorJson.each { id, val ->
          com.hubitat.app.DeviceWrapper device = parent.getChildDevice("${device.deviceNetworkId}/SensorRL/${id}")
@@ -501,14 +516,10 @@ void clearLabsSensorsCache() {
 private void doSendEvent(String eventName, eventValue) {
    //logDebug("doSendEvent($eventName, $eventValue, $eventUnit)")
    String descriptionText = "${device.displayName} ${eventName} is ${eventValue}"
-   logDesc(descriptionText)
+   if (settings.enableDesc == true) log.info(descriptionText)
    sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText)
 }
 
 void logDebug(str) {
    if (settings.enableDebug == true) log.debug(str)
-}
-
-void logDesc(str) {
-   if (settings.enableDesc == true) log.info(str)
 }

@@ -10,7 +10,7 @@
  *  TO INSTALL:
  *  See documentation on Hubitat Community forum or README.MD file in GitHub repo
  *
- *  Copyright 2019-2020 Robert Morris
+ *  Copyright 2019-2021 Robert Morris
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
  *
@@ -22,9 +22,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2021-02-07 - Version 3.0 Preview 2
+ *  Last modified: 2021-03-14
  * 
  *  Changelog:
+ *  v3.1   - Driver updates (logging, error handling)
  *  v3.0   - Added support for Hue motion sensors (also temp/illuminance) and Hue Labs activators; added custom port options and
  *           other changes to enhance compatibility with DeCONZ and similar third-party APIs
  *  v2.2   - Added support for illumiance/temp/motion readings from Hue Motion sensors from Bridge

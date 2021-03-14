@@ -5,7 +5,7 @@
    "dateReleased": "2020-02-13",
    "communityLink": "https://community.hubitat.com/t/release-cocohue-hue-bridge-integration-including-scenes/27978",
    "licenseFile": "",
-   "releaseNotes": "New in version 3.0: Experimental support for Hue motion sensors (with motion, lux, and temperature) and Hue Labs activators. HTTP error handling improvements. Fixes for CT, dimmable, and on/off drivers to match RGBW and group drivers in generating events only when Bridge heard back from. Options for alternate HTTP port (improves compatibility with third-party Bridge-type solutions like DeCONZ.)\n\nNOTE: Users upgrading from v1.x should follow instructions forum or on GitHub (parent app deprecatred but still available) and perform initial upgrade manually, not with HPM.",
+   "releaseNotes": "Version 3.1: Deprecated prestaging options (will be replaced with commands--coming soon); added new optional setColorTemperature() parameters; improved Bridge/HTTP error handling and logging.\n\nNew in version 3.0: Experimental support for Hue motion sensors (with motion, lux, and temperature) and Hue Labs activators. HTTP error handling improvements. Fixes for CT, dimmable, and on/off drivers to match RGBW and group drivers in generating events only when Bridge heard back from. Options for alternate HTTP port (improves compatibility with third-party Bridge-type solutions like DeCONZ.)\n\nNOTE: Users upgrading from v1.x should follow instructions forum or on GitHub (parent app deprecatred but still available) and perform initial upgrade manually, not with HPM.",
    "apps": [
       {
          "id": "568bab8e-5c69-4800-a038-481026904c05",
@@ -13,7 +13,7 @@
          "namespace": "RMoRobert",
          "location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/apps/cocohue-app.groovy",
          "required": true,
-         "version": "3.0.0",
+         "version": "3.1.0",
          "primary": true,
          "oauth": false
       }
@@ -24,7 +24,7 @@
          "name": "CoCoHue Bridge",
          "namespace": "RMoRobert",
          "location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-bridge-driver.groovy",
-         "version": "3.0.0",
+         "version": "3.1.0",
          "required": true
       },
       {
@@ -32,7 +32,7 @@
          "name": "CoCoHue CT Bulb",
          "namespace": "RMoRobert",
          "location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-ct-bulb-driver.groovy",
-         "version": "3.0.0",
+         "version": "3.1.0",
          "required": true
       },
       {
@@ -40,7 +40,7 @@
          "name": "CoCoHue Dimmable Bulb",
          "namespace": "RMoRobert",
          "location": "https://raw.githubusercontent.com/RMoRobert/CoCoHue/master/drivers/cocohue-dimmable-bulb-driver.groovy",
-         "version": "3.0.0",
+         "version": "3.1.0",
          "required": true
       },
       {
@@ -48,7 +48,7 @@
          "name": "CoCoHue Generic Status Device",
          "namespace": "RMoRobert",
          "location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-generic-status-driver.groovy",
-         "version": "3.0.0",
+         "version": "3.1.0",
          "required": true
       },
       {
@@ -56,7 +56,7 @@
          "name": "CoCoHue Group",
          "namespace": "RMoRobert",
          "location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-group-driver.groovy",
-         "version": "3.0.0",
+         "version": "3.1.0",
          "required": true
       },
       {
@@ -64,7 +64,7 @@
          "name": "CoCoHue Motion Sensor",
          "namespace": "RMoRobert",
          "location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-motion-sensor-driver.groovy",
-         "version": "3.0.0",
+         "version": "3.1.0",
          "required": true
       },
       {
@@ -72,7 +72,7 @@
          "name": "CoCoHue On/Off Plug",
          "namespace": "RMoRobert",
          "location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-plug-driver.groovy",
-         "version": "3.0.0",
+         "version": "3.1.0",
          "required": true
       },
       {
@@ -80,7 +80,7 @@
          "name": "CoCoHue RGBW Bulb",
          "namespace": "RMoRobert",
          "location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-rgbw-bulb-driver.groovy",
-         "version": "3.0.0",
+         "version": "3.1.0",
          "required": true
       },
       {
@@ -88,7 +88,7 @@
          "name": "CoCoHue Scene",
          "namespace": "RMoRobert",
          "location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-scene-driver.groovy",
-         "version": "3.0.0",
+         "version": "3.1.0",
          "required": true
       }
    ]

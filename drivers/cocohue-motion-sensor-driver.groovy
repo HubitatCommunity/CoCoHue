@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2021-02-13
+ *  Last modified: 2021-03-14
  * 
  *  Changelog:
+ *  v3.1  - Improved error handling and debug logging
  *  v3.0    - Initial release
  */
  
@@ -129,7 +130,7 @@ void createEventsFromMap(Map bridgeCmd) {
 void doSendEvent(String eventName, eventValue, String eventUnit=null) {
    //logDebug("doSendEvent($eventName, $eventValue, $eventUnit)")
    String descriptionText = "${device.displayName} ${eventName} is ${eventValue}${eventUnit ?: ''}"
-   logDesc(descriptionText)
+   if (settings.enableDesc == true) log.info(descriptionText)
    if (eventUnit) {
       sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, unit: eventUnit) 
    } else {
@@ -139,8 +140,4 @@ void doSendEvent(String eventName, eventValue, String eventUnit=null) {
 
 void logDebug(str) {
    if (settings.enableDebug == true) log.debug(str)
-}
-
-void logDesc(str) {
-   if (settings.enableDesc == true) log.info(str)
 }

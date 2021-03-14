@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2021-02-13
+ *  Last modified: 2021-03-14
  * 
  *  Changelog:
+ *  v3.1    - Improved error handling and debug logging
  *  v3.0    - Initial release
  */
  
@@ -186,38 +187,44 @@ void parseSendCommandResponse(resp, data) {
 private Boolean checkIfValidResponse(resp) {
    logDebug("Checking if valid HTTP response/data from Bridge...")
    Boolean isOK = true
-   if (resp?.json == null) {
-      isOK = false
-      if (resp?.headers == null) log.error "Error: HTTP ${resp?.status} when attempting to communicate with Bridge"
-      else log.error "No JSON data found in response. ${resp.headers.'Content-Type'} (HTTP ${resp.status})"
-      parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery 
-      parent.setBridgeStatus(false)
-   }
-   else if (resp.status < 400 && resp.json) {
-      if (resp.json[0]?.error) {
-         // Bridge (not HTTP) error (bad username, bad command formatting, etc.):
+   if (resp.status < 400) {
+      if (resp?.json == null) {
          isOK = false
-         log.warn "Error from Hue Bridge: ${resp.json[0].error}"
-         // Not setting Bridge to offline when light/scene/group devices end up here because could
-         // be old/bad ID and don't want to consider Bridge offline just for that (but also won't set
-         // to online because wasn't successful attempt)
+         if (resp?.headers == null) log.error "Error: HTTP ${resp?.status} when attempting to communicate with Bridge"
+         else log.error "No JSON data found in response. ${resp.headers.'Content-Type'} (HTTP ${resp.status})"
+         parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery 
+         parent.setBridgeStatus(false)
       }
-      // Otherwise: probably OK (not changing anything because isOK = true already)
+      else if (resp.json) {
+         if (resp.json[0]?.error) {
+            // Bridge (not HTTP) error (bad username, bad command formatting, etc.):
+            isOK = false
+            log.warn "Error from Hue Bridge: ${resp.json[0].error}"
+            // Not setting Bridge to offline when light/scene/group devices end up here because could
+            // be old/bad ID and don't want to consider Bridge offline just for that (but also won't set
+            // to online because wasn't successful attempt)
+         }
+         // Otherwise: probably OK (not changing anything because isOK = true already)
+      }
+      else {
+         isOK = false
+         log.warn("HTTP status code ${resp.status} from Bridge")
+         if (resp?.status >= 400) parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery 
+         parent.setBridgeStatus(false)
+      }
+      if (isOK) parent.setBridgeStatus(true)
    }
    else {
+      log.warn "Error communiating with Hue Bridge: HTTP ${resp?.status}"
       isOK = false
-      log.warn("HTTP status code ${resp.status} from Bridge")
-      if (resp?.status >= 400) parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery 
-      parent.setBridgeStatus(false)
    }
-   if (isOK) parent.setBridgeStatus(true)
    return isOK
 }
 
 void doSendEvent(String eventName, eventValue, String eventUnit=null, Boolean forceStateChange=false) {
    //logDebug("doSendEvent($eventName, $eventValue, $eventUnit)")
    String descriptionText = "${device.displayName} ${eventName} is ${eventValue}${eventUnit ?: ''}"
-   logDesc(descriptionText)
+   if (settings.enableDesc == true) log.info(descriptionText)
    if (eventUnit) {
       if (forceStateChange) sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, unit: eventUnit, isStateChange: true) 
       else sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, unit: eventUnit) 
@@ -240,8 +247,4 @@ private void setDefaultAttributeValues() {
 
 void logDebug(str) {
    if (settings.enableDebug == true) log.debug(str)
-}
-
-void logDesc(str) {
-   if (settings.enableDesc == true) log.info(str)
 }
