@@ -2,10 +2,10 @@
    "packageName": "CoCoHue (Hue Bridge Integration)",
    "minimumHEVersion": "2.1.9",
    "author": "Robert Morris",
-   "dateReleased": "2020-02-13",
+   "dateReleased": "2020-03-17",
    "communityLink": "https://community.hubitat.com/t/release-cocohue-hue-bridge-integration-including-scenes/27978",
    "licenseFile": "",
-   "releaseNotes": "Version 3.1: Deprecated prestaging options (will be replaced with commands--coming soon); added new optional setColorTemperature() parameters; improved Bridge/HTTP error handling and logging.\n\nNew in version 3.0: Experimental support for Hue motion sensors (with motion, lux, and temperature) and Hue Labs activators. HTTP error handling improvements. Fixes for CT, dimmable, and on/off drivers to match RGBW and group drivers in generating events only when Bridge heard back from. Options for alternate HTTP port (improves compatibility with third-party Bridge-type solutions like DeCONZ.)\n\nNOTE: Users upgrading from v1.x should follow instructions forum or on GitHub (parent app deprecatred but still available) and perform initial upgrade manually, not with HPM.",
+   "releaseNotes": "Version 3.1.1: Fix for setColorTemperature() command not turning bulbs on in some uses when expected.\n\nVersion 3.1: Deprecated prestaging options (will be replaced with commands--coming soon); added new optional setColorTemperature() parameters; improved Bridge/HTTP error handling and logging.\n\nNew in version 3.0: Experimental support for Hue motion sensors (with motion, lux, and temperature) and Hue Labs activators. HTTP error handling improvements. Fixes for CT, dimmable, and on/off drivers to match RGBW and group drivers in generating events only when Bridge heard back from. Options for alternate HTTP port (improves compatibility with third-party Bridge-type solutions like DeCONZ.)\n\nNOTE: Users upgrading from v1.x should follow instructions forum or on GitHub (parent app deprecatred but still available) and perform initial upgrade manually, not with HPM.",
    "apps": [
       {
          "id": "568bab8e-5c69-4800-a038-481026904c05",
@@ -32,7 +32,7 @@
          "name": "CoCoHue CT Bulb",
          "namespace": "RMoRobert",
          "location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-ct-bulb-driver.groovy",
-         "version": "3.1.0",
+         "version": "3.1.1",
          "required": true
       },
       {
@@ -64,7 +64,7 @@
          "name": "CoCoHue Motion Sensor",
          "namespace": "RMoRobert",
          "location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-motion-sensor-driver.groovy",
-         "version": "3.1.0",
+         "version": "3.1.1",
          "required": true
       },
       {
@@ -80,7 +80,7 @@
          "name": "CoCoHue RGBW Bulb",
          "namespace": "RMoRobert",
          "location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-rgbw-bulb-driver.groovy",
-         "version": "3.1.0",
+         "version": "3.1.1",
          "required": true
       },
       {

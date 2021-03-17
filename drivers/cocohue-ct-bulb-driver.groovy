@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2021-03-14
+ *  Last modified: 2021-03-17
  *
  *  Changelog:
+ *  v3.1.1  - Fix for setColorTempeature() not turning bulb on in some cases
  *  v3.1    - Improved error handling and debug logging; added optional setColorTemperature parameters
  *  v3.0    - Fix so events no created until Bridge response received (as was done for other drivers in 2.0); improved HTTP error handling
  *  v2.1.1  - Improved rounding for level (brightness) to/from Bridge
@@ -183,8 +184,8 @@ void setColorTemperature(Number colorTemperature, Number level = null, Number tr
       else /* (level == 0) */  addToNextBridgeCommand(["on": false, "ct": newCT, "transitiontime": scaledRate], !(levelStaging || colorStaging)) 
    }
    Boolean isOn = device.currentValue("switch") == "on"
-   if (!colorStaging || isOn) { 
-      if (level) addToNextBridgeCommand(["on": true])
+   if (!colorStaging || !isOn) {
+      if (level != 0) addToNextBridgeCommand(["on": true])
       sendBridgeCommand()
    } else {
       state["lastCT"] = device.currentValue("colorTemperature")
