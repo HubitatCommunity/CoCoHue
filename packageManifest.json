@@ -5,7 +5,7 @@
    "dateReleased": "2020-03-21",
    "communityLink": "https://community.hubitat.com/t/release-cocohue-hue-bridge-integration-including-scenes/27978",
    "licenseFile": "",
-   "releaseNotes": "* Version 3.1.2: Added optional temperature offset to motion sensor driver\n *Version 3.1.1: Fix for setColorTemperature() not working without level in some cases\n *Version 3.1: Minor fixes (improved error handling for Bridge requests; more debug logging); additional optiona setColorTemperature() parameters; deprecation of prestaging options in preparation for future changes.\n *New in version 3.0: Experimental support for Hue motion sensors (with motion, lux, and temperature) and Hue Labs activators. HTTP error handling improvements. Fixes for CT, dimmable, and on/off drivers to match RGBW and group drivers in generating events only when Bridge heard back from. Options for alternate HTTP port (improves compatibility with third-party Bridge-type solutions like DeCONZ.)\n\nNOTE: Users upgrading from v1.x should follow instructions forum or on GitHub (parent app deprecatred but still available) and perform initial upgrade manually, not with HPM.",
+   "releaseNotes": "* Version 3.1.3: setLevel(0) command now obeys specified rate when turning off bulb\n* Version 3.1.2: Added optional temperature offset to motion sensor driver\n *Version 3.1.1: Fix for setColorTemperature() not working without level in some cases\n *Version 3.1: Minor fixes (improved error handling for Bridge requests; more debug logging); additional optiona setColorTemperature() parameters; deprecation of prestaging options in preparation for future changes.\n *New in version 3.0: Experimental support for Hue motion sensors (with motion, lux, and temperature) and Hue Labs activators. HTTP error handling improvements. Fixes for CT, dimmable, and on/off drivers to match RGBW and group drivers in generating events only when Bridge heard back from. Options for alternate HTTP port (improves compatibility with third-party Bridge-type solutions like DeCONZ.)\n\nNOTE: Users upgrading from v1.x should follow instructions forum or on GitHub (parent app deprecatred but still available) and perform initial upgrade manually, not with HPM.",
    "apps": [
       {
          "id": "568bab8e-5c69-4800-a038-481026904c05",
@@ -32,7 +32,7 @@
          "name": "CoCoHue CT Bulb",
          "namespace": "RMoRobert",
          "location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-ct-bulb-driver.groovy",
-         "version": "3.1.1",
+         "version": "3.1.3",
          "required": true
       },
       {
@@ -40,7 +40,7 @@
          "name": "CoCoHue Dimmable Bulb",
          "namespace": "RMoRobert",
          "location": "https://raw.githubusercontent.com/RMoRobert/CoCoHue/master/drivers/cocohue-dimmable-bulb-driver.groovy",
-         "version": "3.1.0",
+         "version": "3.1.3",
          "required": true
       },
       {
@@ -56,7 +56,7 @@
          "name": "CoCoHue Group",
          "namespace": "RMoRobert",
          "location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-group-driver.groovy",
-         "version": "3.1.0",
+         "version": "3.1.3",
          "required": true
       },
       {
@@ -80,7 +80,7 @@
          "name": "CoCoHue RGBW Bulb",
          "namespace": "RMoRobert",
          "location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-rgbw-bulb-driver.groovy",
-         "version": "3.1.1",
+         "version": "3.1.3",
          "required": true
       },
       {

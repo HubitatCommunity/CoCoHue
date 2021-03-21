@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2021-03-17
+ *  Last modified: 2021-03-21
  *
  *  Changelog:
+ *  v3.1.3  - Adjust setLevel(0) to honor rate
  *  v3.1.1  - Fix for setColorTempeature() not turning bulb on in some cases
  *  v3.1    - Improved error handling and debug logging; added optional setColorTemperature parameters
  *  v3.0    - Improved HTTP error handling
@@ -123,27 +124,29 @@ String getHueDeviceNumber() {
    return device.deviceNetworkId.split("/")[3]
 }
 
-void on() {
+void on(Number transitionTime = null) {
    logDebug("on()")
-   /* TODO: Add setting for "agressive" vs. normal prestaging (?), and for regular pre-staging,
-   check if current level is different from lastXYZ value, in which case it was probably
-   changed outside of Hubitat and we should not set the pre-staged value(s)--Hue does not
-   support "true" prestaging, so any prestaging is a Hubitat-only workaround */
-   addToNextBridgeCommand(["on": true], !(colorStaging || levelStaging))
+   Map bridgeCmd = ["on": true]
+   if (transitionTime != null) {
+      scaledRate = (transitionTime * 10) as Integer
+      bridgeCmd << ["transitiontime": scaledRate]
+   }
+   addToNextBridgeCommand(bridgeCmd, !(colorStaging || levelStaging))
    sendBridgeCommand()
-   state.remove("lastHue")
-   state.remove("lastSat")
    state.remove("lastCT")
    state.remove("lastLevel")
 }
 
-void off() {
+void off(Number transitionTime = null) {
    logDebug("off()")
-   state.remove("lastHue")
-   state.remove("lastSat")
    state.remove("lastCT")
    state.remove("lastLevel")
-   addToNextBridgeCommand(["on": false], true)
+   Map bridgeCmd = ["on": false]
+   if (transitionTime != null) {
+      scaledRate = (transitionTime * 10) as Integer
+      bridgeCmd << ["transitiontime": scaledRate]
+   }
+   addToNextBridgeCommand(bridgeCmd, true)
    sendBridgeCommand()
 }
 
@@ -166,14 +169,13 @@ void setLevel(value) {
    setLevel(value, ((transitionTime != null ? transitionTime.toBigDecimal() : 1000)) / 1000)
 }
 
-void setLevel(value, rate) {
+void setLevel(Number value, Number rate) {
    logDebug("setLevel($value, $rate)")
    state.remove("lastLevel")
    if (value < 0) value = 1
    else if (value > 100) value = 100
    else if (value == 0) {
-      off()
-      logDebug("Level is 0 so turning off instead")
+      off(rate)
       return
    }
    Integer newLevel = scaleBriToBridge(value)
