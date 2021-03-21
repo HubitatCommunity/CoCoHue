@@ -14,10 +14,11 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2021-03-14
+ *  Last modified: 2021-03-21
  * 
  *  Changelog:
- *  v3.1  - Improved error handling and debug logging
+ *  v3.1.2  - Added optional offset for temperature sensor
+ *  v3.1    - Improved error handling and debug logging
  *  v3.0    - Initial release
  */
  
@@ -32,8 +33,9 @@ metadata {
    }
 
    preferences {
-      input(name: "enableDebug", type: "bool", title: "Enable debug logging", defaultValue: true)
-      input(name: "enableDesc", type: "bool", title: "Enable descriptionText logging", defaultValue: true)
+      input name: "tempAdjust", type: "number", title: "Adjust temperature reading by this amount", description: "Example: 0.4 or -1.5 (optional)"
+      input name: "enableDebug", type: "bool", title: "Enable debug logging", defaultValue: true
+      input name: "enableDesc", type: "bool", title: "Enable descriptionText logging", defaultValue: true
    }
 }
 
@@ -111,6 +113,7 @@ void createEventsFromMap(Map bridgeCmd) {
             eventName = "temperature"
             if (location.temperatureScale == "C") eventValue = ((it.value as BigDecimal)/100.0).setScale(1, java.math.RoundingMode.HALF_UP)
             else eventValue = celsiusToFahrenheit((it.value as BigDecimal)/100.0).setScale(1, java.math.RoundingMode.HALF_UP)
+            if (settings["tempAdjust"]) eventValue += settings[tempAdjust]
             eventUnit = "°${location.temperatureScale}"
             if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue, eventUnit)
             break
