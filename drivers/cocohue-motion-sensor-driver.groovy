@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2021-03-21
+ *  Last modified: 2021-04-19
  * 
  *  Changelog:
+ *  v3.1.4  - Fixed runtime error when using temperature offset
  *  v3.1.2  - Added optional offset for temperature sensor
  *  v3.1    - Improved error handling and debug logging
  *  v3.0    - Initial release
@@ -113,7 +114,7 @@ void createEventsFromMap(Map bridgeCmd) {
             eventName = "temperature"
             if (location.temperatureScale == "C") eventValue = ((it.value as BigDecimal)/100.0).setScale(1, java.math.RoundingMode.HALF_UP)
             else eventValue = celsiusToFahrenheit((it.value as BigDecimal)/100.0).setScale(1, java.math.RoundingMode.HALF_UP)
-            if (settings["tempAdjust"]) eventValue += settings[tempAdjust]
+            if (settings["tempAdjust"]) eventValue += settings["tempAdjust"]
             eventUnit = "°${location.temperatureScale}"
             if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue, eventUnit)
             break
