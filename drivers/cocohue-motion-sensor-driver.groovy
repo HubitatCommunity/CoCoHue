@@ -14,10 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2021-04-19
+ *  Last modified: 2021-04-21
  * 
  *  Changelog:
- *  v3.1.4  - Fixed runtime error when using temperature offset
+ *  v3.1.6  - Fixed runtime error when using temperature offset; ensure battery and lux reported as integers, temperature as BigDecimal
  *  v3.1.2  - Added optional offset for temperature sensor
  *  v3.1    - Improved error handling and debug logging
  *  v3.0    - Initial release
@@ -52,7 +52,7 @@ void updated() {
 
 void initialize() {
    log.debug "Initializing"
-   int disableTime = 1800
+   Integer disableTime = 1800
    if (enableDebug) {
       log.debug "Debug logging will be automatically disabled in ${disableTime} seconds"
       runIn(disableTime, debugOff)
@@ -108,21 +108,21 @@ void createEventsFromMap(Map bridgeCmd) {
             eventName = "illuminance"
             eventValue = Math.round(10 ** (((it.value as Integer)-1)/10000))
             eventUnit = "lux"
-            if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue, eventUnit)
+            if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue  as Integer, eventUnit)
             break
          case "temperature":
             eventName = "temperature"
             if (location.temperatureScale == "C") eventValue = ((it.value as BigDecimal)/100.0).setScale(1, java.math.RoundingMode.HALF_UP)
             else eventValue = celsiusToFahrenheit((it.value as BigDecimal)/100.0).setScale(1, java.math.RoundingMode.HALF_UP)
-            if (settings["tempAdjust"]) eventValue += settings["tempAdjust"]
+            if (settings["tempAdjust"]) eventValue = (eventValue as BigDecimal) + (settings["tempAdjust"] as BigDecimal)
             eventUnit = "°${location.temperatureScale}"
-            if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue, eventUnit)
+            if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue as BigDecimal, eventUnit)
             break
          case "battery":
             eventName = "battery"
             eventValue = (it.value != null) ? (it.value as Integer) : 0
             eventUnit = "%"
-            if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue, eventUnit)
+            if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue as Integer, eventUnit)
             break
          default:
             break
