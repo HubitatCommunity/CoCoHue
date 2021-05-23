@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2021-03-14
+ *  Last modified: 2021-05-23
  * 
  *  Changelog:
+ *  v3.5    - Addded "reachable" attribte from Bridge to bulb and group drivers (thanks to @jtp10181 for original implementation)
  *  v3.1    - Improved error handling and debug logging
  *  v3.0    - Fix so events no created until Bridge response received (as was done for other drivers in 2.0); improved HTTP error handling
  *  v2.1    - Minor code cleanup; more static typing
@@ -37,37 +38,35 @@ metadata {
       // Not supported on (most?) plugs; can uncomment if you are using for lights that support this:
       //command "flash" 
       //command "flashOnce" 
-      //command "flashOff" 
+      //command "flashOff"
+
+      attribute "reachable", "string"
    }
        
    preferences {
-      input(name: "enableDebug", type: "bool", title: "Enable debug logging", defaultValue: true)
-      input(name: "enableDesc", type: "bool", title: "Enable descriptionText logging", defaultValue: true)
-      input(name: "updateGroups", type: "bool", description: "", title: "Update state of groups immediately when plug state changes", defaultValue: false)
+      input name: "enableDebug", type: "bool", title: "Enable debug logging", defaultValue: true
+      input name: "enableDesc", type: "bool", title: "Enable descriptionText logging", defaultValue: true
+      input name: "updateGroups", type: "bool", description: "", title: "Update state of groups immediately when plug state changes", defaultValue: false
    }
 }
 
 void installed() {
-   log.debug "Installed..."
+   log.debug "installed()"
    initialize()
 }
 
 void updated() {
-   log.debug "Updated..."
+   log.debug "updated()"
    initialize()
 }
 
 void initialize() {
-   log.debug "Initializing"
-   int disableTime = 1800
+   log.debug "initialize()"
+   Integer disableMinutes = 30
    if (enableDebug) {
-      log.debug "Debug logging will be automatically disabled in ${disableTime} seconds"
-      runIn(disableTime, debugOff)
+      log.debug "Debug logging will be automatically disabled in ${disableMinutes} minutes"
+      runIn(disableMinutes*60, debugOff)
    }
-}
-
-void refresh() {
-   log.warn "Refresh CoCoHue Bridge device instead of individual device to update (all) bulbs/groups"
 }
 
 void debugOff() {
@@ -89,50 +88,41 @@ String getHueDeviceNumber() {
    return device.deviceNetworkId.split("/")[3]
 }
 
-void on() {    
-   logDebug("on()")
-   addToNextBridgeCommand(["on": true], true)
-   sendBridgeCommand()
+void on() {
+   if (enableDebug == true) log.debug "on()"
+   Map bridgeCmd = ["on": true]
+   sendBridgeCommand(bridgeCmd)
 }
 
-void off() {    
-   logDebug("off()")
-   addToNextBridgeCommand(["on": false], true)
-   sendBridgeCommand()
+void off() {
+   if (enableDebug == true) log.debug "off()"
+   Map bridgeCmd = ["on": false]
+   sendBridgeCommand(bridgeCmd)
+}
+
+void refresh() {
+   log.warn "Refresh CoCoHue Bridge device instead of individual device to update (all) bulbs/groups"
 }
 
 void flash() {
-   logDebug "flash()"
+   if (enableDebug == true) log.debug "flash()"
    if (settings.enableDesc == true) log.info("${device.displayName} started 15-cycle flash")
-   Map cmd = ["alert": "lselect"]
+   Map<String,String> cmd = ["alert": "lselect"]
    sendBridgeCommand(cmd, false) 
 }
 
 void flashOnce() {
-   logDebug "flashOnce()"
+   if (enableDebug == true) log.debug "flashOnce()"
    if (settings.enableDesc == true) log.info("${device.displayName} started 1-cycle flash")
-   Map cmd = ["alert": "select"]
+   Map<String,String> cmd = ["alert": "select"]
    sendBridgeCommand(cmd, false) 
 }
 
 void flashOff() {
-   logDebug "flashOff()"
+   if (enableDebug == true) log.debug "flashOff()"
    if (settings.enableDesc == true) log.info("${device.displayName} was sent command to stop flash")
-   Map cmd = ["alert": "none"]
+   Map<String,String> cmd = ["alert": "none"]
    sendBridgeCommand(cmd, false) 
-}
-
-/**
- * Used to build body of (future) HTTP PUT to Bridge; useful to build up
- * parts a command in multiple places/methods and then send to Bridge as one
- * command (e.g., if "on" with lots of prestaging enabled and set) to maximize
- * efficiency and provide one transition instead of multiple.
- * @param cmdToAdd Map of Bridge commands to place in next command to be sent--example: ["on": true]
- * @param clearFirst If true (optional; default is false), will clear pending command map first
- */
-void addToNextBridgeCommand(Map cmdToAdd, boolean clearFirst=false) {
-   if (clearFirst || !state.nextCmd) state.nextCmd = [:]
-   state.nextCmd << cmdToAdd
 }
 
 /**
@@ -140,26 +130,35 @@ void addToNextBridgeCommand(Map cmdToAdd, boolean clearFirst=false) {
  * a sendEvent for each relevant attribute; intended to be called either when commands are sent
  * to Bridge or if pre-staged attribute is changed and "real" command not yet able to be sent, or
  * to parse/update light states based on data received from Bridge
- * @param bridgeCmd Map of light states that are or would be sent to bridge OR state as received from
- *  Bridge; defaults to the  state attribute created by addToNextBridgeCommand if not provided
+ * @param bridgeMap Map of light states that are or would be sent to bridge OR state as received from
+ *  Bridge
  * @param isFromBridge Set to true if this is data read from Hue Bridge rather than intended to be sent
- *  to Bridge; if true, will ignore differences for prestaged attributes if switch state is off
+ *  to Bridge; if true, will ignore differences for prestaged attributes if switch state is off (TODO: how did new prestaging affect this?)
  */
-void createEventsFromMap(Map bridgeCmd = state.nextCmd, boolean isFromBridge = false) {
-   if (!bridgeCmd) {
-      logDebug("createEventsFromMap called but map command empty; exiting")
+void createEventsFromMap(Map bridgeCommandMap, Boolean isFromBridge = false) {
+   if (!bridgeCommandMap) {
+      if (enableDebug == true) log.debug "createEventsFromMap called but map command empty or null; exiting"
       return
    }
-   logDebug("Preparing to create events from map${isFromBridge ? ' from Bridge' : ''}: ${bridgeCmd}")
+   Map bridgeMap = bridgeCommandMap
+   if (enableDebug == true) log.debug "Preparing to create events from map${isFromBridge ? ' from Bridge' : ''}: ${bridgeMap}"
    String eventName, eventUnit, descriptionText
-   def eventValue // could be String or number
-   bridgeCmd.each {
+   String eventValue // only String for on/off devices (could be number with others)
+   bridgeMap.each {
       switch (it.key) {
          case "on":
             eventName = "switch"
             eventValue = it.value ? "on" : "off"
             eventUnit = null
             if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue, eventUnit)
+            break
+         case "reachable":
+            eventName = "reachable"
+            eventValue = it.value ? "true" : "false"
+            eventUnit = null
+            if (device.currentValue(eventName) != eventValue) {
+               doSendEvent(eventName, eventValue, eventUnit)
+            }
             break
          case "transitiontime":
          case "mode":
@@ -173,27 +172,15 @@ void createEventsFromMap(Map bridgeCmd = state.nextCmd, boolean isFromBridge = f
 }
 
 /**
- * Sends HTTP PUT to Bridge using the either command map previously built
- * with one or more calls to addToNextBridgeCommand and clears
- * that map (this is normally the case) or sends custom map without changing this
- * map (useful for one-off Hubitat commands like start/stopLevelChange)
- * @param customMap If provided, uses this map instead of the one previously built =
- *        with addToNextBridgeCommand; if not provided, uses and then clears the
- *        previously built map
+ * Sends HTTP PUT to Bridge using the either command map provided
+ * @param commandMap Groovy Map (will be converted to JSON) of Hue API commands to send, e.g., [on: true]
  * @param createHubEvents Will iterate over Bridge command map and do sendEvent for all
- *        affected device attributes (e.g., will send an "on" event for "switch" if map contains "on": true)
+ *        affected device attributes (e.g., will send an "on" event for "switch" if ["on": true] in map)
  */
-void sendBridgeCommand(Map customMap = null, boolean createHubEvents=true) {    
-   logDebug("Sending command to Bridge: ${customMap ?: state.nextCmd}")
-   Map cmd = [:]
-   if (customMap != null) {
-      cmd = customMap
-   } else {
-      cmd = state.nextCmd
-      state.remove("nextCmd")
-   }
-   if (!cmd) {
-      log.debug("Commands not sent to Bridge because command map empty")
+void sendBridgeCommand(Map commandMap, Boolean createHubEvents=true) {
+   if (enableDebug == true) log.debug "sendBridgeCommand($commandMap)"
+   if (commandMap == null || commandMap == [:]) {
+      if (enableDebug == true) log.debug "Commands not sent to Bridge because command map null or empty"
       return
    }
    Map<String,String> data = parent.getBridgeData()
@@ -201,11 +188,11 @@ void sendBridgeCommand(Map customMap = null, boolean createHubEvents=true) {
       uri: data.fullHost,
       path: "/api/${data.username}/lights/${getHueDeviceNumber()}/state",
       contentType: 'application/json',
-      body: cmd,
+      body: commandMap,
       timeout: 15
-      ]
-   asynchttpPut("parseSendCommandResponse", params, createHubEvents ? cmd : null)
-   logDebug("-- Command sent to Bridge!" --)
+   ]
+   asynchttpPut("parseSendCommandResponse", params, createHubEvents ? commandMap : null)
+   if (enableDebug == true) log.debug "-- Command sent to Bridge! --"
 }
 
 /** 
@@ -215,16 +202,16 @@ void sendBridgeCommand(Map customMap = null, boolean createHubEvents=true) {
   * @param data Map of commands sent to Bridge if specified to create events from map
   */
 void parseSendCommandResponse(resp, data) {
-   logDebug("Response from Bridge: ${resp.status}")
+   if (enableDebug == true) log.debug "Response from Bridge: ${resp.status}"
    if (checkIfValidResponse(resp) && data) {
-      logDebug("  Bridge response valid; creating events from data map")          
+      if (enableDebug == true) log.debug "  Bridge response valid; creating events from data map"
       createEventsFromMap(data)
       if ((data.containsKey("on") || data.containsKey("bri")) && settings["updateGroups"]) {
          parent.updateGroupStatesFromBulb(data, getHueDeviceNumber())
       }
    }
    else {
-      logDebug("  Not creating events from map because not specified to do or Bridge response invalid")
+      if (enableDebug == true) log.debug "  Not creating events from map because not specified to do or Bridge response invalid"
    }
 }
 
@@ -234,7 +221,7 @@ void parseSendCommandResponse(resp, data) {
   * @param resp The async HTTP response object to examine
   */
 private Boolean checkIfValidResponse(resp) {
-   logDebug("Checking if valid HTTP response/data from Bridge...")
+   if (enableDebug == true) log.debug "Checking if valid HTTP response/data from Bridge..."
    Boolean isOK = true
    if (resp.status < 400) {
       if (resp?.json == null) {
@@ -261,7 +248,7 @@ private Boolean checkIfValidResponse(resp) {
          if (resp?.status >= 400) parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery 
          parent.setBridgeStatus(false)
       }
-      if (isOK) parent.setBridgeStatus(true)
+      if (isOK == true) parent.setBridgeStatus(true)
    }
    else {
       log.warn "Error communiating with Hue Bridge: HTTP ${resp?.status}"
@@ -271,7 +258,7 @@ private Boolean checkIfValidResponse(resp) {
 }
 
 void doSendEvent(String eventName, eventValue, String eventUnit=null) {
-   //logDebug("doSendEvent($eventName, $eventValue, $eventUnit)")
+   //if (enableDebug == true) log.debug "doSendEvent($eventName, $eventValue, $eventUnit)"
    String descriptionText = "${device.displayName} ${eventName} is ${eventValue}${eventUnit ?: ''}"
    if (settings.enableDesc == true) log.info(descriptionText)
    if (eventUnit) {
@@ -279,8 +266,4 @@ void doSendEvent(String eventName, eventValue, String eventUnit=null) {
    } else {
       sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText) 
    }
-}
-
-void logDebug(str) {
-   if (settings.enableDebug == true) log.debug(str)
 }

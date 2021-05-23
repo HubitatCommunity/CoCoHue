@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2021-04-21
+ *  Last modified: 2021-05-23
  * 
  *  Changelog:
+ *  v3.5    - Minor code cleanup
  *  v3.1.6  - Fixed runtime error when using temperature offset; ensure battery and lux reported as integers, temperature as BigDecimal
  *  v3.1.2  - Added optional offset for temperature sensor
  *  v3.1    - Improved error handling and debug logging
@@ -41,21 +42,21 @@ metadata {
 }
 
 void installed() {
-   log.debug "Installed..."
+   log.debug "installed()"
    initialize()
 }
 
 void updated() {
-   log.debug "Updated..."
+   log.debug "updated()"
    initialize()
 }
 
 void initialize() {
-   log.debug "Initializing"
-   Integer disableTime = 1800
+   log.debug "initialize()"
+   Integer disableMinutes = 30
    if (enableDebug) {
-      log.debug "Debug logging will be automatically disabled in ${disableTime} seconds"
-      runIn(disableTime, debugOff)
+      log.debug "Debug logging will be automatically disabled in ${disableMinutes} minutes"
+      runIn(disableMinutes*60, debugOff)
    }
 }
 
@@ -64,7 +65,7 @@ void refresh() {
 }
 
 void debugOff() {
-   log.warn("Disabling debug logging")
+   log.warn "Disabling debug logging"
    device.updateSetting("enableDebug", [value:"false", type:"bool"])
 }
 
@@ -90,10 +91,10 @@ String getHueDeviceMAC() {
  */
 void createEventsFromMap(Map bridgeCmd) {
    if (!bridgeCmd) {
-      logDebug("createEventsFromMap called but map empty; exiting")
+      if (enableDebug) log.debug "createEventsFromMap called but map empty; exiting"
       return
    }
-   logDebug("Preparing to create events from map: ${bridgeCmd}")
+   if (enableDebug) log.debug "Preparing to create events from map: ${bridgeCmd}"
    String eventName, eventUnit, descriptionText
    def eventValue // could be numeric (lux, temp) or boolean (motion)
    bridgeCmd.each {
@@ -132,7 +133,7 @@ void createEventsFromMap(Map bridgeCmd) {
 }
 
 void doSendEvent(String eventName, eventValue, String eventUnit=null) {
-   //logDebug("doSendEvent($eventName, $eventValue, $eventUnit)")
+   //if (enableDebug) log.debug "doSendEvent($eventName, $eventValue, $eventUnit)"
    String descriptionText = "${device.displayName} ${eventName} is ${eventValue}${eventUnit ?: ''}"
    if (settings.enableDesc == true) log.info(descriptionText)
    if (eventUnit) {
@@ -140,8 +141,4 @@ void doSendEvent(String eventName, eventValue, String eventUnit=null) {
    } else {
       sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText) 
    }
-}
-
-void logDebug(str) {
-   if (settings.enableDebug == true) log.debug(str)
 }
