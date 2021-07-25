@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2021-05-23
+ *  Last modified: 2021-07-24
  * 
  *  Changelog:
+ *  v3.5.1  - Refactor some code into libraries (code still precompiled before upload; should not have any visible changes)
  *  v3.5    - Addded "reachable" attribte from Bridge to bulb and group drivers (thanks to @jtp10181 for original implementation)
  *  v3.1    - Improved error handling and debug logging
  *  v3.0    - Fix so events no created until Bridge response received (as was done for other drivers in 2.0); improved HTTP error handling
@@ -28,8 +29,10 @@
  *  v1.7    - Initial Release  
  */
  
+ // can comment out if don't need commands; see also definition() below
+
 metadata {
-   definition (name: "CoCoHue On/Off Plug", namespace: "RMoRobert", author: "Robert Morris", importUrl: "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-plug-driver.groovy") {
+   definition(name: "CoCoHue On/Off Plug", namespace: "RMoRobert", author: "Robert Morris", importUrl: "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-plug-driver.groovy") {
       capability "Actuator"
       capability "Refresh"
       capability "Switch"
@@ -69,11 +72,6 @@ void initialize() {
    }
 }
 
-void debugOff() {
-   log.warn("Disabling debug logging")
-   device.updateSetting("enableDebug", [value:"false", type:"bool"])
-}
-
 // Probably won't happen but...
 void parse(String description) {
    log.warn("Running unimplemented parse for: '${description}'")
@@ -102,27 +100,6 @@ void off() {
 
 void refresh() {
    log.warn "Refresh CoCoHue Bridge device instead of individual device to update (all) bulbs/groups"
-}
-
-void flash() {
-   if (enableDebug == true) log.debug "flash()"
-   if (settings.enableDesc == true) log.info("${device.displayName} started 15-cycle flash")
-   Map<String,String> cmd = ["alert": "lselect"]
-   sendBridgeCommand(cmd, false) 
-}
-
-void flashOnce() {
-   if (enableDebug == true) log.debug "flashOnce()"
-   if (settings.enableDesc == true) log.info("${device.displayName} started 1-cycle flash")
-   Map<String,String> cmd = ["alert": "select"]
-   sendBridgeCommand(cmd, false) 
-}
-
-void flashOff() {
-   if (enableDebug == true) log.debug "flashOff()"
-   if (settings.enableDesc == true) log.info("${device.displayName} was sent command to stop flash")
-   Map<String,String> cmd = ["alert": "none"]
-   sendBridgeCommand(cmd, false) 
 }
 
 /**
@@ -214,56 +191,109 @@ void parseSendCommandResponse(resp, data) {
       if (enableDebug == true) log.debug "  Not creating events from map because not specified to do or Bridge response invalid"
    }
 }
+// ~~~~~ start include (8) RMoRobert.CoCoHue_Common_Lib ~~~~~
+// Version 1.0.0 // library marker RMoRobert.CoCoHue_Common_Lib, line 1
+library ( // library marker RMoRobert.CoCoHue_Common_Lib, line 2
+   base: "driver", // library marker RMoRobert.CoCoHue_Common_Lib, line 3
+   author: "RMoRobert", // library marker RMoRobert.CoCoHue_Common_Lib, line 4
+   category: "Convenience", // library marker RMoRobert.CoCoHue_Common_Lib, line 5
+   description: "For internal CoCoHue use only. Not intended for external use. Contains common code shared by many CoCoHue drivers.", // library marker RMoRobert.CoCoHue_Common_Lib, line 6
+   name: "CoCoHue_Common_Lib", // library marker RMoRobert.CoCoHue_Common_Lib, line 7
+   namespace: "RMoRobert" // library marker RMoRobert.CoCoHue_Common_Lib, line 8
+) // library marker RMoRobert.CoCoHue_Common_Lib, line 9
 
-/** Performs basic check on data returned from HTTP response to determine if should be
-  * parsed as likely Hue Bridge data or not; returns true (if OK) or logs errors/warnings and
-  * returns false if not
-  * @param resp The async HTTP response object to examine
-  */
-private Boolean checkIfValidResponse(resp) {
-   if (enableDebug == true) log.debug "Checking if valid HTTP response/data from Bridge..."
-   Boolean isOK = true
-   if (resp.status < 400) {
-      if (resp?.json == null) {
-         isOK = false
-         if (resp?.headers == null) log.error "Error: HTTP ${resp?.status} when attempting to communicate with Bridge"
-         else log.error "No JSON data found in response. ${resp.headers.'Content-Type'} (HTTP ${resp.status})"
-         parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery 
-         parent.setBridgeStatus(false)
-      }
-      else if (resp.json) {
-         if (resp.json[0]?.error) {
-            // Bridge (not HTTP) error (bad username, bad command formatting, etc.):
-            isOK = false
-            log.warn "Error from Hue Bridge: ${resp.json[0].error}"
-            // Not setting Bridge to offline when light/scene/group devices end up here because could
-            // be old/bad ID and don't want to consider Bridge offline just for that (but also won't set
-            // to online because wasn't successful attempt)
-         }
-         // Otherwise: probably OK (not changing anything because isOK = true already)
-      }
-      else {
-         isOK = false
-         log.warn("HTTP status code ${resp.status} from Bridge")
-         if (resp?.status >= 400) parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery 
-         parent.setBridgeStatus(false)
-      }
-      if (isOK == true) parent.setBridgeStatus(true)
-   }
-   else {
-      log.warn "Error communiating with Hue Bridge: HTTP ${resp?.status}"
-      isOK = false
-   }
-   return isOK
-}
+void debugOff() { // library marker RMoRobert.CoCoHue_Common_Lib, line 11
+   log.warn "Disabling debug logging" // library marker RMoRobert.CoCoHue_Common_Lib, line 12
+   device.updateSetting("enableDebug", [value:"false", type:"bool"]) // library marker RMoRobert.CoCoHue_Common_Lib, line 13
+} // library marker RMoRobert.CoCoHue_Common_Lib, line 14
 
-void doSendEvent(String eventName, eventValue, String eventUnit=null) {
-   //if (enableDebug == true) log.debug "doSendEvent($eventName, $eventValue, $eventUnit)"
-   String descriptionText = "${device.displayName} ${eventName} is ${eventValue}${eventUnit ?: ''}"
-   if (settings.enableDesc == true) log.info(descriptionText)
-   if (eventUnit) {
-      sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, unit: eventUnit) 
-   } else {
-      sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText) 
-   }
-}
+/** Performs basic check on data returned from HTTP response to determine if should be // library marker RMoRobert.CoCoHue_Common_Lib, line 16
+  * parsed as likely Hue Bridge data or not; returns true (if OK) or logs errors/warnings and // library marker RMoRobert.CoCoHue_Common_Lib, line 17
+  * returns false if not // library marker RMoRobert.CoCoHue_Common_Lib, line 18
+  * @param resp The async HTTP response object to examine // library marker RMoRobert.CoCoHue_Common_Lib, line 19
+  */ // library marker RMoRobert.CoCoHue_Common_Lib, line 20
+private Boolean checkIfValidResponse(resp) { // library marker RMoRobert.CoCoHue_Common_Lib, line 21
+   if (enableDebug == true) log.debug "Checking if valid HTTP response/data from Bridge..." // library marker RMoRobert.CoCoHue_Common_Lib, line 22
+   Boolean isOK = true // library marker RMoRobert.CoCoHue_Common_Lib, line 23
+   if (resp.status < 400) { // library marker RMoRobert.CoCoHue_Common_Lib, line 24
+      if (resp?.json == null) { // library marker RMoRobert.CoCoHue_Common_Lib, line 25
+         isOK = false // library marker RMoRobert.CoCoHue_Common_Lib, line 26
+         if (resp?.headers == null) log.error "Error: HTTP ${resp?.status} when attempting to communicate with Bridge" // library marker RMoRobert.CoCoHue_Common_Lib, line 27
+         else log.error "No JSON data found in response. ${resp.headers.'Content-Type'} (HTTP ${resp.status})" // library marker RMoRobert.CoCoHue_Common_Lib, line 28
+         parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery  // library marker RMoRobert.CoCoHue_Common_Lib, line 29
+         parent.setBridgeStatus(false) // library marker RMoRobert.CoCoHue_Common_Lib, line 30
+      } // library marker RMoRobert.CoCoHue_Common_Lib, line 31
+      else if (resp.json) { // library marker RMoRobert.CoCoHue_Common_Lib, line 32
+         if (resp.json[0]?.error) { // library marker RMoRobert.CoCoHue_Common_Lib, line 33
+            // Bridge (not HTTP) error (bad username, bad command formatting, etc.): // library marker RMoRobert.CoCoHue_Common_Lib, line 34
+            isOK = false // library marker RMoRobert.CoCoHue_Common_Lib, line 35
+            log.warn "Error from Hue Bridge: ${resp.json[0].error}" // library marker RMoRobert.CoCoHue_Common_Lib, line 36
+            // Not setting Bridge to offline when light/scene/group devices end up here because could // library marker RMoRobert.CoCoHue_Common_Lib, line 37
+            // be old/bad ID and don't want to consider Bridge offline just for that (but also won't set // library marker RMoRobert.CoCoHue_Common_Lib, line 38
+            // to online because wasn't successful attempt) // library marker RMoRobert.CoCoHue_Common_Lib, line 39
+         } // library marker RMoRobert.CoCoHue_Common_Lib, line 40
+         // Otherwise: probably OK (not changing anything because isOK = true already) // library marker RMoRobert.CoCoHue_Common_Lib, line 41
+      } // library marker RMoRobert.CoCoHue_Common_Lib, line 42
+      else { // library marker RMoRobert.CoCoHue_Common_Lib, line 43
+         isOK = false // library marker RMoRobert.CoCoHue_Common_Lib, line 44
+         log.warn("HTTP status code ${resp.status} from Bridge") // library marker RMoRobert.CoCoHue_Common_Lib, line 45
+         if (resp?.status >= 400) parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery  // library marker RMoRobert.CoCoHue_Common_Lib, line 46
+         parent.setBridgeStatus(false) // library marker RMoRobert.CoCoHue_Common_Lib, line 47
+      } // library marker RMoRobert.CoCoHue_Common_Lib, line 48
+      if (isOK == true) parent.setBridgeStatus(true) // library marker RMoRobert.CoCoHue_Common_Lib, line 49
+   } // library marker RMoRobert.CoCoHue_Common_Lib, line 50
+   else { // library marker RMoRobert.CoCoHue_Common_Lib, line 51
+      log.warn "Error communiating with Hue Bridge: HTTP ${resp?.status}" // library marker RMoRobert.CoCoHue_Common_Lib, line 52
+      isOK = false // library marker RMoRobert.CoCoHue_Common_Lib, line 53
+   } // library marker RMoRobert.CoCoHue_Common_Lib, line 54
+   return isOK // library marker RMoRobert.CoCoHue_Common_Lib, line 55
+} // library marker RMoRobert.CoCoHue_Common_Lib, line 56
+
+void doSendEvent(String eventName, eventValue, String eventUnit=null, Boolean forceStateChange=false) { // library marker RMoRobert.CoCoHue_Common_Lib, line 58
+   //if (enableDebug == true) log.debug "doSendEvent($eventName, $eventValue, $eventUnit)" // library marker RMoRobert.CoCoHue_Common_Lib, line 59
+   String descriptionText = "${device.displayName} ${eventName} is ${eventValue}${eventUnit ?: ''}" // library marker RMoRobert.CoCoHue_Common_Lib, line 60
+   if (settings.enableDesc == true) log.info(descriptionText) // library marker RMoRobert.CoCoHue_Common_Lib, line 61
+   if (eventUnit) { // library marker RMoRobert.CoCoHue_Common_Lib, line 62
+      if (forceStateChange == true) sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, unit: eventUnit, isStateChange: true)  // library marker RMoRobert.CoCoHue_Common_Lib, line 63
+      else sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, unit: eventUnit)  // library marker RMoRobert.CoCoHue_Common_Lib, line 64
+   } else { // library marker RMoRobert.CoCoHue_Common_Lib, line 65
+      if (forceStateChange == true) sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, isStateChange: true)  // library marker RMoRobert.CoCoHue_Common_Lib, line 66
+      else sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText)  // library marker RMoRobert.CoCoHue_Common_Lib, line 67
+   } // library marker RMoRobert.CoCoHue_Common_Lib, line 68
+} // library marker RMoRobert.CoCoHue_Common_Lib, line 69
+
+// ~~~~~ end include (8) RMoRobert.CoCoHue_Common_Lib ~~~~~
+
+// ~~~~~ start include (5) RMoRobert.CoCoHue_Flash_Lib ~~~~~
+// Version 1.0.0 // library marker RMoRobert.CoCoHue_Flash_Lib, line 1
+library ( // library marker RMoRobert.CoCoHue_Flash_Lib, line 2
+   base: "driver", // library marker RMoRobert.CoCoHue_Flash_Lib, line 3
+   author: "RMoRobert", // library marker RMoRobert.CoCoHue_Flash_Lib, line 4
+   category: "Convenience", // library marker RMoRobert.CoCoHue_Flash_Lib, line 5
+   description: "For internal CoCoHue use only. Not intended for external use. Contains flash-related code shared by many CoCoHue drivers.", // library marker RMoRobert.CoCoHue_Flash_Lib, line 6
+   name: "CoCoHue_Flash_Lib", // library marker RMoRobert.CoCoHue_Flash_Lib, line 7
+   namespace: "RMoRobert" // library marker RMoRobert.CoCoHue_Flash_Lib, line 8
+) // library marker RMoRobert.CoCoHue_Flash_Lib, line 9
+
+void flash() { // library marker RMoRobert.CoCoHue_Flash_Lib, line 11
+   if (enableDebug == true) log.debug "flash()" // library marker RMoRobert.CoCoHue_Flash_Lib, line 12
+   if (settings.enableDesc == true) log.info("${device.displayName} started 15-cycle flash") // library marker RMoRobert.CoCoHue_Flash_Lib, line 13
+   Map<String,String> cmd = ["alert": "lselect"] // library marker RMoRobert.CoCoHue_Flash_Lib, line 14
+   sendBridgeCommand(cmd, false)  // library marker RMoRobert.CoCoHue_Flash_Lib, line 15
+} // library marker RMoRobert.CoCoHue_Flash_Lib, line 16
+
+void flashOnce() { // library marker RMoRobert.CoCoHue_Flash_Lib, line 18
+   if (enableDebug == true) log.debug "flashOnce()" // library marker RMoRobert.CoCoHue_Flash_Lib, line 19
+   if (settings.enableDesc == true) log.info("${device.displayName} started 1-cycle flash") // library marker RMoRobert.CoCoHue_Flash_Lib, line 20
+   Map<String,String> cmd = ["alert": "select"] // library marker RMoRobert.CoCoHue_Flash_Lib, line 21
+   sendBridgeCommand(cmd, false)  // library marker RMoRobert.CoCoHue_Flash_Lib, line 22
+} // library marker RMoRobert.CoCoHue_Flash_Lib, line 23
+
+void flashOff() { // library marker RMoRobert.CoCoHue_Flash_Lib, line 25
+   if (enableDebug == true) log.debug "flashOff()" // library marker RMoRobert.CoCoHue_Flash_Lib, line 26
+   if (settings.enableDesc == true) log.info("${device.displayName} was sent command to stop flash") // library marker RMoRobert.CoCoHue_Flash_Lib, line 27
+   Map<String,String> cmd = ["alert": "none"] // library marker RMoRobert.CoCoHue_Flash_Lib, line 28
+   sendBridgeCommand(cmd, false)  // library marker RMoRobert.CoCoHue_Flash_Lib, line 29
+} // library marker RMoRobert.CoCoHue_Flash_Lib, line 30
+
+// ~~~~~ end include (5) RMoRobert.CoCoHue_Flash_Lib ~~~~~

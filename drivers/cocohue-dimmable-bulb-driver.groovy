@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2021-05-21
+ *  Last modified: 2021-07-24
  *
  *  Changelog:
+ *  v3.5.1  - Refactor some code into libraries (code still precompiled before upload; should not have any visible changes)
  *  v3.5    - Add LevelPreset capability (replaces old level prestaging option); added "reachable" attribte
               from Bridge to bulb and group drivers (thanks to @jtp10181 for original implementation)
  *  v3.1.3  - Adjust setLevel(0) to honor rate
@@ -27,15 +28,15 @@
  *  v2.0    - Added startLevelChange rate option; improved HTTP error handling; attribute events now generated
  *            only after hearing back from Bridge; Bridge online/offline status improvements
  *  v1.9    - Initial release (based on CT bulb driver)
- */ 
-
+ */
+ 
 import groovy.transform.Field
 
 // Default preference values
-@Field static final BigDecimal defaultLevelTransitionTime = 1000
+@Field static final BigDecimal defaultLevelTransitionTime = 1000 
 
 metadata {
-   definition (name: "CoCoHue Dimmable Bulb", namespace: "RMoRobert", author: "Robert Morris", importUrl: "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-dimmable-bulb-driver.groovy") {
+   definition(name: "CoCoHue Dimmable Bulb", namespace: "RMoRobert", author: "Robert Morris", importUrl: "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-dimmable-bulb-driver.groovy") {
       capability "Actuator"
       capability "Refresh"
       capability "Switch"
@@ -83,11 +84,6 @@ void initialize() {
    }
 }
 
-void debugOff() {
-   log.warn("Disabling debug logging")
-   device.updateSetting("enableDebug", [value:"false", type:"bool"])
-}
-
 // Probably won't happen but...
 void parse(String description) {
    log.warn("Running unimplemented parse for: '${description}'")
@@ -128,91 +124,6 @@ void off(Number transitionTime = null) {
 
 void refresh() {
    log.warn "Refresh CoCoHue Bridge device instead of individual device to update (all) bulbs/groups"
-}
-
-void startLevelChange(direction) {
-   if (enableDebug == true) log.debug "startLevelChange($direction)..."
-   Map cmd = ["bri": (direction == "up" ? 254 : 1),
-            "transitiontime": ((settings["levelChangeRate"] == "fast" || !settings["levelChangeRate"]) ?
-                                 30 : (settings["levelChangeRate"] == "slow" ? 60 : 45))]
-   sendBridgeCommand(cmd, false) 
-}
-
-void stopLevelChange() {
-   if (enableDebug == true) log.debug "stopLevelChange()..."
-   Map cmd = ["bri_inc": 0]
-   sendBridgeCommand(cmd, false) 
-}
-
-void setLevel(value) {
-   if (enableDebug == true) log.debug "setLevel($value)"
-   setLevel(value, ((transitionTime != null ? transitionTime.toBigDecimal() : defaultLevelTransitionTime)) / 1000)
-}
-
-void setLevel(Number value, Number rate) {
-   if (enableDebug == true) log.debug "setLevel($value, $rate)"
-   // For backwards compatibility; will be removed in future version:
-   if (levelStaging) {
-      log.warn "Level prestaging preference enabled and setLevel() called. This is deprecated and may be removed in the future. Please move to new, standard presetLevel() command."
-      if (device.currentValue("switch") != "on") {
-         presetLevel(value)
-         return
-      }
-   }
-   if (value < 0) value = 1
-   else if (value > 100) value = 100
-   else if (value == 0) {
-      off(rate)
-      return
-   }
-   Integer newLevel = scaleBriToBridge(value)
-   Integer scaledRate = (rate * 10).toInteger()
-   Map bridgeCmd = [
-      "on": true,
-      "bri": newLevel,
-      "transitiontime": scaledRate
-   ]
-   Map prestagedCmds = getPrestagedCommands()
-   if (prestagedCmds) {
-      bridgeCmd = prestagedCmds + bridgeCmd
-   }
-   sendBridgeCommand(bridgeCmd)
-}
-
-void presetLevel(Number level) {
-   if (enableDebug == true) log.debug "presetLevel($level)"
-   if (level < 0) level = 1
-   else if (level > 100) level = 100
-   Integer newLevel = scaleBriToBridge(level)
-   Integer scaledRate = ((transitionTime != null ? transitionTime.toBigDecimal() : 1000) / 1000).toInteger()
-   Boolean isOn = device.currentValue("switch") == "on"
-   doSendEvent("levelPreset", level)
-   if (isOn) {
-      setLevel(level)
-   } else {
-      state.presetLevel = true
-   }
-}
-
-void flash() {
-   if (enableDebug == true) log.debug "flash()"
-   if (settings.enableDesc == true) log.info("${device.displayName} started 15-cycle flash")
-   Map<String,String> cmd = ["alert": "lselect"]
-   sendBridgeCommand(cmd, false) 
-}
-
-void flashOnce() {
-   if (enableDebug == true) log.debug "flashOnce()"
-   if (settings.enableDesc == true) log.info("${device.displayName} started 1-cycle flash")
-   Map<String,String> cmd = ["alert": "select"]
-   sendBridgeCommand(cmd, false) 
-}
-
-void flashOff() {
-   if (enableDebug == true) log.debug "flashOff()"
-   if (settings.enableDesc == true) log.info("${device.displayName} was sent command to stop flash")
-   Map<String,String> cmd = ["alert": "none"]
-   sendBridgeCommand(cmd, false) 
 }
 
 /**
@@ -271,24 +182,6 @@ void createEventsFromMap(Map bridgeCommandMap, Boolean isFromBridge = false) {
 }
 
 /**
- * Returns Map containing any commands that would need to be sent to Bridge if anything is currently prestaged.
- * Otherwise, returns empty Map.
- * @param unsetPrestagingState If set to true (default), clears prestage flag
-*/
-Map getPrestagedCommands(Boolean unsetPrestagingState=true) {
-   if (enableDebug == true) log.debug "getPrestagedCommands($unsetPrestagingState)"
-   Map cmds = [:]
-   if (state.presetLevel == true) {
-      cmds << [bri: scaleBriToBridge(device.currentValue("levelPreset"))]
-   }
-   if (unsetPrestagingState == true) {
-      state.presetLevel = false
-   }
-   if (enableDebug == true) log.debug "Returning: $cmds"
-   return cmds
-}
-
-/**
  * Sends HTTP PUT to Bridge using the either command map provided
  * @param commandMap Groovy Map (will be converted to JSON) of Hue API commands to send, e.g., [on: true]
  * @param createHubEvents Will iterate over Bridge command map and do sendEvent for all
@@ -331,73 +224,255 @@ void parseSendCommandResponse(resp, data) {
       if (enableDebug == true) log.debug "  Not creating events from map because not specified to do or Bridge response invalid"
    }
 }
+// ~~~~~ start include (8) RMoRobert.CoCoHue_Common_Lib ~~~~~
+// Version 1.0.0 // library marker RMoRobert.CoCoHue_Common_Lib, line 1
+library ( // library marker RMoRobert.CoCoHue_Common_Lib, line 2
+   base: "driver", // library marker RMoRobert.CoCoHue_Common_Lib, line 3
+   author: "RMoRobert", // library marker RMoRobert.CoCoHue_Common_Lib, line 4
+   category: "Convenience", // library marker RMoRobert.CoCoHue_Common_Lib, line 5
+   description: "For internal CoCoHue use only. Not intended for external use. Contains common code shared by many CoCoHue drivers.", // library marker RMoRobert.CoCoHue_Common_Lib, line 6
+   name: "CoCoHue_Common_Lib", // library marker RMoRobert.CoCoHue_Common_Lib, line 7
+   namespace: "RMoRobert" // library marker RMoRobert.CoCoHue_Common_Lib, line 8
+) // library marker RMoRobert.CoCoHue_Common_Lib, line 9
 
-/** Performs basic check on data returned from HTTP response to determine if should be
-  * parsed as likely Hue Bridge data or not; returns true (if OK) or logs errors/warnings and
-  * returns false if not
-  * @param resp The async HTTP response object to examine
-  */
-private Boolean checkIfValidResponse(resp) {
-   if (enableDebug == true) log.debug "Checking if valid HTTP response/data from Bridge..."
-   Boolean isOK = true
-   if (resp.status < 400) {
-      if (resp?.json == null) {
-         isOK = false
-         if (resp?.headers == null) log.error "Error: HTTP ${resp?.status} when attempting to communicate with Bridge"
-         else log.error "No JSON data found in response. ${resp.headers.'Content-Type'} (HTTP ${resp.status})"
-         parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery 
-         parent.setBridgeStatus(false)
-      }
-      else if (resp.json) {
-         if (resp.json[0]?.error) {
-            // Bridge (not HTTP) error (bad username, bad command formatting, etc.):
-            isOK = false
-            log.warn "Error from Hue Bridge: ${resp.json[0].error}"
-            // Not setting Bridge to offline when light/scene/group devices end up here because could
-            // be old/bad ID and don't want to consider Bridge offline just for that (but also won't set
-            // to online because wasn't successful attempt)
-         }
-         // Otherwise: probably OK (not changing anything because isOK = true already)
-      }
-      else {
-         isOK = false
-         log.warn("HTTP status code ${resp.status} from Bridge")
-         if (resp?.status >= 400) parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery 
-         parent.setBridgeStatus(false)
-      }
-      if (isOK == true) parent.setBridgeStatus(true)
-   }
-   else {
-      log.warn "Error communiating with Hue Bridge: HTTP ${resp?.status}"
-      isOK = false
-   }
-   return isOK
-}
+void debugOff() { // library marker RMoRobert.CoCoHue_Common_Lib, line 11
+   log.warn "Disabling debug logging" // library marker RMoRobert.CoCoHue_Common_Lib, line 12
+   device.updateSetting("enableDebug", [value:"false", type:"bool"]) // library marker RMoRobert.CoCoHue_Common_Lib, line 13
+} // library marker RMoRobert.CoCoHue_Common_Lib, line 14
 
-void doSendEvent(String eventName, eventValue, String eventUnit=null) {
-   //if (enableDebug == true) log.debug "doSendEvent($eventName, $eventValue, $eventUnit)"
-   String descriptionText = "${device.displayName} ${eventName} is ${eventValue}${eventUnit ?: ''}"
-   if (settings.enableDesc == true) log.info(descriptionText)
-   if (eventUnit) {
-      sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, unit: eventUnit) 
-   } else {
-      sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText) 
-   }
-}
+/** Performs basic check on data returned from HTTP response to determine if should be // library marker RMoRobert.CoCoHue_Common_Lib, line 16
+  * parsed as likely Hue Bridge data or not; returns true (if OK) or logs errors/warnings and // library marker RMoRobert.CoCoHue_Common_Lib, line 17
+  * returns false if not // library marker RMoRobert.CoCoHue_Common_Lib, line 18
+  * @param resp The async HTTP response object to examine // library marker RMoRobert.CoCoHue_Common_Lib, line 19
+  */ // library marker RMoRobert.CoCoHue_Common_Lib, line 20
+private Boolean checkIfValidResponse(resp) { // library marker RMoRobert.CoCoHue_Common_Lib, line 21
+   if (enableDebug == true) log.debug "Checking if valid HTTP response/data from Bridge..." // library marker RMoRobert.CoCoHue_Common_Lib, line 22
+   Boolean isOK = true // library marker RMoRobert.CoCoHue_Common_Lib, line 23
+   if (resp.status < 400) { // library marker RMoRobert.CoCoHue_Common_Lib, line 24
+      if (resp?.json == null) { // library marker RMoRobert.CoCoHue_Common_Lib, line 25
+         isOK = false // library marker RMoRobert.CoCoHue_Common_Lib, line 26
+         if (resp?.headers == null) log.error "Error: HTTP ${resp?.status} when attempting to communicate with Bridge" // library marker RMoRobert.CoCoHue_Common_Lib, line 27
+         else log.error "No JSON data found in response. ${resp.headers.'Content-Type'} (HTTP ${resp.status})" // library marker RMoRobert.CoCoHue_Common_Lib, line 28
+         parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery  // library marker RMoRobert.CoCoHue_Common_Lib, line 29
+         parent.setBridgeStatus(false) // library marker RMoRobert.CoCoHue_Common_Lib, line 30
+      } // library marker RMoRobert.CoCoHue_Common_Lib, line 31
+      else if (resp.json) { // library marker RMoRobert.CoCoHue_Common_Lib, line 32
+         if (resp.json[0]?.error) { // library marker RMoRobert.CoCoHue_Common_Lib, line 33
+            // Bridge (not HTTP) error (bad username, bad command formatting, etc.): // library marker RMoRobert.CoCoHue_Common_Lib, line 34
+            isOK = false // library marker RMoRobert.CoCoHue_Common_Lib, line 35
+            log.warn "Error from Hue Bridge: ${resp.json[0].error}" // library marker RMoRobert.CoCoHue_Common_Lib, line 36
+            // Not setting Bridge to offline when light/scene/group devices end up here because could // library marker RMoRobert.CoCoHue_Common_Lib, line 37
+            // be old/bad ID and don't want to consider Bridge offline just for that (but also won't set // library marker RMoRobert.CoCoHue_Common_Lib, line 38
+            // to online because wasn't successful attempt) // library marker RMoRobert.CoCoHue_Common_Lib, line 39
+         } // library marker RMoRobert.CoCoHue_Common_Lib, line 40
+         // Otherwise: probably OK (not changing anything because isOK = true already) // library marker RMoRobert.CoCoHue_Common_Lib, line 41
+      } // library marker RMoRobert.CoCoHue_Common_Lib, line 42
+      else { // library marker RMoRobert.CoCoHue_Common_Lib, line 43
+         isOK = false // library marker RMoRobert.CoCoHue_Common_Lib, line 44
+         log.warn("HTTP status code ${resp.status} from Bridge") // library marker RMoRobert.CoCoHue_Common_Lib, line 45
+         if (resp?.status >= 400) parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery  // library marker RMoRobert.CoCoHue_Common_Lib, line 46
+         parent.setBridgeStatus(false) // library marker RMoRobert.CoCoHue_Common_Lib, line 47
+      } // library marker RMoRobert.CoCoHue_Common_Lib, line 48
+      if (isOK == true) parent.setBridgeStatus(true) // library marker RMoRobert.CoCoHue_Common_Lib, line 49
+   } // library marker RMoRobert.CoCoHue_Common_Lib, line 50
+   else { // library marker RMoRobert.CoCoHue_Common_Lib, line 51
+      log.warn "Error communiating with Hue Bridge: HTTP ${resp?.status}" // library marker RMoRobert.CoCoHue_Common_Lib, line 52
+      isOK = false // library marker RMoRobert.CoCoHue_Common_Lib, line 53
+   } // library marker RMoRobert.CoCoHue_Common_Lib, line 54
+   return isOK // library marker RMoRobert.CoCoHue_Common_Lib, line 55
+} // library marker RMoRobert.CoCoHue_Common_Lib, line 56
 
-/**
- * Scales Hubitat's 1-100 brightness levels to Hue Bridge's 1-254
- */
-private Integer scaleBriToBridge(hubitatLevel) {
-   Integer scaledLevel =  Math.round(hubitatLevel == 1 ? 1 : hubitatLevel.toBigDecimal() / 100 * 254)
-   return Math.round(scaledLevel)
-}
+void doSendEvent(String eventName, eventValue, String eventUnit=null, Boolean forceStateChange=false) { // library marker RMoRobert.CoCoHue_Common_Lib, line 58
+   //if (enableDebug == true) log.debug "doSendEvent($eventName, $eventValue, $eventUnit)" // library marker RMoRobert.CoCoHue_Common_Lib, line 59
+   String descriptionText = "${device.displayName} ${eventName} is ${eventValue}${eventUnit ?: ''}" // library marker RMoRobert.CoCoHue_Common_Lib, line 60
+   if (settings.enableDesc == true) log.info(descriptionText) // library marker RMoRobert.CoCoHue_Common_Lib, line 61
+   if (eventUnit) { // library marker RMoRobert.CoCoHue_Common_Lib, line 62
+      if (forceStateChange == true) sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, unit: eventUnit, isStateChange: true)  // library marker RMoRobert.CoCoHue_Common_Lib, line 63
+      else sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, unit: eventUnit)  // library marker RMoRobert.CoCoHue_Common_Lib, line 64
+   } else { // library marker RMoRobert.CoCoHue_Common_Lib, line 65
+      if (forceStateChange == true) sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, isStateChange: true)  // library marker RMoRobert.CoCoHue_Common_Lib, line 66
+      else sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText)  // library marker RMoRobert.CoCoHue_Common_Lib, line 67
+   } // library marker RMoRobert.CoCoHue_Common_Lib, line 68
+} // library marker RMoRobert.CoCoHue_Common_Lib, line 69
 
-/**
- * Scales Hue Bridge's 1-254 brightness levels to Hubitat's 1-100
- */
-private Integer scaleBriFromBridge(bridgeLevel) {
-   Integer scaledLevel = Math.round(bridgeLevel.toBigDecimal() / 254 * 100)
-   if (scaledLevel < 1) scaledLevel = 1
-   return Math.round(scaledLevel)
-}
+// ~~~~~ end include (8) RMoRobert.CoCoHue_Common_Lib ~~~~~
+
+// ~~~~~ start include (2) RMoRobert.CoCoHue_Bri_Lib ~~~~~
+library ( // library marker RMoRobert.CoCoHue_Bri_Lib, line 1
+   base: "driver", // library marker RMoRobert.CoCoHue_Bri_Lib, line 2
+   author: "RMoRobert", // library marker RMoRobert.CoCoHue_Bri_Lib, line 3
+   category: "Convenience", // library marker RMoRobert.CoCoHue_Bri_Lib, line 4
+   description: "For internal CoCoHue use only. Not intended for external use. Contains brightness/level-related code shared by many CoCoHue drivers.", // library marker RMoRobert.CoCoHue_Bri_Lib, line 5
+   name: "CoCoHue_Bri_Lib", // library marker RMoRobert.CoCoHue_Bri_Lib, line 6
+   namespace: "RMoRobert" // library marker RMoRobert.CoCoHue_Bri_Lib, line 7
+) // library marker RMoRobert.CoCoHue_Bri_Lib, line 8
+
+// "SwitchLevel" commands: // library marker RMoRobert.CoCoHue_Bri_Lib, line 10
+
+void startLevelChange(direction) { // library marker RMoRobert.CoCoHue_Bri_Lib, line 12
+   if (enableDebug == true) log.debug "startLevelChange($direction)..." // library marker RMoRobert.CoCoHue_Bri_Lib, line 13
+   Map cmd = ["bri": (direction == "up" ? 254 : 1), // library marker RMoRobert.CoCoHue_Bri_Lib, line 14
+            "transitiontime": ((settings["levelChangeRate"] == "fast" || !settings["levelChangeRate"]) ? // library marker RMoRobert.CoCoHue_Bri_Lib, line 15
+                                 30 : (settings["levelChangeRate"] == "slow" ? 60 : 45))] // library marker RMoRobert.CoCoHue_Bri_Lib, line 16
+   sendBridgeCommand(cmd, false)  // library marker RMoRobert.CoCoHue_Bri_Lib, line 17
+} // library marker RMoRobert.CoCoHue_Bri_Lib, line 18
+
+void stopLevelChange() { // library marker RMoRobert.CoCoHue_Bri_Lib, line 20
+   if (enableDebug == true) log.debug "stopLevelChange()..." // library marker RMoRobert.CoCoHue_Bri_Lib, line 21
+   Map cmd = ["bri_inc": 0] // library marker RMoRobert.CoCoHue_Bri_Lib, line 22
+   sendBridgeCommand(cmd, false)  // library marker RMoRobert.CoCoHue_Bri_Lib, line 23
+} // library marker RMoRobert.CoCoHue_Bri_Lib, line 24
+
+void setLevel(value) { // library marker RMoRobert.CoCoHue_Bri_Lib, line 26
+   if (enableDebug == true) log.debug "setLevel($value)" // library marker RMoRobert.CoCoHue_Bri_Lib, line 27
+   setLevel(value, ((transitionTime != null ? transitionTime.toFloat() : defaultLevelTransitionTime.toFloat())) / 1000) // library marker RMoRobert.CoCoHue_Bri_Lib, line 28
+} // library marker RMoRobert.CoCoHue_Bri_Lib, line 29
+
+void setLevel(Number value, Number rate) { // library marker RMoRobert.CoCoHue_Bri_Lib, line 31
+   if (enableDebug == true) log.debug "setLevel($value, $rate)" // library marker RMoRobert.CoCoHue_Bri_Lib, line 32
+   // For backwards compatibility; will be removed in future version: // library marker RMoRobert.CoCoHue_Bri_Lib, line 33
+   if (levelStaging) { // library marker RMoRobert.CoCoHue_Bri_Lib, line 34
+      log.warn "Level prestaging preference enabled and setLevel() called. This is deprecated and may be removed in the future. Please move to new, standard presetLevel() command." // library marker RMoRobert.CoCoHue_Bri_Lib, line 35
+      if (device.currentValue("switch") != "on") { // library marker RMoRobert.CoCoHue_Bri_Lib, line 36
+         presetLevel(value) // library marker RMoRobert.CoCoHue_Bri_Lib, line 37
+         return // library marker RMoRobert.CoCoHue_Bri_Lib, line 38
+      } // library marker RMoRobert.CoCoHue_Bri_Lib, line 39
+   } // library marker RMoRobert.CoCoHue_Bri_Lib, line 40
+   if (value < 0) value = 1 // library marker RMoRobert.CoCoHue_Bri_Lib, line 41
+   else if (value > 100) value = 100 // library marker RMoRobert.CoCoHue_Bri_Lib, line 42
+   else if (value == 0) { // library marker RMoRobert.CoCoHue_Bri_Lib, line 43
+      off(rate) // library marker RMoRobert.CoCoHue_Bri_Lib, line 44
+      return // library marker RMoRobert.CoCoHue_Bri_Lib, line 45
+   } // library marker RMoRobert.CoCoHue_Bri_Lib, line 46
+   Integer newLevel = scaleBriToBridge(value) // library marker RMoRobert.CoCoHue_Bri_Lib, line 47
+   Integer scaledRate = (rate * 10).toInteger() // library marker RMoRobert.CoCoHue_Bri_Lib, line 48
+   Map bridgeCmd = [ // library marker RMoRobert.CoCoHue_Bri_Lib, line 49
+      "on": true, // library marker RMoRobert.CoCoHue_Bri_Lib, line 50
+      "bri": newLevel, // library marker RMoRobert.CoCoHue_Bri_Lib, line 51
+      "transitiontime": scaledRate // library marker RMoRobert.CoCoHue_Bri_Lib, line 52
+   ] // library marker RMoRobert.CoCoHue_Bri_Lib, line 53
+   Map prestagedCmds = getPrestagedCommands() // library marker RMoRobert.CoCoHue_Bri_Lib, line 54
+   if (prestagedCmds) { // library marker RMoRobert.CoCoHue_Bri_Lib, line 55
+      bridgeCmd = prestagedCmds + bridgeCmd // library marker RMoRobert.CoCoHue_Bri_Lib, line 56
+   } // library marker RMoRobert.CoCoHue_Bri_Lib, line 57
+   sendBridgeCommand(bridgeCmd) // library marker RMoRobert.CoCoHue_Bri_Lib, line 58
+} // library marker RMoRobert.CoCoHue_Bri_Lib, line 59
+
+void presetLevel(Number level) { // library marker RMoRobert.CoCoHue_Bri_Lib, line 61
+   if (enableDebug == true) log.debug "presetLevel($level)" // library marker RMoRobert.CoCoHue_Bri_Lib, line 62
+   if (level < 0) level = 1 // library marker RMoRobert.CoCoHue_Bri_Lib, line 63
+   else if (level > 100) level = 100 // library marker RMoRobert.CoCoHue_Bri_Lib, line 64
+   Integer newLevel = scaleBriToBridge(level) // library marker RMoRobert.CoCoHue_Bri_Lib, line 65
+   Integer scaledRate = ((transitionTime != null ? transitionTime.toBigDecimal() : 1000) / 1000).toInteger() // library marker RMoRobert.CoCoHue_Bri_Lib, line 66
+   Boolean isOn = device.currentValue("switch") == "on" // library marker RMoRobert.CoCoHue_Bri_Lib, line 67
+   doSendEvent("levelPreset", level) // library marker RMoRobert.CoCoHue_Bri_Lib, line 68
+   if (isOn) { // library marker RMoRobert.CoCoHue_Bri_Lib, line 69
+      setLevel(level) // library marker RMoRobert.CoCoHue_Bri_Lib, line 70
+   } else { // library marker RMoRobert.CoCoHue_Bri_Lib, line 71
+      state.presetLevel = true // library marker RMoRobert.CoCoHue_Bri_Lib, line 72
+   } // library marker RMoRobert.CoCoHue_Bri_Lib, line 73
+} // library marker RMoRobert.CoCoHue_Bri_Lib, line 74
+
+// Internal methods for scaling // library marker RMoRobert.CoCoHue_Bri_Lib, line 76
+
+/** // library marker RMoRobert.CoCoHue_Bri_Lib, line 78
+ * Scales Hubitat's 1-100 brightness levels to Hue Bridge's 1-254 // library marker RMoRobert.CoCoHue_Bri_Lib, line 79
+ */ // library marker RMoRobert.CoCoHue_Bri_Lib, line 80
+Integer scaleBriToBridge(hubitatLevel) { // library marker RMoRobert.CoCoHue_Bri_Lib, line 81
+   Integer scaledLevel =  Math.round(hubitatLevel == 1 ? 1 : hubitatLevel.toBigDecimal() / 100 * 254) // library marker RMoRobert.CoCoHue_Bri_Lib, line 82
+   return Math.round(scaledLevel) // library marker RMoRobert.CoCoHue_Bri_Lib, line 83
+} // library marker RMoRobert.CoCoHue_Bri_Lib, line 84
+
+/** // library marker RMoRobert.CoCoHue_Bri_Lib, line 86
+ * Scales Hue Bridge's 1-254 brightness levels to Hubitat's 1-100 // library marker RMoRobert.CoCoHue_Bri_Lib, line 87
+ */ // library marker RMoRobert.CoCoHue_Bri_Lib, line 88
+Integer scaleBriFromBridge(bridgeLevel) { // library marker RMoRobert.CoCoHue_Bri_Lib, line 89
+   Integer scaledLevel = Math.round(bridgeLevel.toBigDecimal() / 254 * 100) // library marker RMoRobert.CoCoHue_Bri_Lib, line 90
+   if (scaledLevel < 1) scaledLevel = 1 // library marker RMoRobert.CoCoHue_Bri_Lib, line 91
+   return Math.round(scaledLevel) // library marker RMoRobert.CoCoHue_Bri_Lib, line 92
+} // library marker RMoRobert.CoCoHue_Bri_Lib, line 93
+
+// ~~~~~ end include (2) RMoRobert.CoCoHue_Bri_Lib ~~~~~
+
+// ~~~~~ start include (5) RMoRobert.CoCoHue_Flash_Lib ~~~~~
+// Version 1.0.0 // library marker RMoRobert.CoCoHue_Flash_Lib, line 1
+library ( // library marker RMoRobert.CoCoHue_Flash_Lib, line 2
+   base: "driver", // library marker RMoRobert.CoCoHue_Flash_Lib, line 3
+   author: "RMoRobert", // library marker RMoRobert.CoCoHue_Flash_Lib, line 4
+   category: "Convenience", // library marker RMoRobert.CoCoHue_Flash_Lib, line 5
+   description: "For internal CoCoHue use only. Not intended for external use. Contains flash-related code shared by many CoCoHue drivers.", // library marker RMoRobert.CoCoHue_Flash_Lib, line 6
+   name: "CoCoHue_Flash_Lib", // library marker RMoRobert.CoCoHue_Flash_Lib, line 7
+   namespace: "RMoRobert" // library marker RMoRobert.CoCoHue_Flash_Lib, line 8
+) // library marker RMoRobert.CoCoHue_Flash_Lib, line 9
+
+void flash() { // library marker RMoRobert.CoCoHue_Flash_Lib, line 11
+   if (enableDebug == true) log.debug "flash()" // library marker RMoRobert.CoCoHue_Flash_Lib, line 12
+   if (settings.enableDesc == true) log.info("${device.displayName} started 15-cycle flash") // library marker RMoRobert.CoCoHue_Flash_Lib, line 13
+   Map<String,String> cmd = ["alert": "lselect"] // library marker RMoRobert.CoCoHue_Flash_Lib, line 14
+   sendBridgeCommand(cmd, false)  // library marker RMoRobert.CoCoHue_Flash_Lib, line 15
+} // library marker RMoRobert.CoCoHue_Flash_Lib, line 16
+
+void flashOnce() { // library marker RMoRobert.CoCoHue_Flash_Lib, line 18
+   if (enableDebug == true) log.debug "flashOnce()" // library marker RMoRobert.CoCoHue_Flash_Lib, line 19
+   if (settings.enableDesc == true) log.info("${device.displayName} started 1-cycle flash") // library marker RMoRobert.CoCoHue_Flash_Lib, line 20
+   Map<String,String> cmd = ["alert": "select"] // library marker RMoRobert.CoCoHue_Flash_Lib, line 21
+   sendBridgeCommand(cmd, false)  // library marker RMoRobert.CoCoHue_Flash_Lib, line 22
+} // library marker RMoRobert.CoCoHue_Flash_Lib, line 23
+
+void flashOff() { // library marker RMoRobert.CoCoHue_Flash_Lib, line 25
+   if (enableDebug == true) log.debug "flashOff()" // library marker RMoRobert.CoCoHue_Flash_Lib, line 26
+   if (settings.enableDesc == true) log.info("${device.displayName} was sent command to stop flash") // library marker RMoRobert.CoCoHue_Flash_Lib, line 27
+   Map<String,String> cmd = ["alert": "none"] // library marker RMoRobert.CoCoHue_Flash_Lib, line 28
+   sendBridgeCommand(cmd, false)  // library marker RMoRobert.CoCoHue_Flash_Lib, line 29
+} // library marker RMoRobert.CoCoHue_Flash_Lib, line 30
+
+// ~~~~~ end include (5) RMoRobert.CoCoHue_Flash_Lib ~~~~~
+
+// ~~~~~ start include (7) RMoRobert.CoCoHue_Prestage_Lib ~~~~~
+// Version 1.0.0 // library marker RMoRobert.CoCoHue_Prestage_Lib, line 1
+library ( // library marker RMoRobert.CoCoHue_Prestage_Lib, line 2
+   base: "driver", // library marker RMoRobert.CoCoHue_Prestage_Lib, line 3
+   author: "RMoRobert", // library marker RMoRobert.CoCoHue_Prestage_Lib, line 4
+   category: "Convenience", // library marker RMoRobert.CoCoHue_Prestage_Lib, line 5
+   description: "For internal CoCoHue use only. Not intended for external use. Contains prestaging-related code shared by many CoCoHue drivers.", // library marker RMoRobert.CoCoHue_Prestage_Lib, line 6
+   name: "CoCoHue_Prestage_Lib", // library marker RMoRobert.CoCoHue_Prestage_Lib, line 7
+   namespace: "RMoRobert" // library marker RMoRobert.CoCoHue_Prestage_Lib, line 8
+) // library marker RMoRobert.CoCoHue_Prestage_Lib, line 9
+
+// Note: includes internal driver methods only; actual "prestating"/"preset" commands are in driver or other library // library marker RMoRobert.CoCoHue_Prestage_Lib, line 11
+
+/** // library marker RMoRobert.CoCoHue_Prestage_Lib, line 13
+ * Returns Map containing any commands that would need to be sent to Bridge if anything is currently prestaged. // library marker RMoRobert.CoCoHue_Prestage_Lib, line 14
+ * Otherwise, returns empty Map. // library marker RMoRobert.CoCoHue_Prestage_Lib, line 15
+ * @param unsetPrestagingState If set to true (default), clears prestage flag // library marker RMoRobert.CoCoHue_Prestage_Lib, line 16
+*/ // library marker RMoRobert.CoCoHue_Prestage_Lib, line 17
+Map getPrestagedCommands(Boolean unsetPrestagingState=true) { // library marker RMoRobert.CoCoHue_Prestage_Lib, line 18
+   if (enableDebug == true) log.debug "getPrestagedCommands($unsetPrestagingState)" // library marker RMoRobert.CoCoHue_Prestage_Lib, line 19
+   Map cmds = [:] // library marker RMoRobert.CoCoHue_Prestage_Lib, line 20
+   if (state.presetLevel == true) { // library marker RMoRobert.CoCoHue_Prestage_Lib, line 21
+      cmds << [bri: scaleBriToBridge(device.currentValue("levelPreset"))] // library marker RMoRobert.CoCoHue_Prestage_Lib, line 22
+   } // library marker RMoRobert.CoCoHue_Prestage_Lib, line 23
+   if (state.presetColorTemperature == true) { // library marker RMoRobert.CoCoHue_Prestage_Lib, line 24
+      cmds << [ct: scaleCTToBridge(device.currentValue("colorTemperaturePreset"))] // library marker RMoRobert.CoCoHue_Prestage_Lib, line 25
+   } // library marker RMoRobert.CoCoHue_Prestage_Lib, line 26
+   if (state.presetHue == true) { // library marker RMoRobert.CoCoHue_Prestage_Lib, line 27
+      cmds << [hue: scaleHueToBridge(device.currentValue("huePreset"))] // library marker RMoRobert.CoCoHue_Prestage_Lib, line 28
+   } // library marker RMoRobert.CoCoHue_Prestage_Lib, line 29
+   if (state.presetSaturation == true) { // library marker RMoRobert.CoCoHue_Prestage_Lib, line 30
+      cmds << [sat: scaleSatToBridge(device.currentValue("saturationPreset"))] // library marker RMoRobert.CoCoHue_Prestage_Lib, line 31
+   } // library marker RMoRobert.CoCoHue_Prestage_Lib, line 32
+   if (unsetPrestagingState == true) { // library marker RMoRobert.CoCoHue_Prestage_Lib, line 33
+      clearPrestagedCommands() // library marker RMoRobert.CoCoHue_Prestage_Lib, line 34
+   } // library marker RMoRobert.CoCoHue_Prestage_Lib, line 35
+   if (enableDebug == true) log.debug "Returning: $cmds" // library marker RMoRobert.CoCoHue_Prestage_Lib, line 36
+   return cmds // library marker RMoRobert.CoCoHue_Prestage_Lib, line 37
+} // library marker RMoRobert.CoCoHue_Prestage_Lib, line 38
+
+void clearPrestagedCommands() { // library marker RMoRobert.CoCoHue_Prestage_Lib, line 40
+   state.presetLevel = false // library marker RMoRobert.CoCoHue_Prestage_Lib, line 41
+   state.presetColorTemperature = false // library marker RMoRobert.CoCoHue_Prestage_Lib, line 42
+   state.presetHue = false // library marker RMoRobert.CoCoHue_Prestage_Lib, line 43
+   state.presetSaturation = false // library marker RMoRobert.CoCoHue_Prestage_Lib, line 44
+} // library marker RMoRobert.CoCoHue_Prestage_Lib, line 45
+
+// ~~~~~ end include (7) RMoRobert.CoCoHue_Prestage_Lib ~~~~~

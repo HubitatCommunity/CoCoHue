@@ -25,6 +25,7 @@
  *  Last modified: 2021-05-23
  * 
  *  Changelog:
+ *  v3.5.1 - Improved username sanitization; removed logging for SSDP if debug logging disabled
  *  v3.5   - Minor code cleanup (and lots of driver changes)
  *  v3.1   - Driver updates (logging, error handling)
  *  v3.0   - Added support for Hue motion sensors (also temp/illuminance) and Hue Labs activators; added custom port options and
@@ -1021,7 +1022,7 @@ void createNewSelectedLabsDevices() {
  */
 void sendUsernameRequest(String protocol="http", Integer port=null) {
    logDebug("sendUsernameRequest()... (IP = ${state.ipAddress})")
-   String locationNameNormalized = location.name?.replaceAll("\\P{InBasic_Latin}", "_")
+   String locationNameNormalized = location.name?.replaceAll("\\P{InBasic_Latin}", "_").take(13) // Cap at first 13 characters (possible 30-char total limit?)
    String userDesc = locationNameNormalized ? "Hubitat CoCoHue#${locationNameNormalized}" : "Hubitat CoCoHue"
    String ip = state.ipAddress
    Map params = [
@@ -1070,7 +1071,7 @@ void parseUsernameResponse(resp, data) {
  */
 void sendBridgeInfoRequest(Boolean createBridge=true, String protocol="http", String ip = null, Integer port=null,
                            String ssdpPath="/description.xml") {
-   log.debug("Sending request for Bridge information")
+   logDebug("Sending request for Bridge information")
    String fullHost = ip ? """${protocol ?: "http"}://${ip}${port ? ":$port" : ''}""" : getBridgeData().fullHost
    Map params = [
       uri: fullHost,
