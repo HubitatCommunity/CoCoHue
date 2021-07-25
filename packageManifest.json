@@ -39,7 +39,7 @@
          "id": "a7ad13cb-8ac5-4e57-a9e6-e2fb2598f014",
          "name": "CoCoHue Dimmable Bulb",
          "namespace": "RMoRobert",
-         "location": "https://raw.githubusercontent.com/RMoRobert/CoCoHue/master/drivers/cocohue-dimmable-bulb-driver.groovy",
+         "location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-dimmable-bulb-driver.groovy",
          "version": "3.5.1",
          "required": true
       },
