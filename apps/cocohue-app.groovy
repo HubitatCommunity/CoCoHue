@@ -1,7 +1,7 @@
 /**
  * ===========================  CoCoHue - Hue Bridge Integration =========================
  *
- *  Copyright 2019-2021 Robert Morris
+ *  Copyright 2019-2022 Robert Morris
  *
  *  DESCRIPTION:
  *  Community-developed Hue Bridge integration app for Hubitat, including support for lights,
@@ -22,9 +22,11 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2021-05-23
+ *  Last modified: 2022-01-02
  * 
  *  Changelog:
+ *  v4.0   - Changes for EventStream-based information pushing; new DNI format (CCH/appId..., not CCH/BridgeMACAbbrev...)
+ *           After upgrading, open CoCoHue app and push "Done." NOTE: Downgrading (without hub restore) is not possible after this.
  *  v3.5.1 - Improved username sanitization; removed logging for SSDP if debug logging disabled
  *  v3.5   - Minor code cleanup (and lots of driver changes)
  *  v3.1   - Driver updates (logging, error handling)
@@ -46,6 +48,10 @@
  */ 
 
 import groovy.transform.Field
+import hubitat.scheduling.AsyncResponse
+import com.hubitat.app.DeviceWrapper
+
+@Field static final Integer debugAutoDisableMinutes = 30
 
 @Field static final String childNamespace = "RMoRobert" // namespace of child device drivers
 @Field static final Map driverMap = [
@@ -105,8 +111,45 @@ void uninstalled() {
 }
 
 void updated() {
-    log.info("Updated with settings: ${settings}")
-    initialize()
+   log.info("Updated with settings: ${settings}")
+   initialize()
+   // Upgrade pre-CoCoHue-4.0 DNIs to match new DNI format (CCH/AppID, not CCH/BridgeMacAbbrev)
+   if (getChildDevices().any { DeviceWrapper dev -> dev.deviceNetworkId.startsWith("CCH/${state.bridgeID}/") }) {
+      getChildDevices().each { DeviceWrapper d ->
+         if (d.deviceNetworkId.startsWith("CCH/${state.bridgeID}") && !(d.deviceNetworkId.startsWith("CCH/${state.bridgeID}/Sensor"))) {
+            String newDNI = d.deviceNetworkId.replace("CCH/${state.bridgeID}", "CCH/${app.getId()}")
+            log.debug("Updating ${d.displayName} DNI from ${d.deviceNetworkId} to $newDNI")
+            d.setDeviceNetworkId(newDNI)
+         }
+      }
+   }
+   // Upgrade pre-CoCoHue-4.0 motion sensor DNIs to match new DNI format (Hue IDs, separated by pipe character; not IEEE/MAC)
+   if (getChildDevices().any { DeviceWrapper dev ->
+    (dev.deviceNetworkId.startsWith("CCH/${state.bridgeID}/Sensor/") || dev.deviceNetworkId.startsWith("CCH/${app.getId()}/Sensor/")) &&
+    dev.deviceNetworkId.tokenize('/')[-1].contains(":")
+   }) {
+      DeviceWrapper bridge = getChildDevice("CCH/${app.getId()}")
+      if (bridge == null) {
+         bridge = getChildDevice("CCH/${state.bridgeID}")
+         if (bridge == null) {
+            log.warn "Bridge device not found. Try..."
+         }
+      }
+      bridge.getAllSensors()
+      pauseExecution(6000) // should work (wait 6s), though there's probably a more reliable way to time (async callback?)...
+      Map sensorCache = bridge.getAllSensorsCache()
+      sensorCache.each { String mac, Map value ->
+         DeviceWrapper dev = getChildDevice("CCH/${app.getId()}/Sensor/${mac}") ?: getChildDevice("CCH/${state.bridgeID}/Sensor/${mac}")
+         if (dev != null) {
+            log.debug "Updating DNI for ${dev.displayName} to CoCoHue 4.0 format (old DNI = ${dev.deviceNetworkId})"
+            List ids = value.ids.sort()
+            String newLastPart = ids.join("|")
+            dev.setDeviceNetworkId("CCH/${app.getId()}/Sensor/${newLastPart}")
+            log.debug "Set DNI for ${dev.displayName} to CCH/${app.getId()}/${newLastPart}"
+         }
+         log.debug "dev was $dev"
+      }
+   }
 }
 
 void initialize() {
@@ -135,13 +178,23 @@ void initialize() {
 
    Integer disableTime = 1800
    if (enableDebug) {
-      log.debug "Debug logging will be automatically disabled in ${disableTime} seconds"
-      runIn(disableTime, debugOff)
+      log.debug "Debug logging will be automatically disabled in ${debugAutoDisableMinutes} minutes"
+      runIn(debugAutoDisableMinutes*60, "debugOff")
    }
 
-   Integer pollInt = settings["pollInterval"]?.toInteger()
+   if (settings.useEventStream == true) {
+      DeviceWrapper bridge = getChildDevice("CCH/${app.getId()}")
+      bridge?.connectEventStream()
+   }
+
+   scheduleRefresh()
+}
+
+void scheduleRefresh() {
+   if (enableDebug) log.debug "scheduleRefresh()"
+   Integer pollInt = Integer.parseInt(settings["pollInterval"] ?: "0")
    // If change polling options in UI, may need to modify some of these cases:
-   switch (pollInt ?: 0) {
+   switch (pollInt) {
       case 0:
          logDebug("Polling disabled; not scheduling")
          break
@@ -149,17 +202,30 @@ void initialize() {
          logDebug("Scheduling polling every ${pollInt} seconds")
          schedule("${Math.round(Math.random() * pollInt)}/${pollInt} * * ? * * *", "refreshBridge")
          break
-      case 60..259:
+      case 60..119:
          logDebug("Scheduling polling every 1 minute")
          runEvery1Minute("refreshBridge")
          break
-      case 300..1800:
-         logDebug("Schedulig polling every 5 minutes")
+      case 120..179:
+         logDebug("Scheduling polling every 2 minutes")
+         schedule("${Math.round(Math.random() * 59)} */2 * ? * * *", "refreshBridge")
+         runEvery2Minutes("refreshBridge")
+         break
+      case 180..299:
+         logDebug("Scheduling polling every 3 minutes")
+         schedule("${Math.round(Math.random() * 59)} */3 * ? * * *", "refreshBridge")
+         break
+      case 300..1799:
+         logDebug("Scheduling polling every 5 minutes")
          runEvery5Minutes("refreshBridge")
+         break
+      case 1800..3599:
+         logDebug("Scheduling polling every 30 minutes")
+         runEvery30Minutes("refreshBridge")
          break
       default:
          logDebug("Scheduling polling every hour")
-         runEvery1Hour("refreshBridge")                
+         runEvery1Hour("refreshBridge")
    }
 }
 
@@ -207,7 +273,7 @@ void debugOff() {
 }
 
 def pageFirstPage() {
-   state.authRefreshInterval = 5
+   state.authscheduleRefreshInterval = 5
    state.discoTryCount = 0
    state.authTryCount = 0
    if (app.getInstallationState() == "INCOMPLETE") {
@@ -269,7 +335,8 @@ def pageAddBridge() {
                paragraph("No bridges have been found. Please go back and try again, or consider using manual setup.")
             }
             paragraph "<script>\$('button[name=\"_action_next\"]').show()</script>"
-         } else { 
+         }
+         else { 
                unsubscribe() // remove or modify if ever subscribe to more than SSDP above
                input(name: "bridgeIP", type: "string", title: "Hue Bridge IP address:", required: false, defaultValue: null, submitOnChange: true)
                input(name: "customPort", type: "number", title: "Custom port? (Blank for default)")
@@ -408,7 +475,7 @@ def pageManageBridge() {
    state.remove("authTryCount")
    state.remove("discoTryCount")
    // More cleanup...
-   com.hubitat.app.DeviceWrapper bridge = getChildDevice("CCH/${state.bridgeID}")
+   DeviceWrapper bridge = getChildDevice("CCH/${app.getId()}")
    if (bridge != null) {
       bridge.clearBulbsCache()
       bridge.clearGroupsCache()
@@ -450,22 +517,24 @@ def pageManageBridge() {
          input(name: "deleteDevicesOnUninstall", type: "bool", title: "Delete devices created by app (Bridge, light, group, and scene) if uninstalled", defaultValue: true)
       }        
       section("Other Options:") {
-         input(name: "pollInterval", type: "enum", title: "Poll bridge every...",
-            options: [0:"Disabled", 10:"10 seconds", 15:"15 seconds", 20:"20 seconds", 30:"30 seconds", 45:"45 seconds", 60:"1 minute (recommended)",
-                        300:"5 minutes", 3600:"1 hour"], defaultValue:60)
-         input(name: "boolCustomLabel", type: "bool", title: "Customize the name of this CoCoHue app instance", defaultValue: false, submitOnChange: true)
-         if (settings["boolCustomLabel"]) label(title: "Custom name for this app", required: false)
-         input(name: "enableDebug", type: "bool", title: "Enable debug logging", defaultValue: true)
+         input name: "useEventStream", type: "bool", title: "Enable \"push\" updates (Server-Sent Events/EventStream) from Bridge (experimental; requires Bridge v2 and Hubitat 2.2.9 or later)"
+         input name: "pollInterval", type: "enum", title: "Poll bridge every...",
+            options: [0:"Disabled", 10:"10 seconds", 15:"15 seconds", 20:"20 seconds", 30:"30 seconds", 45:"45 seconds", 60:"1 minute (default)",
+                        120:"2 minutes", 180:"3 minutes", 300:"5 minutes", 1800:"30 minutes", 3600:"1 hour"],
+                        defaultValue: 60
+         input name: "boolCustomLabel", type: "bool", title: "Customize the name of this CoCoHue app instance", defaultValue: false, submitOnChange: true
+         if (settings["boolCustomLabel"]) label title: "Custom name for this app", required: false
+         input name: "enableDebug", type: "bool", title: "Enable debug logging", defaultValue: true
       }
    }
 }
 
 def pageSelectLights() {
-   com.hubitat.app.DeviceWrapper bridge = getChildDevice("CCH/${state.bridgeID}")
+   DeviceWrapper bridge = getChildDevice("CCH/${app.getId()}")
    bridge.getAllBulbs()
    List arrNewBulbs = []
    Map bulbCache = bridge.getAllBulbsCache()
-   List<com.hubitat.app.DeviceWrapper> unclaimedBulbs = getChildDevices().findAll { it.deviceNetworkId.startsWith("CCH/${state.bridgeID}/Light/") }
+   List<DeviceWrapper> unclaimedBulbs = getChildDevices().findAll { it.deviceNetworkId.startsWith("CCH/${app.getId()}/Light/") }
    dynamicPage(name: "pageSelectLights", refreshInterval: bulbCache ? 0 : 6, uninstall: true, install: false, nextPage: "pageManageBridge") {
       Map addedBulbs = [:]  // To be populated with lights user has added, matched by Hue ID
       if (!bridge) {
@@ -474,7 +543,7 @@ def pageSelectLights() {
       }
       if (bulbCache) {
          bulbCache.each { cachedBulb ->
-            com.hubitat.app.DeviceWrapper bulbChild = unclaimedBulbs.find { b -> b.deviceNetworkId == "CCH/${state.bridgeID}/Light/${cachedBulb.key}" }
+            DeviceWrapper bulbChild = unclaimedBulbs.find { b -> b.deviceNetworkId == "CCH/${app.getId()}/Light/${cachedBulb.key}" }
             if (bulbChild) {
                addedBulbs.put(cachedBulb.key, [hubitatName: bulbChild.name, hubitatId: bulbChild.id, hueName: cachedBulb.value?.name])
                unclaimedBulbs.removeElement(bulbChild)
@@ -538,11 +607,11 @@ def pageSelectLights() {
 }
 
 def pageSelectGroups() {
-   com.hubitat.app.DeviceWrapper bridge = getChildDevice("CCH/${state.bridgeID}")
+   DeviceWrapper bridge = getChildDevice("CCH/${app.getId()}")
    bridge.getAllGroups()
    List arrNewGroups = []
    Map groupCache = bridge.getAllGroupsCache()
-   List<com.hubitat.app.DeviceWrapper> unclaimedGroups = getChildDevices().findAll { it.deviceNetworkId.startsWith("CCH/${state.bridgeID}/Group/") }
+   List<DeviceWrapper> unclaimedGroups = getChildDevices().findAll { it.deviceNetworkId.startsWith("CCH/${app.getId()}/Group/") }
    dynamicPage(name: "pageSelectGroups", refreshInterval: groupCache ? 0 : 6, uninstall: true, install: false, nextPage: "pageManageBridge") {
       Map addedGroups = [:]  // To be populated with groups user has added, matched by Hue ID
       if (!bridge) {
@@ -551,7 +620,7 @@ def pageSelectGroups() {
       }
       if (groupCache) {
          groupCache.each { cachedGroup ->
-            com.hubitat.app.DeviceWrapper groupChild = unclaimedGroups.find { grp -> grp.deviceNetworkId == "CCH/${state.bridgeID}/Group/${cachedGroup.key}" }
+            DeviceWrapper groupChild = unclaimedGroups.find { grp -> grp.deviceNetworkId == "CCH/${app.getId()}/Group/${cachedGroup.key}" }
             if (groupChild) {
                addedGroups.put(cachedGroup.key, [hubitatName: groupChild.name, hubitatId: groupChild.id, hueName: cachedGroup.value?.name])
                unclaimedGroups.removeElement(groupChild)
@@ -616,12 +685,12 @@ def pageSelectGroups() {
 }
 
 def pageSelectScenes() {
-    com.hubitat.app.DeviceWrapper bridge = getChildDevice("CCH/${state.bridgeID}")
+    DeviceWrapper bridge = getChildDevice("CCH/${app.getId()}")
    bridge.getAllScenes()
    List arrNewScenes = []
    Map sceneCache = bridge.getAllScenesCache()
    Map groupCache = bridge.getAllGroupsCache()
-   List<com.hubitat.app.DeviceWrapper> unclaimedScenes = getChildDevices().findAll { it.deviceNetworkId.startsWith("CCH/${state.bridgeID}/Scene/") }
+   List<DeviceWrapper> unclaimedScenes = getChildDevices().findAll { it.deviceNetworkId.startsWith("CCH/${app.getId()}/Scene/") }
    Map grps = [:]
    groupCache?.each { grps << [(it.key) : (it.value.name)] }
    dynamicPage(name: "pageSelectScenes", refreshInterval: sceneCache ? 0 : 7, uninstall: true, install: false, nextPage: "pageManageBridge") {  
@@ -633,7 +702,7 @@ def pageSelectScenes() {
       if (sceneCache) {
          state.sceneFullNames = [:]
          sceneCache.each { sc ->
-            com.hubitat.app.DeviceWrapper sceneChild = unclaimedScenes.find { scn -> scn.deviceNetworkId == "CCH/${state.bridgeID}/Scene/${sc.key}" }
+            DeviceWrapper sceneChild = unclaimedScenes.find { scn -> scn.deviceNetworkId == "CCH/${app.getId()}/Scene/${sc.key}" }
             if (sceneChild) {
                addedScenes.put(sc.key, [hubitatName: sceneChild.name, hubitatId: sceneChild.id, hueName: sc.value?.name])
                unclaimedScenes.removeElement(sceneChild)
@@ -713,11 +782,11 @@ def pageSelectScenes() {
 }
 
 def pageSelectMotionSensors() {
-   com.hubitat.app.DeviceWrapper bridge = getChildDevice("CCH/${state.bridgeID}")
+   DeviceWrapper bridge = getChildDevice("CCH/${app.getId()}")
    bridge.getAllSensors()
    List arrNewSensors = []
    Map sensorCache = bridge.getAllSensorsCache()
-   List<com.hubitat.app.DeviceWrapper> unclaimedSensors = getChildDevices().findAll { it.deviceNetworkId.startsWith("CCH/${state.bridgeID}/Sensor/") }
+   List<DeviceWrapper> unclaimedSensors = getChildDevices().findAll { it.deviceNetworkId.startsWith("CCH/${app.getId()}/Sensor/") }
    dynamicPage(name: "pageSelectMotionSensors", refreshInterval: sensorCache ? 0 : 6, uninstall: true, install: false, nextPage: "pageManageBridge") {
       Map addedSensors = [:]  // To be populated with sensors user has added, matched by Hue ID
       if (!bridge) {
@@ -726,13 +795,15 @@ def pageSelectMotionSensors() {
       }
       if (sensorCache) {
          sensorCache.each { cachedSensor ->
-            //log.warn "* cached sensor = $cachedSensor"
-            com.hubitat.app.DeviceWrapper sensorChild = unclaimedSensors.find { s -> s.deviceNetworkId == "CCH/${state.bridgeID}/Sensor/${cachedSensor.key}" }
+            List ids = cachedSensor.value.ids?.sort() // sort numerically in case aren't (though usually retrieved from Bridge as such)
+            String lastPart = ids.join("|") // DNI format is like CCH/BridgeID/Sensor/1|2|3, where 1, 2, and 3 are the Hue IDs for various components of this sensor
+            DeviceWrapper sensorChild = unclaimedSensors.find { s -> s.deviceNetworkId == "CCH/${app.getId()}/Sensor/${lastPart}" }
             if (sensorChild) {
-               addedSensors.put(cachedSensor.key, [hubitatName: sensorChild.name, hubitatId: sensorChild.id, hueName: cachedSensor.value?.name])
+               addedSensors.put(lastPart, [hubitatName: sensorChild.name, hubitatId: sensorChild.id, hueName: cachedSensor.value?.name])
                unclaimedSensors.removeElement(sensorChild)
             } else {
                Map newSensor = [:]
+               // eventually becomes input for setting/dropdown; Map format is [MAC: DisplayName]
                newSensor << [(cachedSensor.key): (cachedSensor.value.name)]
                arrNewSensors << newSensor
             }
@@ -744,14 +815,16 @@ def pageSelectMotionSensors() {
          addedSensors = addedSensors.sort { it.value.hubitatName }
       }
       if (!sensorCache) {
-         section("Discovering sensors. Please wait...") {            
+         section("Discovering sensors. Please wait...") {
             paragraph("Press \"Refresh\" if you see this message for an extended period of time")
             input(name: "btnSensorRefresh", type: "button", title: "Refresh", submitOnChange: true)
          }
       }
       else {
          section("Manage Sensors") {
-            paragraph "NOTE: Like all Hue devices on Hubitat, motion sensor changes are not \"pushed\" from Hue to Hubitat as they happen. Their states on Hubitat are updated only when the Bridge is polled, per your CoCoHue configuration options (or a manual \"Refresh\" on the Bridge device). <b>It is not recommended to rely on Hue motion sensors for time-sensitve motion-based automations on Hubitat</b> when used via the Hue Bridge (but note that it is possible to directly pair them with Hubitat). Some motion \"active\" events may also be missed entirely if the duration of activity lasts less than the polling interval."
+            if (!(settings.useEventStream)) {
+               paragraph "NOTE: Without \"push\" updates (EventStream/SSE) enabled, motion sensor changes are updated only when the Bridge is polled, per your CoCoHue configuration options (or a manual \"Refresh\" on the Bridge device). <b>It is not recommended to rely on Hue motion sensors for time-sensitve motion-based automations on Hubitat in this configuration</b> when used via the Hue Bridge. For example, some motion events may be missed entirely if the duration of activity lasts less than the polling interval, but there will be a delay before activity in any case."
+            }
             input(name: "newSensors", type: "enum", title: "Select Hue motion sensors to add:",
                   multiple: true, options: arrNewSensors)
             paragraph ""
@@ -791,11 +864,11 @@ def pageSelectMotionSensors() {
 }
 
 def pageSelectLabsActivators() {
-   com.hubitat.app.DeviceWrapper bridge = getChildDevice("CCH/${state.bridgeID}")
+   DeviceWrapper bridge = getChildDevice("CCH/${app.getId()}")
    bridge.getAllLabsDevices()
    List arrNewLabsDevs = []
    Map labsCache = bridge.getAllLabsSensorsCache()
-   List<com.hubitat.app.DeviceWrapper> unclaimedLabsDevs = getChildDevices().findAll { it.deviceNetworkId.startsWith("CCH/${state.bridgeID}/SensorRL/") }
+   List<DeviceWrapper> unclaimedLabsDevs = getChildDevices().findAll { it.deviceNetworkId.startsWith("CCH/${app.getId()}/SensorRL/") }
    dynamicPage(name: "pageSelectLabsActivators", refreshInterval: labsCache ? 0 : 6, uninstall: true, install: false, nextPage: "pageManageBridge") {
       Map addedLabsDevs = [:]  // To be populated with lights user has added, matched by Hue ID
       if (!bridge) {
@@ -804,7 +877,7 @@ def pageSelectLabsActivators() {
       }
       if (labsCache) {
          labsCache.each { cachedLabDev ->
-            com.hubitat.app.DeviceWrapper labsChild = unclaimedLabsDevs.find { d -> d.deviceNetworkId == "CCH/${state.bridgeID}/SensorRL/${cachedLabDev.key}" }
+            DeviceWrapper labsChild = unclaimedLabsDevs.find { d -> d.deviceNetworkId == "CCH/${app.getId()}/SensorRL/${cachedLabDev.key}" }
             if (labsChild) {
                addedLabsDevs.put(cachedLabDev.key, [hubitatName: labsChild.name, hubitatId: labsChild.id, hueName: cachedLabDev.value?.name])
                unclaimedLabsDevs.removeElement(labsChild)
@@ -871,7 +944,7 @@ def pageSelectLabsActivators() {
  * page (intended to be called after navigating away/using "Done" from that page)
  */
 void createNewSelectedBulbDevices() {
-   com.hubitat.app.DeviceWrapper bridge = getChildDevice("CCH/${state.bridgeID}")
+   DeviceWrapper bridge = getChildDevice("CCH/${app.getId()}")
    if (bridge == null) log.error("Unable to find Bridge device")
    Map bulbCache = bridge?.getAllBulbsCache()
    settings["newBulbs"].each {
@@ -880,7 +953,7 @@ void createNewSelectedBulbDevices() {
          try {
             logDebug("Creating new device for Hue light ${it} (${b.name})")
             String devDriver = driverMap[b.type.toLowerCase()] ?: driverMap["DEFAULT"]
-            String devDNI = "CCH/${state.bridgeID}/Light/${it}"
+            String devDNI = "CCH/${app.getId()}/Light/${it}"
             Map devProps = [name: (settings["boolAppendBulb"] ? b.name + " (Hue Bulb)" : b.name)]
             addChildDevice(childNamespace, devDriver, devDNI, devProps)
 
@@ -901,7 +974,7 @@ void createNewSelectedBulbDevices() {
  */
 void createNewSelectedGroupDevices() {
    String driverName = "CoCoHue Group"
-   com.hubitat.app.DeviceWrapper bridge = getChildDevice("CCH/${state.bridgeID}")
+   DeviceWrapper bridge = getChildDevice("CCH/${app.getId()}")
    if (bridge == null) log.error("Unable to find Bridge device")
    Map groupCache = bridge?.getAllGroupsCache()
    settings["newGroups"].each {
@@ -909,7 +982,7 @@ void createNewSelectedGroupDevices() {
       if (g) {
          try {
             logDebug("Creating new device for Hue group ${it} (${g.name})")
-            String devDNI = "CCH/${state.bridgeID}/Group/${it}"
+            String devDNI = "CCH/${app.getId()}/Group/${it}"
             Map devProps = [name: (settings["boolAppendGroup"] ? g.name + " (Hue Group)" : g.name)]
             addChildDevice(childNamespace, driverName, devDNI, devProps)
 
@@ -932,7 +1005,7 @@ void createNewSelectedGroupDevices() {
  */
 void createNewSelectedSceneDevices() {
    String driverName = "CoCoHue Scene"
-   com.hubitat.app.DeviceWrapper bridge = getChildDevice("CCH/${state.bridgeID}")
+   DeviceWrapper bridge = getChildDevice("CCH/${app.getId()}")
    if (!bridge) log.error("Unable to find Bridge device")
    Map sceneCache = bridge?.getAllScenesCache()
    settings["newScenes"].each {
@@ -941,7 +1014,7 @@ void createNewSelectedSceneDevices() {
          try {
                logDebug("Creating new device for Hue group ${it}" +
                         " (state.sceneFullNames?.get(it) ?: sc.name)")
-               String devDNI = "CCH/${state.bridgeID}/Scene/${it}"
+               String devDNI = "CCH/${app.getId()}/Scene/${it}"
                Map devProps = [name: (state.sceneFullNames?.get(it) ?: sc.name)]
                addChildDevice(childNamespace, driverName, devDNI, devProps)
          } catch (Exception ex) {
@@ -962,25 +1035,26 @@ void createNewSelectedSceneDevices() {
  */
 void createNewSelectedSensorDevices() {
    String driverName = "CoCoHue Motion Sensor"
-   com.hubitat.app.DeviceWrapper bridge = getChildDevice("CCH/${state.bridgeID}")
+   DeviceWrapper bridge = getChildDevice("CCH/${app.getId()}")
    if (bridge == null) log.error("Unable to find Bridge device")
    Map sensorCache = bridge?.getAllSensorsCache()
-   //log.warn "* sensorCache = $sensorCache"
-   settings["newSensors"].each {
-      def s = sensorCache.get(it)
-      if (s) {
+   settings["newSensors"].each { String mac ->
+      def cachedSensor = sensorCache.get(mac)
+      if (cachedSensor) {
          try {
-            logDebug("Creating new device for Hue sensor ${it} (${s.name})")
-            String devDNI = "CCH/${state.bridgeID}/Sensor/${it}"
-            Map devProps = [name: s.name]
+            logDebug("Creating new device for Hue sensor ${mac} (${cachedSensor.name}, IDs = $ids)")
+            List ids = cachedSensor.value.ids?.sort() // sort numerically in case aren't (though usually retrieved from Bridge as such)
+            String lastPart = ids.join("|") // DNI format is like CCH/BridgeID/Sensor/1|2|3, where 1, 2, and 3 are the Hue IDs for various components of this sensor
+            String devDNI = "CCH/${app.getId()}/Sensor/${lastPart}"
+            Map devProps = [name: cachedSensor.name]
             addChildDevice(childNamespace, driverName, devDNI, devProps)
 
          }
          catch (Exception ex) {
-            log.error("Unable to create new sensor device for $it: $ex")
+            log.error("Unable to create new sensor device for $mac: $ex")
          }
       } else {
-         log.error("Unable to create new device for sensor $it: MAC not found in Hue Bridge cache")
+         log.error("Unable to create new device for sensor $mac: MAC not found in Hue Bridge cache")
       }
    }    
    bridge.clearSensorsCache()
@@ -993,7 +1067,7 @@ void createNewSelectedSensorDevices() {
  * page (intended to be called after navigating away/using "Done" from that page)
  */
 void createNewSelectedLabsDevices() {
-   com.hubitat.app.DeviceWrapper bridge = getChildDevice("CCH/${state.bridgeID}")
+   DeviceWrapper bridge = getChildDevice("CCH/${app.getId()}")
    if (bridge == null) log.error("Unable to find Bridge device")
    Map labsCache = bridge?.getAllLabsSensorsCache()
    settings["newLabsDevs"].each {
@@ -1002,9 +1076,9 @@ void createNewSelectedLabsDevices() {
          try {
             logDebug("Creating new device for Hue Labs sensor device ${it} (${d.name})")
             String devDriver = "CoCoHue Generic Status Device"
-            String devDNI = "CCH/${state.bridgeID}/SensorRL/${it}"
+            String devDNI = "CCH/${app.getId()}/SensorRL/${it}"
             Map devProps = [name: (settings["boolAppendLabs"] ? d.name + " (Hue Labs Formula)" : d.name)]
-            com.hubitat.app.DeviceWrapper dev = addChildDevice(childNamespace, devDriver, devDNI, devProps)
+            DeviceWrapper dev = addChildDevice(childNamespace, devDriver, devDNI, devProps)
             dev?.updateDataValue("type", "CLIPGenericStatus")
          } catch (Exception ex) {
             log.error("Unable to create new device for $it: $ex")
@@ -1104,14 +1178,14 @@ private void parseBridgeInfoResponse(resp, data) {
          logDebug("  Hue Bridge serial parsed as ${serial}; getting additional device info...")
          friendlyBridgeName = body?.device?.friendlyName
          if (friendlyBridgeName) friendlyBridgeName = friendlyBridgeName.substring(0,friendlyBridgeName.lastIndexOf(' ('-1)) // strip out parenthetical IP address
-         com.hubitat.app.DeviceWrapper bridgeDevice
+         DeviceWrapper bridgeDevice
          if (data?.createBridge) {
             log.debug("    Creating CoCoHue Bridge device for Brige with MAC $serial")
             state.bridgeID = serial.drop(6) // last (12-6=) 6 of MAC
             state.bridgeMAC = serial // full MAC
             try {
-               bridgeDevice = getChildDevice("CCH/${state.bridgeID}")
-               if (!bridgeDevice) bridgeDevice = addChildDevice(childNamespace, "CoCoHue Bridge", "CCH/${state.bridgeID}", null,
+               bridgeDevice = getChildDevice("CCH/${app.getId()}") ?: getChildDevice("CCH/${state.bridgeID}")
+               if (!bridgeDevice) bridgeDevice = addChildDevice(childNamespace, "CoCoHue Bridge", "CCH/${app.getId()}", null,
                                     [label: """CoCoHue Bridge ${state.bridgeID}${friendlyBridgeName ? " ($friendlyBridgeName)" : ""}""", name: "CoCoHue Bridge"])
                if (!bridgeDevice) {
                   log.error "    Bridge device unable to be created or found. Check that driver is installed and no existing device exists for this Bridge." 
@@ -1122,7 +1196,7 @@ private void parseBridgeInfoResponse(resp, data) {
                }
             }
             catch (IllegalArgumentException e) { // could be bad DNI if already exists
-               bridgeDevice = getChildDevice("CCH/${state.bridgeID}")
+               bridgeDevice = getChildDevice("CCH/${app.getId()}")
                if (bridgeDevice) {
                   log.error("   Error creating Bridge device: $e")                  
                }
@@ -1210,15 +1284,34 @@ Map<String,String> getBridgeData(String protocol="http", Integer port=null) {
 /**
  * Calls refresh() method on Bridge child, intended to be called at user-specified
  * polling interval
+ * @param reschedule If true (default), re-schedules/resets next poll; not intended to be used if was scheduled
+ * refresh but could be used if user- or app-initiated (e.g., if SSE-based refresh to handle odd cases)
  */
-private void refreshBridge() {
-   com.hubitat.app.DeviceWrapper bridge = getChildDevice("CCH/${state.bridgeID}")
+private void refreshBridge(Map<String,Boolean> options = [reschedule: false]) {
+   logDebug("refreshBridge(reschedule = $reschedule)")
+   DeviceWrapper bridge = getChildDevice("CCH/${app.getId()}")
    if (!bridge) {
       log.error "No Bridge device found; could not refresh/poll"
       return
    }
-   logDebug("Polling Bridge...")
    bridge.refresh()
+   if (options.reschedule == true) scheduleRefresh()
+}
+
+/**
+ * Calls refresh() method on Bridge child, not yet used but planned to be with SSE xy color received to poll for HS
+ * Will wait 1s (to avoid cluster of refreshes if multiple devices change at same time), and will also
+ * re-schedule next periodic refresh (if enabled) to extend polling interval so this "counts" as such
+*/
+private void refreshBridgeWithDealay() {
+   logDebug("refreshBridgeWithDealay")
+   DeviceWrapper bridge = getChildDevice("CCH/${app.getId()}")
+   if (!bridge) {
+      log.error "No Bridge device found; could not refresh"
+      return
+   }
+   // Using 3-second delay; 1s seemed too fast in testing, so this might be good for most cases:
+   runIn(3, "refreshBridge", [reschedule: true])
 }
 
 /**
@@ -1227,7 +1320,7 @@ private void refreshBridge() {
  * @param setToOnline Sets status to "Online" if true, else to "Offline"
  */
 void setBridgeStatus(setToOnline=true) {
-   com.hubitat.app.DeviceWrapper bridge = getChildDevice("CCH/${state.bridgeID}")
+   DeviceWrapper bridge = getChildDevice("CCH/${app.getId()}")
    if (bridge == null) {
       log.error "No Bridge device found; could not set Bridge status"
       return
@@ -1248,13 +1341,13 @@ void setBridgeStatus(setToOnline=true) {
    logDebug("Updating member bulb states after group device change... (ids = $ids, isAllGroup = $isAllGroup)")
    if (!isAllGroup) {
       ids?.each {
-         com.hubitat.app.DeviceWrapper dev = getChildDevice("CCH/${state.bridgeID}/Light/${it}")
+         DeviceWrapper dev = getChildDevice("CCH/${app.getId()}/Light/${it}")
          dev?.createEventsFromMap(states, false)
       }
    } else {
-      List<com.hubitat.app.DeviceWrapper> devList = getChildDevices().findAll { it.getDeviceNetworkId().startsWith("CCH/${state.bridgeID}/Light/") }
+      List<DeviceWrapper> devList = getChildDevices().findAll { it.getDeviceNetworkId().startsWith("CCH/${app.getId()}/Light/") }
       // Update other gropus even though they aren't "bulbs":
-      devList += getChildDevices().findAll { it.getDeviceNetworkId().startsWith("CCH/${state.bridgeID}/Group/") && !(it.getDeviceNetworkId() == "CCH/${state.bridgeID}/Group/0") }
+      devList += getChildDevices().findAll { it.getDeviceNetworkId().startsWith("CCH/${app.getId()}/Group/") && !(it.getDeviceNetworkId() == "CCH/${app.getId()}/Group/0") }
       //logDebug("Updating states for: $devList")
       devList.each { it.createEventsFromMap(states, false) }
    }    
@@ -1270,8 +1363,8 @@ void setBridgeStatus(setToOnline=true) {
  void updateGroupStatesFromBulb(Map states, id) {
    logDebug("Searching for group devices containing bulb $id to update group state after bulb state change...")
    List matchingGroupDevs = []
-   getChildDevices()?.findAll({it.getDeviceNetworkId()?.startsWith("CCH/${state.bridgeID}/Group/")})?.each {
-      if (it.getMemberBulbIDs()?.contains(id) || it.getDeviceNetworkId() == "CCH/${state.bridgeID}/Group/0") {
+   getChildDevices()?.findAll({it.getDeviceNetworkId()?.startsWith("CCH/${app.getId()}/Group/")})?.each {
+      if (it.getMemberBulbIDs()?.contains(id) || it.getDeviceNetworkId() == "CCH/${app.getId()}/Group/0") {
          logDebug("Bulb $id found in group ${it.toString()}. Updating states.")
          matchingGroupDevs.add(it)
       }
@@ -1292,13 +1385,13 @@ void setBridgeStatus(setToOnline=true) {
  */
 void updateSceneStateToOffForGroup(String groupID, String excludeDNI=null) {
    logDebug("Searching for scene devices matching group $groupID and excluding DNI $excludeDNI")
-   List<com.hubitat.app.DeviceWrapper> sceneDevs = []
+   List<DeviceWrapper> sceneDevs = []
    if (groupID == "0") {
-      sceneDevs = getChildDevices()?.findAll({it.getDeviceNetworkId()?.startsWith("CCH/${state.bridgeID}/Scene/") &&
+      sceneDevs = getChildDevices()?.findAll({it.getDeviceNetworkId()?.startsWith("CCH/${app.getId()}/Scene/") &&
                                  it.getDeviceNetworkId() != excludeDNI})
    }
    else {
-      sceneDevs = getChildDevices()?.findAll({it.getDeviceNetworkId()?.startsWith("CCH/${state.bridgeID}/Scene/") &&
+      sceneDevs = getChildDevices()?.findAll({it.getDeviceNetworkId()?.startsWith("CCH/${app.getId()}/Scene/") &&
                                  it.getDeviceNetworkId() != excludeDNI &&
                                  it.getGroupID() == groupID})
    }
@@ -1317,13 +1410,13 @@ Boolean getIsAnyGroupMemberBulbOn(groupDevice) {
    logDebug ("Determining whether any group member bulbs on for group $groupDevice")
    Boolean retVal = false
    if (groupDevice) {
-      List<com.hubitat.app.DeviceWrapper> memberBulbDevs = []
-      if (groupDevice.getDeviceNetworkId() == "CCH/${state.bridgeID}/Group/0") {
-         memberBulbDevs = getChildDevices().findAll { it.getDeviceNetworkId().startsWith("CCH/${state.bridgeID}/Light/") }
+      List<DeviceWrapper> memberBulbDevs = []
+      if (groupDevice.getDeviceNetworkId() == "CCH/${app.getId()}/Group/0") {
+         memberBulbDevs = getChildDevices().findAll { it.getDeviceNetworkId().startsWith("CCH/${app.getId()}/Light/") }
       }
       else {
          groupDevice.getMemberBulbIDs().each { bulbId ->
-               com.hubitat.app.DeviceWrapper bulbDev = getChildDevice("CCH/${state.bridgeID}/Light/${bulbId}")
+               DeviceWrapper bulbDev = getChildDevice("CCH/${app.getId()}/Light/${bulbId}")
                if (bulbDev) memberBulbDevs.add(bulbDev)
          }
       }
@@ -1331,7 +1424,33 @@ Boolean getIsAnyGroupMemberBulbOn(groupDevice) {
       logDebug("Determined if any group member bulb on: $anyOn")
       return anyOn
    }
- }
+}
+
+/**
+ *  Stores EventStream status (online = true if connected, otherwise false); used to cache so
+ *  do not have to ask Bridge each time want to know. Intended to be called by Bridge device in response
+ *  to changes.
+ */
+void setEventStreamOpenStatus(Boolean isOnline) {
+   logDebug "setEventStreamOpenStatus($isOnline)"
+   state.eventStreamOpenStatus = isOnline
+}
+
+/**
+ *  Returns true if app configured to use EventStream/SSE, else false (proxy since cannot directly access settings from child)
+ */
+Boolean getEventStremEnabledSetting() {
+   return (settings.useEventStream == true) ? true : false
+}
+
+/**
+ *  Gets EventStream status (returns true if connected, otherwise false); gets from cache (see storeEventStreamOpenStatus())
+ *  so do not have to ask Bridge each time want to know. Intended to be called by light/group/etc. devices when need to know.
+ */
+Boolean getEventStreamOpenStatus() {
+   logDebug "getEventStreamOpenStatus (returning ${state.eventStreamOpenStatus})"
+   return (state.eventStreamOpenStatus == true) ? true : false
+}
 
 void appButtonHandler(btn) {
    switch(btn) {
@@ -1341,7 +1460,7 @@ void appButtonHandler(btn) {
       case "btnSesnsorRefresh":
       case "btnLabsRefresh":
          // Just want to resubmit page, so nothing
-         break        
+         break
       case "btnDiscoBridgeRefresh":
          sendBridgeDiscoveryCommand()
          break

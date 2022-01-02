@@ -30,6 +30,7 @@ For discussion and more information, visit the <a href="https://community.hubita
       * https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-plug-driver.groovy
       * https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-group-driver.groovy
       * https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-scene-driver.groovy
+      * https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-generic-status-driver.groovy
       
 4. Install an instance of app: go to **Apps > Add User App**, choose **CoCoHue**, and follow the prompts.
 
@@ -74,15 +75,17 @@ the standard Hubitat capability as it is currently documented. Setting a color, 
 (this is consistent with the behavior of other bulbs I tested). Setting a level or saturation will *not* because Hue allows adjustment
 of these while the effect (which does not manipulate these values) is in progress.
 
-4. Prestaging: this integration adds color and level prestaging options to mimic those found in many other native drivers.
-This means that if a `setLevel` (for level prestaging) or a `setColorTemperature`, `setColor`, `setHue`, or `setSaturation` command
-are received when the bulb is off, it will not turn on. Instead, the next time the bulb is turned on, it will be turned on with those settings.
-This works well if your bulbs are manipulated entirely from Hubitat. (Note: unlike some bulbs, a second `setLevel` with the same level
-as a previous, prestaged `setLevel() will not turn the bulb on to that level; a manual `on()` must be issued. The same is true for all
-prestaged attributes/values.) Unfortunately, Hue itself does not support prestaging on the Bridge (these prestaged settings are "remembered"
+4. Prestaging: the new standard "LevelPreset" capability and its required command, `presetLevel()`, are implemented in all bulb/group
+drivers. While not (yet?) standard, analagous custom commands are implemented to preset color and color temperature. Previously, this
+integration used color and level prestaging *options* (rather than commands) to mimic those found in some native drivers before
+this standardization (in that case, if a `setLevel` [for level prestaging] or a `setColorTemperature`, `setColor`, `setHue`, or `setSaturation` command
+are received when the bulb is off, it will not turn on; instead, the next time the bulb is turned on, it will be turned on with those settings.) These
+options are still available if you have already enabled them, but they are not available for new installs, and it is recommended that you transition
+away from them, as once this is all standardized, it is possible they will be removoed. Regarding prestaging in general,
+this works well if your bulbs are manipulated entirely from Hubitat. Unfortunately, Hue itself does not support prestaging on the Bridge (these prestaged settings are "remembered"
 entirely on the Hubitat device), so this will *not* work if you prestage in Hubitat and then turn the bulbs on outside of Hubitat. For
 this reason, the drivers label these options "pseudo-prestaging." (Recommendation: manipulate bulbs only from Hubitat if prestaging is enabled.)
 
 5. "Select" and "LSelect" Hue alerts: these are basically a one-time flash and a 15-time flash. These are implemented as the
-`flashOnce()` command and the pseudo-standard `flash()` command, respectively. An in-progress `flash()` can be stopped
+`flashOnce()` command and the now-standard `flash()` command, respectively. An in-progress flash can be stopped
 with `flashOff()` (or you can wait until it stops on own, approximately 30 seconds on official bulbs).
