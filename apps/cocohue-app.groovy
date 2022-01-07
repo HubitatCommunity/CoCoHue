@@ -1040,7 +1040,6 @@ void createNewSelectedSensorDevices() {
    Map<String,Map> sensorCache = bridge?.getAllSensorsCache()
    settings["newSensors"].each { String mac ->
       Map cachedSensor = sensorCache.get(mac)
-      fsdafa cachedSensor
       if (cachedSensor) {
          //try {
             logDebug "Creating new device for Hue sensor ${mac}: (${cachedSensor})"
