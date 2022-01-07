@@ -10,7 +10,6 @@
  *  TO INSTALL:
  *  See documentation on Hubitat Community forum or README.MD file in GitHub repo
  *
- *  Copyright 2019-2021 Robert Morris
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
  *
@@ -22,9 +21,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2022-01-02
+ *  Last modified: 2022-01-07
  * 
  *  Changelog:
+ *  v4.0.2 - Fix for error when adding new sensors
  *  v4.0.1 - Fix for app not sensing bridge authorization on initial setup
  *  v4.0   - Changes for EventStream-based information pushing; new DNI format (CCH/appId..., not CCH/BridgeMACAbbrev...)
  *           After upgrading, open CoCoHue app and push "Done." NOTE: Downgrading (without hub restore) is not possible after this.
@@ -1037,22 +1037,23 @@ void createNewSelectedSensorDevices() {
    String driverName = "CoCoHue Motion Sensor"
    DeviceWrapper bridge = getChildDevice("CCH/${app.getId()}")
    if (bridge == null) log.error("Unable to find Bridge device")
-   Map sensorCache = bridge?.getAllSensorsCache()
+   Map<String,Map> sensorCache = bridge?.getAllSensorsCache()
    settings["newSensors"].each { String mac ->
-      def cachedSensor = sensorCache.get(mac)
+      Map cachedSensor = sensorCache.get(mac)
+      fsdafa cachedSensor
       if (cachedSensor) {
-         try {
-            logDebug "Creating new device for Hue sensor ${mac} (${cachedSensor.name}, IDs = $ids)"
-            List ids = cachedSensor.value.ids?.sort() // sort numerically in case aren't (though usually retrieved from Bridge as such)
+         //try {
+            logDebug "Creating new device for Hue sensor ${mac}: (${cachedSensor})"
+            List ids = cachedSensor.ids?.sort() // sort numerically in case aren't (though usually retrieved from Bridge as such)
             String lastPart = ids.join("|") // DNI format is like CCH/BridgeID/Sensor/1|2|3, where 1, 2, and 3 are the Hue IDs for various components of this sensor
             String devDNI = "CCH/${app.getId()}/Sensor/${lastPart}"
             Map devProps = [name: cachedSensor.name]
             addChildDevice(childNamespace, driverName, devDNI, devProps)
 
-         }
-         catch (Exception ex) {
-            log.error "Unable to create new sensor device for $mac: $ex"
-         }
+         //}
+         //catch (Exception ex) {
+           // log.error "Unable to create new sensor device for $mac: $ex"
+         //}
       } else {
          log.error "Unable to create new device for sensor $mac: MAC not found in Hue Bridge cache"
       }
@@ -1143,6 +1144,7 @@ void parseUsernameResponse(resp, data) {
  *  (when parsed in parseBridgeInfoResponse if createBridge == true) or to add to the list
  *  of discovered Bridge devices (when createBridge == false). protocol, ip, and port are optional
  *  and will default to getBridgeData() values if not specified
+ *  // TODO: When move away from SSDP, check /api/config endpoint instead (check also swversion for v2 API availability)
  */
 void sendBridgeInfoRequest(Boolean createBridge=true, String protocol="http", String ip = null, Integer port=null,
                            String ssdpPath="/description.xml") {
@@ -1458,7 +1460,7 @@ void appButtonHandler(btn) {
       case "btnBulbRefresh":
       case "btnGroupRefresh":
       case "btnSceneRefresh":
-      case "btnSesnsorRefresh":
+      case "btnSensorRefresh":
       case "btnLabsRefresh":
          // Just want to resubmit page, so nothing
          break

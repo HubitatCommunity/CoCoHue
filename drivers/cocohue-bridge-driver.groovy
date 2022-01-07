@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2022-01-02
+ *  Last modified: 2022-01-07
  * 
  *  Changelog:
+ *  v4.0.1  - Minor sensor cache updates
  *  v4.0    - EventStream support for real-time updates
  *  v3.5.1  - Refactor some code into libraries (code still precompiled before upload; should not have any visible changes)
  *  v3.5    - Minor code cleanup
@@ -505,7 +506,7 @@ private void parseGetAllSensorsResponse(resp, data) {
                }
             }
          }
-         Map hueMotionSensors = [:]
+         Map<String,Map> hueMotionSensors = [:]
          allSensors.each { key, value ->
             // Hue  Motion sensors should have all three types, so just further filtering:
             if (value.ids?.size >= 3) hueMotionSensors << [(key): value]
@@ -522,7 +523,7 @@ private void parseGetAllSensorsResponse(resp, data) {
 /** Intended to be called from parent app to retrive previously
  *  requested list of sensors
  */
-Map getAllSensorsCache() {
+Map<String,Map> getAllSensorsCache() {
    return state.allSensors
 }
 
