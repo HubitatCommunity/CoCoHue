@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2022-01-07
+ *  Last modified: 2022-04-04
  * 
  *  Changelog:
+ *  v4.0.1  - Fix for "on" state of "All Hue Lights" group (if used)
  *  v4.0.1  - Minor sensor cache updates
  *  v4.0    - EventStream support for real-time updates
  *  v3.5.1  - Refactor some code into libraries (code still precompiled before upload; should not have any visible changes)
@@ -272,7 +273,7 @@ private void parseGroupStates(Map groupsJson) {
             dev.setMemberBulbIDs(val.lights)
          }
       }
-      Boolean anyOn = groupsJson.any { it.value?.state?.any_on == false }
+      Boolean anyOn = groupsJson.any { it.value?.state?.any_on == true }
       DeviceWrapper allLightsDev = parent.getChildDevice("${device.deviceNetworkId}/Group/0")
       if (allLightsDev != null) {
          allLightsDev.createEventsFromMap(['any_on': anyOn], true)
