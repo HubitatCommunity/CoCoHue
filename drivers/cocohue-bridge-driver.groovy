@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2022-04-04
+ *  Last modified: 2022-06-04
  * 
  *  Changelog:
+ *  v4.0.2  - Fix to avoid unepected "off" transition time
  *  v4.0.1  - Fix for "on" state of "All Hue Lights" group (if used)
  *  v4.0.1  - Minor sensor cache updates
  *  v4.0    - EventStream support for real-time updates

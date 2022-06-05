@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2022-01-02
+ *  Last modified: 2022-06-04
  *
  *  Changelog:
+ *  v4.0.2  - Fix to avoid unepected "off" transition time
  *  v4.0    - Add SSE support for push
  *  v3.5.1  - Refactor some code into libraries (code still precompiled before upload; should not have any visible changes)
  *  v3.5    - Add LevelPreset capability (replaces old level prestaging option); added preliminary color
@@ -187,7 +188,7 @@ void on(Number transitionTime = null) {
 void off(Number transitionTime = null) {
    if (enableDebug == true) log.debug "off()"
    Map bridgeCmd
-   Integer scaledRate = transitionTime != null ? Math.round(transitionTime * 10).toInteger() : getScaledOffTransitionTime()
+   Integer scaledRate = transitionTime != null ? Math.round(transitionTime * 10).toInteger() : null
    if (scaledRate == null) {
       bridgeCmd = ["on": false]
    }
