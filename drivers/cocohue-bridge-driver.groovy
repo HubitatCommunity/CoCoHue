@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2022-06-04
+ *  Last modified: 2022-08-28
  * 
  *  Changelog:
+ *  v4.1    - Add button device support (with v2 API only)
  *  v4.0.2  - Fix to avoid unepected "off" transition time
  *  v4.0.1  - Fix for "on" state of "All Hue Lights" group (if used)
  *  v4.0.1  - Minor sensor cache updates
@@ -95,7 +96,8 @@ void connectEventStream() {
       "https://${data.ip}/eventstream/clip/v2", [
       headers: ["Accept": "text/event-stream", "hue-application-key": data.username],
       rawData: true,
-      readTimeout: 60,
+      pingInterval: 10,
+      readTimeout: 3600,
       ignoreSSLIssues: true
    ])
 }
@@ -175,22 +177,31 @@ void parse(String description) {
                switch (fullId) {
                   case { it.startsWith("/lights/") }:
                      String hueId = fullId.split("/")[-1]
-                     DeviceWrapper device = parent.getChildDevice("${device.deviceNetworkId}/Light/${hueId}")
-                     if (device != null) device.createEventsFromSSE(it.data[0])
+                     DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Light/${hueId}")
+                     if (dev != null) dev.createEventsFromSSE(it.data[0])
                      break
                   case { it.startsWith("/groups/") }:
                      String hueId = fullId.split("/")[-1]
-                     DeviceWrapper device = parent.getChildDevice("${device.deviceNetworkId}/Group/${hueId}")
-                     if (device != null) device.createEventsFromSSE(it.data[0])
+                     DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Group/${hueId}")
+                     if (dev != null) dev.createEventsFromSSE(it.data[0])
                      break
                      break
                   case { it.startsWith("/sensors/") }:
                      String hueId = fullId.split("/")[-1]
-                     DeviceWrapper device = parent.getChildDevices().find { DeviceWrapper dev ->
+                     DeviceWrapper dev = parent.getChildDevices().find { DeviceWrapper dev ->
                         hueId in dev.deviceNetworkId.tokenize('/')[-1].tokenize('|') &&
                         dev.deviceNetworkId.startsWith("${device.deviceNetworkId}/Sensor/")  // shouldn't be necessary but gave me a Light ID once in testing for a sensor, so?!
                      }
-                     if (device != null) device.createEventsFromSSE(it.data[0])
+                     if (dev != null) {
+                        dev.createEventsFromSSE(it.data[0])
+                     }
+                     else {
+                        // try button; should eventually switch to v2 for all of this...
+                        if (it.data.owner?.rid) dev = parent.getChildDevice("${device.deviceNetworkId}/Button/${it.data.owner.rid[0]}")
+                        if (dev != null) {
+                           dev.createEventsFromSSE(it.data[0])
+                        }
+                     }
                      break
                   default:
                      if (enableDebug) log.debug "skipping Hue v1 ID: $hueId"
@@ -535,6 +546,89 @@ Map<String,Map> getAllSensorsCache() {
 void clearSensorsCache() {
    if (enableDebug) log.debug "Running clearSensorsCache..."
    state.remove('allSensors')
+}
+
+// ------------ BUTTONS ------------
+
+/** Requests list of all button devices from Hue Bridge; updates
+ *  allButtons in state when finished. Intended to be called
+ *  during buttoon discovery in app.
+ */
+void getAllButtons() {
+   if (enableDebug) log.debug "Getting button list from Bridge..."
+   //clearButtonsCache()
+   Map<String,String> data = parent.getBridgeData()
+   Map params = [
+      uri: "https://${data.ip}",
+      path: "/clip/v2/resource/device",
+      headers: ["hue-application-key": data.username],
+      contentType: "application/json",
+      timeout: 15,
+      ignoreSSLIssues: true
+   ]
+   asynchttpGet("parseGetAllButtonsResponse", params)
+}
+
+private void parseGetAllButtonsResponse(resp, data) {
+   if (enableDebug) log.debug "Parsing in parseGetAllButtonsResponse"
+   if (checkIfValidResponse(resp)) {
+      try {
+         Map buttons = [:]
+         // Get specific /button devices first....
+         Map<String,String> bridgeData = parent.getBridgeData()
+         // TODO: Consider making this async, but should be pretty safe considerng we just heard from Bridge...
+         Map params = [
+            uri: "https://${bridgeData.ip}",
+            path: "/clip/v2/resource/button",
+            headers: ["hue-application-key": bridgeData.username],
+            contentType: "application/json",
+            timeout: 15,
+            ignoreSSLIssues: true
+         ]
+         httpGet(params,
+            { response ->
+                  response.data.data.each {
+                     if (buttons[it.owner.rid] == null) buttons[it.owner.rid] = [buttons: [:]]
+                     buttons[it.owner.rid].buttons << [(it.id): it.metadata.control_id]
+                     
+                  }
+            }
+         )
+         // But also have to get name from /devices data...
+         if (resp?.json?.data) {
+            List devicesJson = resp.json.data
+            buttons.keySet().each { String id ->
+               Map dev = devicesJson.find { dev -> dev.id == id }
+               buttons[id].name = dev.metadata.name
+               buttons[id].manufacturer_name = dev.product_data.manufacturer_name
+               buttons[id].model_id = dev.product_data.model_id
+            }
+         }
+         else {
+            log.warn "No data in returned JSON: $data"
+         }
+         state.allButtons = buttons
+         if (enableDebug) log.debug "  All buttons received from Bridge: $buttons"
+      }
+      catch (Exception ex) {
+         log.error "Error parsing all buttons response: $ex"
+      }
+   }
+}
+
+/** Intended to be called from parent app to retrive previously
+ *  requested list of bulbs
+ */
+Map getAllButtonsCache() {
+   return state.allButtons 
+}
+
+/** Clears cache of bulb IDs/names/types; useful for parent app to call if trying to ensure
+ * not working with old data
+ */
+void clearButtonsCache() {
+   if (enableDebug) log.debug "Running clearButtonsCache..."
+   state.remove('allButtons')
 }
 
 // ------------ HUE LABS SENSORS ------------

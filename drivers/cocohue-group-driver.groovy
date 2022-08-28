@@ -14,10 +14,9 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2022-06-04
+ *  Last modified: 2022-01-02
  *
  *  Changelog:
- *  v4.0.2  - Fix to avoid unepected "off" transition time
  *  v4.0    - Add SSE support for push
  *  v3.5.2 -  setColor() fix (refactor code into library--was not previously)
  *  v3.5.1  - Refactor some code into libraries (code still precompiled before upload; should not have any visible changes)
@@ -180,16 +179,11 @@ void on(Number transitionTime = null) {
 
 void off(Number transitionTime = null) {
    if (enableDebug == true) log.debug "off()"
-   Map bridgeCmd
-   Integer scaledRate = transitionTime != null ? Math.round(transitionTime * 10).toInteger() : null
-   if (scaledRate == null) {
-      bridgeCmd = ["on": false]
+   Map bridgeCmd = ["on": false]
+   if (transitionTime != null) {
+      scaledRate = (transitionTime * 10) as Integer
+      bridgeCmd << ["transitiontime": scaledRate]
    }
-   else {
-      bridgeCmd = ["on": false, "transitiontime": scaledRate]
-   }
-   // Shouldn't need to do (on() would clear and should have been turned on in meantime), but some users may want to:
-   //clearPrestagedCommands()
    sendBridgeCommand(bridgeCmd)
 }
 
