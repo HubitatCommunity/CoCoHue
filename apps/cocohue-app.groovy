@@ -514,7 +514,7 @@ def pageManageBridge() {
                description: "", page: "pageSelectScenes")
          href(name: "hrefSelectMotionSensors", title: "Select Motion Sensors",
                description: "", page: "pageSelectMotionSensors")
-         href(name: "hrefSelectMotionSensors", title: "Select Button Devices (experimental)",
+         href(name: "hrefSelectButtons", title: "Select Button Devices (experimental)",
                description: "", page: "pageSelectButtons")
          href(name: "hrefSelectLabsActivators", title: "Select Hue Labs Activators",
                description: "", page: "pageSelectLabsActivators")

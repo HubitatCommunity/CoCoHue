@@ -1,7 +1,7 @@
 /*
  * =============================  CoCoHue Button (Driver) ===============================
  *
- *  Copyright 22022 Robert Morris
+ *  Copyright 2022 Robert Morris
  * 
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2022-08-28
+ *  Last modified: 2022-08-29
  * 
  *  Changelog:
+ *  v4.1.1   - Improved button event parsing
  *  v4.1     - Initial release (with CoCoHue app/bridge 4.1)
  */
 
@@ -34,7 +35,7 @@ metadata {
       capability "PushableButton"
       capability "HoldableButton"
       capability "ReleasableButton"
-      capability "Configuration"
+      //capability "Configuration"
    }
 
    preferences {
@@ -61,10 +62,12 @@ void initialize() {
    }
 }
 
+/*
 void configure() {
    log.debug "configure()"
    // nothing? remove capability if not needed...
 }
+*/
 
 // Probably won't happen but...
 void parse(String description) {
@@ -73,8 +76,8 @@ void parse(String description) {
 
 /**
  * Parses Hue Bridge scene ID number out of Hubitat DNI for use with Hue API calls
- * Hubitat DNI is created in format "CCH/BridgeMACAbbrev/Scenes/HueSceneID", so just
- * looks for number after third "/" character
+ * Hubitat DNI is created in format "CCH/AppId/Button/v2ApiId", so just
+ * looks for string after third "/" character
  */
 String getHueDeviceNumber() {
    return device.deviceNetworkId.split("/")[3]
@@ -121,9 +124,12 @@ void release(Number btnNum) {
 void createEventsFromSSE(Map data) {
    if (enableDebug == true) log.debug "createEventsFromSSE($data)"
    String eventName
-   Integer eventValue
+   Integer eventValue = state.buttons.find({ it.key == data.id})?.value ?: 1
    if (data.type == "button") {
       switch (data.button.last_event) {
+         case "initial_press":
+            eventName = "pushed"
+            break
          case "repeat":
             // prevent sending repeated "held" events
             if (state.lastHueEvent != "repeat") eventName = "held"
@@ -133,11 +139,14 @@ void createEventsFromSSE(Map data) {
             eventName = "released"
             break
          default:
-            eventName = "pushed"
+            if (enableDebug == true) log.debug "No button event created from: ${data.button.last_event}"
+            break
       }
       state.lastHueEvent = data.button.last_event
-      eventValue = state.buttons.find({ it.key == data.id})?.value ?: 1
       if (eventName != null) doSendEvent(eventName, eventValue, null, true)
+   }
+   else if  (data.type == "relative_rotary") {
+      if (enableDebug) log.debug "ignoring relative_rotary, likely from Hue Tap Dial or Lutron Aurora; support may be added for these events in the future"
    }
    else {
       if (enableDebug) log.debug "ignoring; data.type = ${data.type}"
