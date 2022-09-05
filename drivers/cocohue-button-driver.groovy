@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2022-08-29
+ *  Last modified: 2022-09-04
  * 
  *  Changelog:
+ *  v4.1.2   - Add relative_rotary support (Hue Tap Dial, etc.)
  *  v4.1.1   - Improved button event parsing
  *  v4.1     - Initial release (with CoCoHue app/bridge 4.1)
  */
@@ -124,8 +125,8 @@ void release(Number btnNum) {
 void createEventsFromSSE(Map data) {
    if (enableDebug == true) log.debug "createEventsFromSSE($data)"
    String eventName
-   Integer eventValue = state.buttons.find({ it.key == data.id})?.value ?: 1
    if (data.type == "button") {
+      Integer eventValue = state.buttons.find({ it.key == data.id})?.value ?: 1
       switch (data.button.last_event) {
          case "initial_press":
             eventName = "pushed"
@@ -146,7 +147,23 @@ void createEventsFromSSE(Map data) {
       if (eventName != null) doSendEvent(eventName, eventValue, null, true)
    }
    else if  (data.type == "relative_rotary") {
-      if (enableDebug) log.debug "ignoring relative_rotary, likely from Hue Tap Dial or Lutron Aurora; support may be added for these events in the future"
+      Integer eventValue = state.relative_rotary.indexOf(data.id) + state.buttons.size() + 1
+      // using counterclockwise = index+1, clockwise = index+2 for rotary devices
+      if (data.relative_rotary.last_event.rotation.direction == "clock_wise") eventValue++
+      switch (data.relative_rotary.last_event.action) {
+         case "start":
+            eventName = "pushed"
+            break
+         case "repeat":
+            // prevent sending repeated "held" events
+            if (state.lastHueEvent != "repeat") eventName = "held"
+            else eventName = null
+            break
+         default:
+            break
+      }
+      state.lastHueEvent = data.relative_rotary.last_event.action
+      if (eventName != null) doSendEvent(eventName, eventValue, null, true)
    }
    else {
       if (enableDebug) log.debug "ignoring; data.type = ${data.type}"
@@ -155,12 +172,16 @@ void createEventsFromSSE(Map data) {
 
 /**
  * Sets state.button to IDs a Map in format [subButtonId: buttonNumber], used to determine
- * which button number to use for events when it is believed to be one this device "owns"
-*/
-void setButtons(Map<String,Integer> buttons) {
-   if (enableDebug) log.debug "setButtons($buttons)"
+ * which button number to use for events when it is believed to be one this device "owns". Also
+ * accepts List of relative_rotary IDs, optional (will be used as additional button numbers)
+ */
+void setButtons(Map<String,Integer> buttons, List<String> relativeRotaries=null) {
+   if (enableDebug) log.debug "setButtons($buttons, $relativeRotaries)"
    state.buttons = buttons
-   doSendEvent("numberOfButtons", buttons.keySet().size())
+   if (relativeRotaries) state.relative_rotary = relativeRotaries
+   Integer numButtons = buttons.keySet().size()
+   if (relativeRotaries) numButtons += relativeRotaries.size() * 2 // x2 because clockwise + counterclockwise as separate numbers
+   doSendEvent("numberOfButtons", numButtons)
 }
 
 // ~~~~~ start include (8) RMoRobert.CoCoHue_Common_Lib ~~~~~

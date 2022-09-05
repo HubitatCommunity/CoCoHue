@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2022-08-28
+ *  Last modified: 2022-09-04
  * 
  *  Changelog:
+ *  v4.1.2 - Additional button enhancements (relative_rotary -- Hue Tap Dial, etc.)
  *  v4.1    - Add button device support (with v2 API only)
  *  v4.0.2  - Fix to avoid unepected "off" transition time
  *  v4.0.1  - Fix for "on" state of "All Hue Lights" group (if used)
@@ -582,7 +583,7 @@ private void parseGetAllButtonsResponse(resp, data) {
             path: "/clip/v2/resource/button",
             headers: ["hue-application-key": bridgeData.username],
             contentType: "application/json",
-            timeout: 15,
+            timeout: 10,
             ignoreSSLIssues: true
          ]
          httpGet(params,
@@ -591,6 +592,31 @@ private void parseGetAllButtonsResponse(resp, data) {
                      if (buttons[it.owner.rid] == null) buttons[it.owner.rid] = [buttons: [:]]
                      buttons[it.owner.rid].buttons << [(it.id): it.metadata.control_id]
                      
+                  }
+            }
+         )
+         // Check for relative_rotary, too (Hue Tap Dial, Lutron Aurora)
+         params = [
+            uri: "https://${bridgeData.ip}",
+            path: "/clip/v2/resource/relative_rotary",
+            headers: ["hue-application-key": bridgeData.username],
+            contentType: "application/json",
+            timeout: 10,
+            ignoreSSLIssues: true
+         ]
+         httpGet(params,
+            { response ->
+                  response.data.data.each {
+                     if (buttons[it.owner.rid] != null) {
+                        if (buttons[it.owner.rid].relative_rotary == null) {
+                           buttons[it.owner.rid] << [relative_rotary: []]
+                        }
+                        log.trace "-> ${buttons[it.owner.rid]}"
+                        buttons[it.owner.rid].relative_rotary << it.id
+                     }
+                     else {
+                        // probably won't happen, but skip if no associated button
+                     }
                   }
             }
          )
@@ -608,6 +634,7 @@ private void parseGetAllButtonsResponse(resp, data) {
             log.warn "No data in returned JSON: $data"
          }
          state.allButtons = buttons
+         state.allRelativeRotaries = relativeRotaries
          if (enableDebug) log.debug "  All buttons received from Bridge: $buttons"
       }
       catch (Exception ex) {

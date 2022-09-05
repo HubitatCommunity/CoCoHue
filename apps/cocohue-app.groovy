@@ -21,9 +21,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2022-08-28
+ *  Last modified: 2022-09-04
  * 
  *  Changelog:
+ *  v4.1.2 - Additional button enhancements (relative_rotary -- Hue Tap Dial, etc.)
  *  v4.1   - Add support for button devices (with v2 API only)
  *  v4.0.3 - Immediately disconnect eventstream when option un-selected (and saved)
  *  v4.0.2 - Fix for error when adding new sensors
@@ -1174,7 +1175,7 @@ void createNewSelectedButtonDevices() {
             if (d) {
                d.updateDataValue("manufacturer_name", b.manufacturer_name)
                d.updateDataValue("model_id", b.model_id)
-               d.setButtons(b.buttons)
+               d.setButtons(b.buttons, b.relative_rotary)
             }
          } catch (Exception ex) {
             log.error("Unable to create new device for $it: $ex")
