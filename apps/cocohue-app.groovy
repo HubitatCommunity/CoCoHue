@@ -1587,6 +1587,7 @@ void appButtonHandler(btn) {
       case "btnSceneRefresh":
       case "btnSensorRefresh":
       case "btnLabsRefresh":
+      case "btnButtonRefresh":
          // Just want to resubmit page, so nothing
          break
       case "btnDiscoBridgeRefresh":
