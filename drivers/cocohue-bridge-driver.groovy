@@ -17,7 +17,8 @@
  *  Last modified: 2022-09-04
  * 
  *  Changelog:
- *  v4.1.2 - Additional button enhancements (relative_rotary -- Hue Tap Dial, etc.)
+ *  v4.1.3  - Add EventStream support for events with multiple device  `id` updated simultaneously
+ *  v4.1.2  - Additional button enhancements (relative_rotary -- Hue Tap Dial, etc.)
  *  v4.1    - Add button device support (with v2 API only)
  *  v4.0.2  - Fix to avoid unepected "off" transition time
  *  v4.0.1  - Fix for "on" state of "All Hue Lights" group (if used)
