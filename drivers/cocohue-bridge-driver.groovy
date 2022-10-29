@@ -171,45 +171,53 @@ void parse(String description) {
       }
       if (sbData) {
          List dataList = new JsonSlurper().parseText(sbData.toString())
-         dataList.each {
-            //log.trace "--> DATA = ${it.data[0]}"
-            String fullId = it.type == "update" ? it.data?.id_v1[0] : null
-            if (fullId != null) {
-               switch (fullId) {
-                  case { it.startsWith("/lights/") }:
-                     String hueId = fullId.split("/")[-1]
-                     DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Light/${hueId}")
-                     if (dev != null) dev.createEventsFromSSE(it.data[0])
-                     break
-                  case { it.startsWith("/groups/") }:
-                     String hueId = fullId.split("/")[-1]
-                     DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Group/${hueId}")
-                     if (dev != null) dev.createEventsFromSSE(it.data[0])
-                     break
-                     break
-                  case { it.startsWith("/sensors/") }:
-                     String hueId = fullId.split("/")[-1]
-                     DeviceWrapper dev = parent.getChildDevices().find { DeviceWrapper dev ->
-                        hueId in dev.deviceNetworkId.tokenize('/')[-1].tokenize('|') &&
-                        dev.deviceNetworkId.startsWith("${device.deviceNetworkId}/Sensor/")  // shouldn't be necessary but gave me a Light ID once in testing for a sensor, so?!
+         dataList.each {dataEntryMap ->
+            // log.trace "--> DATA = ${dataEntryMap.data}"
+            if (dataEntryMap.type == "update") {
+               dataEntryMap.data?.each {updateEntryMap ->
+                  // log.trace "--> ID_V1 = ${updateEntryMap.id_v1}"
+                  String fullId = updateEntryMap.id_v1
+                  if (fullId != null) {
+                     switch (fullId) {
+                        case { it.startsWith("/lights/") }:
+                           String hueId = fullId.split("/")[-1]
+                           DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Light/${hueId}")
+                           if (dev != null) dev.createEventsFromSSE(updateEntryMap)
+                           break
+                        case { it.startsWith("/groups/") }:
+                           String hueId = fullId.split("/")[-1]
+                           DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Group/${hueId}")
+                           if (dev != null) dev.createEventsFromSSE(updateEntryMap)
+                           break
+                           break
+                        case { it.startsWith("/sensors/") }:
+                           String hueId = fullId.split("/")[-1]
+                           DeviceWrapper dev = parent.getChildDevices().find { DeviceWrapper dev ->
+                              hueId in dev.deviceNetworkId.tokenize('/')[-1].tokenize('|') &&
+                              dev.deviceNetworkId.startsWith("${device.deviceNetworkId}/Sensor/")  // shouldn't be necessary but gave me a Light ID once in testing for a sensor, so?!
+                           }
+                           if (dev != null) {
+                              dev.createEventsFromSSE(updateEntryMap)
+                           }
+                           else {
+                              // try button; should eventually switch to v2 for all of this...
+                              if (updateEntryMap.owner?.rid) dev = parent.getChildDevice("${device.deviceNetworkId}/Button/${updateEntryMap.owner.rid[0]}")
+                              if (dev != null) {
+                                 dev.createEventsFromSSE(updateEntryMap)
+                              }
+                           }
+                           break
+                        default:
+                           if (enableDebug) log.debug "skipping Hue v1 ID: $hueId"
                      }
-                     if (dev != null) {
-                        dev.createEventsFromSSE(it.data[0])
-                     }
-                     else {
-                        // try button; should eventually switch to v2 for all of this...
-                        if (it.data.owner?.rid) dev = parent.getChildDevice("${device.deviceNetworkId}/Button/${it.data.owner.rid[0]}")
-                        if (dev != null) {
-                           dev.createEventsFromSSE(it.data[0])
-                        }
-                     }
-                     break
-                  default:
-                     if (enableDebug) log.debug "skipping Hue v1 ID: $hueId"
+                  }
+                  else {
+                     if (enableDebug) log.debug "skip: $updateEntryMap"
+                  }
                }
             }
             else {
-               if (enableDebug) log.debug "skip: $it"
+               if (enableDebug) log.debug "skip: $dataEntryMap"
             }
          }
       }
