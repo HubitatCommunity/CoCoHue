@@ -1,7 +1,7 @@
 /**
  * =============================  CoCoHue Bridge (Driver) ===============================
  *
- *  Copyright 2019-2022 Robert Morris
+ *  Copyright 2019-2023 Robert Morris
  * 
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
@@ -14,10 +14,11 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2022-09-04
+ *  Last modified: 2023-01-06
  * 
  *  Changelog:
- *  v4.1.2 - Additional button enhancements (relative_rotary -- Hue Tap Dial, etc.)
+ *  v4.1.3  - Improved eventstream data handling (when multiple devices included in same payload, thanks to @Modem-Tones)
+ *  v4.1.2  - Additional button enhancements (relative_rotary -- Hue Tap Dial, etc.)
  *  v4.1    - Add button device support (with v2 API only)
  *  v4.0.2  - Fix to avoid unepected "off" transition time
  *  v4.0.1  - Fix for "on" state of "All Hue Lights" group (if used)
@@ -171,41 +172,46 @@ void parse(String description) {
       }
       if (sbData) {
          List dataList = new JsonSlurper().parseText(sbData.toString())
-         dataList.each {
-            //log.trace "--> DATA = ${it.data[0]}"
-            String fullId = it.type == "update" ? it.data?.id_v1[0] : null
-            if (fullId != null) {
-               switch (fullId) {
-                  case { it.startsWith("/lights/") }:
-                     String hueId = fullId.split("/")[-1]
-                     DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Light/${hueId}")
-                     if (dev != null) dev.createEventsFromSSE(it.data[0])
-                     break
-                  case { it.startsWith("/groups/") }:
-                     String hueId = fullId.split("/")[-1]
-                     DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Group/${hueId}")
-                     if (dev != null) dev.createEventsFromSSE(it.data[0])
-                     break
-                     break
-                  case { it.startsWith("/sensors/") }:
-                     String hueId = fullId.split("/")[-1]
-                     DeviceWrapper dev = parent.getChildDevices().find { DeviceWrapper dev ->
-                        hueId in dev.deviceNetworkId.tokenize('/')[-1].tokenize('|') &&
-                        dev.deviceNetworkId.startsWith("${device.deviceNetworkId}/Sensor/")  // shouldn't be necessary but gave me a Light ID once in testing for a sensor, so?!
-                     }
-                     if (dev != null) {
-                        dev.createEventsFromSSE(it.data[0])
-                     }
-                     else {
-                        // try button; should eventually switch to v2 for all of this...
-                        if (it.data.owner?.rid) dev = parent.getChildDevice("${device.deviceNetworkId}/Button/${it.data.owner.rid[0]}")
-                        if (dev != null) {
-                           dev.createEventsFromSSE(it.data[0])
+         dataList.each { dataEntryMap ->
+            //log.trace "--> DATA = ${dataEntryMap}"
+            if (dataEntryMap.type == "update") {
+               dataEntryMap.data?.each { updateEntryMap ->
+                  //log.trace "--> map = ${updateEntryMap}"
+                  String fullId = updateEntryMap.id_v1
+                  if (fullId != null) {
+                     switch (fullId) {
+                        case { it.startsWith("/lights/") }:
+                           String hueId = fullId.split("/")[-1]
+                           DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Light/${hueId}")
+                           if (dev != null) dev.createEventsFromSSE(updateEntryMap)
+                           break
+                        case { it.startsWith("/groups/") }:
+                           String hueId = fullId.split("/")[-1]
+                           DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Group/${hueId}")
+                           if (dev != null) dev.createEventsFromSSE(updateEntryMap)
+                           break
+                           break
+                        case { it.startsWith("/sensors/") }:
+                           String hueId = fullId.split("/")[-1]
+                           DeviceWrapper dev = parent.getChildDevices().find { DeviceWrapper dev ->
+                              hueId in dev.deviceNetworkId.tokenize('/')[-1].tokenize('|') &&
+                              dev.deviceNetworkId.startsWith("${device.deviceNetworkId}/Sensor/")  // shouldn't be necessary but gave me a Light ID once in testing for a sensor, so?!
+                           }
+                           if (dev != null) {
+                              dev.createEventsFromSSE(updateEntryMap)
+                           }
+                           else {
+                              // try button; should eventually switch to v2 for all of this...
+                              if (it.data.owner?.rid) dev = parent.getChildDevice("${device.deviceNetworkId}/Button/${it.data.owner.rid[0]}")
+                              if (dev != null) {
+                              dev.createEventsFromSSE(it.data[0])
+                           }
                         }
+                        break
+                        default:
+                           if (enableDebug) log.debug "skipping Hue v1 ID: $hueId"
                      }
-                     break
-                  default:
-                     if (enableDebug) log.debug "skipping Hue v1 ID: $hueId"
+                  }
                }
             }
             else {
@@ -611,7 +617,6 @@ private void parseGetAllButtonsResponse(resp, data) {
                         if (buttons[it.owner.rid].relative_rotary == null) {
                            buttons[it.owner.rid] << [relative_rotary: []]
                         }
-                        log.trace "-> ${buttons[it.owner.rid]}"
                         buttons[it.owner.rid].relative_rotary << it.id
                      }
                      else {
