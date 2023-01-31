@@ -1,7 +1,7 @@
 /**
  * ===========================  CoCoHue - Hue Bridge Integration =========================
  *
- *  Copyright 2019-2022 Robert Morris
+ *  Copyright 2019-2023 Robert Morris
  *
  *  DESCRIPTION:
  *  Community-developed Hue Bridge integration app for Hubitat, including support for lights,
