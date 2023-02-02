@@ -39,7 +39,7 @@
          "name": "CoCoHue CT Bulb",
          "namespace": "RMoRobert",
          "location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-ct-bulb-driver.groovy",
-         "version": "4.1.4",
+         "version": "4.1.5",
          "required": true
       },
       {
@@ -47,7 +47,7 @@
          "name": "CoCoHue Dimmable Bulb",
          "namespace": "RMoRobert",
          "location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-dimmable-bulb-driver.groovy",
-         "version": "4.1.4",
+         "version": "4.1.5",
          "required": true
       },
       {
@@ -63,7 +63,7 @@
          "name": "CoCoHue Group",
          "namespace": "RMoRobert",
          "location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-group-driver.groovy",
-         "version": "4.1.4",
+         "version": "4.1.5",
          "required": true
       },
       {
@@ -87,7 +87,7 @@
          "name": "CoCoHue RGBW Bulb",
          "namespace": "RMoRobert",
          "location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-rgbw-bulb-driver.groovy",
-         "version": "4.1.4",
+         "version": "4.1.5",
          "required": true
       },
       {
