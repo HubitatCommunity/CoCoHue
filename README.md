@@ -12,35 +12,52 @@ integration. It provides several advantages, including:
 
 For discussion and more information, visit the <a href="https://community.hubitat.com/t/release-cocohue-hue-bridge-integration-including-scenes/27978">Hubitat Community forum thread</a>.
 
+**NOTE:** Users upgrading to 4.x from 3.x will need to open the CoCoHue app and select **Done** once after upgrading. It is recommended to download a hub backup before upgrading (restoring this backup is the best way to downgrade, as 4.x contains breaking changes).
+
+Three installation methods are available:
+- Hubitat Package Manager (recommended if you have Hubitat Package Manager installed)
+- As a bundle (recommended for other users)
+- Manually with each app and driver file  (the most complicated option, not recommended)
+
+## To Install (Hubitat Package Manager/Automatic Method)
+
+CoCoHue is available via <a href="https://community.hubitat.com/t/beta-hubitat-package-manager/38016">Hubitat Package
+Manager</a>, a community app designed to make installing and updating community apps and drivers easier.
+
+## To Install (as Bundle)
+
+CoCoHue is also available as a "bundle," a ZIP file that can be downloaded and imported to the hub, installing
+all components without the need to manually install each app/driver.
+
+* **Bundle download link:** https://github.com/HubitatCommunity/CoCoHue/blob/master/CoCoHue-Latest-Bundle.zip
+
+To install, navigate to **Bundles** on your hub and import the downloaded file; consult
+the <a href="https://docs2.hubitat.com/en/user-interface/developer/bundles">Hubitat documentation</a>
+for more details.
+
 ## To Install (Manual Method)
 1. Back up your hub and save a local copy before proceeding.
 
-2. Install the app  from the "apps" folder in this repository into the "Apps Code" section of Hubitat: https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/apps/cocohue-app.groovy
+2. Install the app  from the "apps" folder in this repository into the **Apps Code** section of Hubitat: https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/apps/cocohue-app.groovy
     * **Important for users upgrading from 1.x:** if your installation is set up using the parent/child app strucutre (and you want to keep that installation), then
     follow these steps instead. First, update the parent app: https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/deprecated/cocohue-parent-app.groovy. Then,
     install the (child) app as above: https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/apps/cocohue-app.groovy. Finally, uncomment the
     line `parent: "RMoRobert:CoCoHue (Parent App)"` (should be around line 50-55) in the "child" app by removing the two slashes, `//`, in front of it.
 
-3. Install all necessary drivers from the "drivers" folder in this repository into the "Drivers Code" section of Hubitat. (There aren't very many, so I'd recommend just installing them all, but technically all you need is the Bridge driver plus the driver for any device types you plan to use.)
+3. Install all necessary drivers from the "drivers" folder in this repository into the **Drivers Code** section of Hubitat. (There aren't very many, so I'd recommend just installing them all, but technically all you need is the Bridge driver plus the driver for any device types you plan to use.)
     * Install the Bridge driver code: https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-bridge-driver.groovy
-    * Install the bulb, group, scene, plug, and button drivers:
+    * Install the bulb, group, scene, motion sensor, plug, button, etc. drivers:
       * https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-rgbw-bulb-driver.groovy
       * https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-ct-bulb-driver.groovy
       * https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-dimmable-bulb-driver.groovy
       * https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-plug-driver.groovy
       * https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-group-driver.groovy
+      * https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-motion-sensor-driver.groovy
       * https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-scene-driver.groovy
       * https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-generic-status-driver.groovy
       * https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-button-driver.groovy
       
 4. Install an instance of app: go to **Apps > Add User App**, choose **CoCoHue**, and follow the prompts.
-
-## To Install (Hubitat Package Manager/Automatic Method)
-
-CoCoHue is also available on <a href="https://community.hubitat.com/t/beta-hubitat-package-manager/38016">Hubitat Package
-Manager</a>, a community app designed to make installing and updating community apps and drivers easier.
-
-**NOTE:** Users upgrading to 4.x from 3.x will need to open the CoCoHue app and select **Done** once after upgrading. It is recommended to download a hub backup before upgrading (restoring this backup is the best way to downgrade, as 4.x contains breaking changes). Users upgrading from 1.x will need to pay attention to the parent app note above.
 
 ## Feature Documentation
 CoCoHue is designed to be a replacement (although it can also be used as as supplement) for Hubitat's existing Hue integration. If any devices behave differently, this
@@ -78,13 +95,13 @@ the standard Hubitat capability as it is currently documented. Setting a color, 
 (this is consistent with the behavior of other bulbs I tested). Setting a level or saturation will *not* because Hue allows adjustment
 of these while the effect (which does not manipulate these values) is in progress.
 
-6. Prestaging: the new standard "LevelPreset" capability and its required command, `presetLevel()`, are implemented in all bulb/group
-drivers. While not (yet?) standard, analagous custom commands are implemented to preset color and color temperature. Previously, this
-integration used color and level prestaging *options* (rather than commands) to mimic those found in some native drivers before
-this standardization (in that case, if a `setLevel` [for level prestaging] or a `setColorTemperature`, `setColor`, `setHue`, or `setSaturation` command
-are received when the bulb is off, it will not turn on; instead, the next time the bulb is turned on, it will be turned on with those settings.) These
+6. Prestaging: the `presetLevel()` command is implemented in all bulb/group
+drivers. Analagous custom commands are implemented to preset color and color temperature. (Previously, this
+integration used color and level prestaging *options*, rather than commands, to mimic those found in some native drivers before
+these commands were introduced; in that case, if a `setLevel` [for level prestaging] or a `setColorTemperature`, `setColor`, `setHue`, or `setSaturation` command
+are received when the bulb is off, it will not turn on; instead, the next time the bulb is turned on, it will be turned on with those settings. These
 options are still available if you have already enabled them, but they are not available for new installs, and it is recommended that you transition
-away from them, as once this is all standardized, it is possible they will be removoed. Regarding prestaging in general,
+away from them, as it is possible they will be removoed.) Regarding prestaging in general,
 this works well if your bulbs are manipulated entirely from Hubitat. Unfortunately, Hue itself does not support prestaging on the Bridge (these prestaged settings are "remembered"
 entirely on the Hubitat device), so this will *not* work if you prestage in Hubitat and then turn the bulbs on outside of Hubitat. For
 this reason, the drivers label these options "pseudo-prestaging." (Recommendation: manipulate bulbs only from Hubitat if prestaging is enabled.)
