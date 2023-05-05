@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2023-02-01
+ *  Last modified: 2023-05-03
  * 
  *  Changelog:
+ *  v4.1.6  - setEffect() parameter fix
  *  v4.1.5  - Improved v2 brightness parsing
  *  v4.0    - Add SSE support for push
  *  v3.5.2 -  setColor() fix (refactor code into library--was not previously)
@@ -1061,7 +1062,7 @@ void flashOff() { // library marker RMoRobert.CoCoHue_Flash_Lib, line 26
 // ~~~~~ end include (5) RMoRobert.CoCoHue_Flash_Lib ~~~~~
 
 // ~~~~~ start include (4) RMoRobert.CoCoHue_Effect_Lib ~~~~~
-// Version 1.0.0 // library marker RMoRobert.CoCoHue_Effect_Lib, line 1
+// Version 1.0.1 // library marker RMoRobert.CoCoHue_Effect_Lib, line 1
 
 library ( // library marker RMoRobert.CoCoHue_Effect_Lib, line 3
    base: "driver", // library marker RMoRobert.CoCoHue_Effect_Lib, line 4
@@ -1078,7 +1079,7 @@ void setEffect(String effect) { // library marker RMoRobert.CoCoHue_Effect_Lib, 
    if (id != null) setEffect(id.key) // library marker RMoRobert.CoCoHue_Effect_Lib, line 15
 } // library marker RMoRobert.CoCoHue_Effect_Lib, line 16
 
-void setEffect(Integer id) { // library marker RMoRobert.CoCoHue_Effect_Lib, line 18
+void setEffect(Number id) { // library marker RMoRobert.CoCoHue_Effect_Lib, line 18
    if (enableDebug == true) log.debug "setEffect($id)" // library marker RMoRobert.CoCoHue_Effect_Lib, line 19
    sendBridgeCommand(["effect": (id == 1 ? "colorloop" : "none"), "on": true]) // library marker RMoRobert.CoCoHue_Effect_Lib, line 20
 } // library marker RMoRobert.CoCoHue_Effect_Lib, line 21
