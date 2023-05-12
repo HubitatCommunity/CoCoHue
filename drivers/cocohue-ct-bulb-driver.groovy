@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2023-02-01
+ *  Last modified: 2023-05-12
  * 
  *  Changelog:
+ *  v4.1.7  - Fix for unexpected Hubitat event creation when v2 API reports level of 0
  *  v4.1.5  - Improved v2 brightness parsing
  *  v4.1.4  - Improved error handling, fix missing battery for motion sensors
  *  v4.0.2  - Fix to avoid unepected "off" transition time
@@ -252,7 +253,7 @@ void createEventsFromSSE(Map data) {
             eventName = "level"
             eventValue = scaleBriFromBridge(value.brightness, "2")
             eventUnit = "%"
-            if (device.currentValue(eventName) != eventValue) {
+            if (device.currentValue(eventName) != eventValue && eventValue > 0) {
                doSendEvent(eventName, eventValue, eventUnit)
             }
             break
