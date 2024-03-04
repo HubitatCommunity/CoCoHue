@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2023-01-30
+ *  Last modified: 2024-03-02
  * 
  *  Changelog:
+ *  v4.1.5   - Improve button command compatibility
  *  v4.1.4   - Improved HTTP error handling
  *  v4.1.2   - Add relative_rotary support (Hue Tap Dial, etc.)
  *  v4.1.1   - Improved button event parsing
@@ -103,19 +104,19 @@ void parseSendCommandResponse(AsyncResponse resp, Map data) {
    }
 }
 
-void push(Number btnNum) {
+void push(btnNum) {
    if (enableDebug) log.debug "push($btnNum)"
-   doSendEvent("pushed", btnNum, null, true)
+   doSendEvent("pushed", btnNum.toInteger(), null, true)
 }
 
-void hold(Number btnNum) {
+void hold(btnNum) {
    if (enableDebug) log.debug "hold($btnNum)"
-   doSendEvent("held", btnNum, null, true)
+   doSendEvent("held", btnNum.toInteger(), null, true)
 }
 
-void release(Number btnNum) {
+void release(btnNum) {
    if (enableDebug) log.debug "release($btnNum)"
-   doSendEvent("released", btnNum, null, true)
+   doSendEvent("released", btnNum.toInteger(), null, true)
 }
 
 /**

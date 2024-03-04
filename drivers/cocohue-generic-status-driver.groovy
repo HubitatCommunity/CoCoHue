@@ -1,7 +1,7 @@
 /*
  * =============================  CoCoHue Generic Status Device (Driver) ===============================
  *
- *  Copyright 2019-2023 Robert Morris
+ *  Copyright 2019-2024 Robert Morris
  * 
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2023-01-30
+ *  Last modified: 2024-03-02
  * 
  *  Changelog:
+ *  v4.1.5  - Fix typos
  *  v4.1.4  - Improved error handling, fix missing battery for motion sensors
  *  v4.0    - Add SSE support for push
  *  v3.5.1  - Refactor some code into libraries (code still precompiled before upload; should not have any visible changes)
@@ -43,10 +44,10 @@ metadata {
    }
        
    preferences {
-      input name: "onRefresh", type: "enum", title: "Bridge refresh on activation/deacivation: when this device is activated or deactivated by a Hubitat command...",
+      input name: "onRefresh", type: "enum", title: "Bridge refresh on activation/deactivation: when this device is activated or deactivated by a Hubitat command...",
          options: [["none": "Do not refresh Bridge"],
                    ["1000": "Refresh Bridge device in 1s"],
-                   ["5000": "Refrehs Bridge device in 5s"]],
+                   ["5000": "Refresh Bridge device in 5s"]],
          defaultValue: "none"
       input name: "enableDebug", type: "bool", title: "Enable debug logging", defaultValue: true
       input name: "enableDesc", type: "bool", title: "Enable descriptionText logging", defaultValue: true

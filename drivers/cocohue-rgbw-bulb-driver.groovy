@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2023-05-12
+ *  Last modified: 2023-10-24
  * 
  *  Changelog:
+ *  v4.1.8  - Fix for division by zero for unexpected colorTemperature values
  *  v4.1.7  - Fix for unexpected Hubitat event creation when v2 API reports level of 0
  *  v4.1.6  - setEffect() parameter fix
  *  v4.1.5  - Improved v2 brightness parsing
@@ -271,8 +272,9 @@ void createEventsFromMap(Map bridgeCommandMap, Boolean isFromBridge = false, Set
          case "ct":
             eventName = "colorTemperature"
             eventValue = scaleCTFromBridge(it.value)
+            eventValue = it.value == 0 ? 0 : scaleCTFromBridge(it.value)
             eventUnit = "K"
-            if (device.currentValue(eventName) != eventValue) {
+            if (device.currentValue(eventName) != eventValue && eventValue != 0) {
                if (isFromBridge && colorMode == "hs") {
                   if (enableDebug == true) log.debug "Skipping colorTemperature event creation because light not in ct mode"
                   break
