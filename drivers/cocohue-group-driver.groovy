@@ -464,7 +464,7 @@ private void setDefaultAttributeValues() {
    Map defaultValues = [any_on: false, bri: 254, hue: 8593, sat: 121, ct: 370 ]
    createEventsFromMap(defaultValues)
 }
-// ~~~~~ start include (8) RMoRobert.CoCoHue_Common_Lib ~~~~~
+// ~~~~~ start include (2) RMoRobert.CoCoHue_Common_Lib ~~~~~
 // Version 1.0.2 // library marker RMoRobert.CoCoHue_Common_Lib, line 1
 
 // 1.0.2  - HTTP error handling tweaks // library marker RMoRobert.CoCoHue_Common_Lib, line 3
@@ -538,9 +538,9 @@ void doSendEvent(String eventName, eventValue, String eventUnit=null, Boolean fo
    } // library marker RMoRobert.CoCoHue_Common_Lib, line 71
 } // library marker RMoRobert.CoCoHue_Common_Lib, line 72
 
-// ~~~~~ end include (8) RMoRobert.CoCoHue_Common_Lib ~~~~~
+// ~~~~~ end include (2) RMoRobert.CoCoHue_Common_Lib ~~~~~
 
-// ~~~~~ start include (2) RMoRobert.CoCoHue_Bri_Lib ~~~~~
+// ~~~~~ start include (1) RMoRobert.CoCoHue_Bri_Lib ~~~~~
 // Version 1.0.3 // library marker RMoRobert.CoCoHue_Bri_Lib, line 1
 
 // 1.0.3  - levelhandling tweaks // library marker RMoRobert.CoCoHue_Bri_Lib, line 3
@@ -692,7 +692,7 @@ Integer scaleBriFromBridge(Number bridgeLevel, String apiVersion="1") { // libra
    return scaledLevel // library marker RMoRobert.CoCoHue_Bri_Lib, line 149
 } // library marker RMoRobert.CoCoHue_Bri_Lib, line 150
 
-// ~~~~~ end include (2) RMoRobert.CoCoHue_Bri_Lib ~~~~~
+// ~~~~~ end include (1) RMoRobert.CoCoHue_Bri_Lib ~~~~~
 
 // ~~~~~ start include (3) RMoRobert.CoCoHue_CT_Lib ~~~~~
 // Version 1.0.1 // library marker RMoRobert.CoCoHue_CT_Lib, line 1

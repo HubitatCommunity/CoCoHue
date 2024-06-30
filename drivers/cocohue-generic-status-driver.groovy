@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2024-03-02
+ *  Last modified: 2024-06-30
  * 
  *  Changelog:
+ *  v4.1.6  - Note Hue Labs deprecation
  *  v4.1.5  - Fix typos
  *  v4.1.4  - Improved error handling, fix missing battery for motion sensors
  *  v4.0    - Add SSE support for push
@@ -51,6 +52,7 @@ metadata {
          defaultValue: "none"
       input name: "enableDebug", type: "bool", title: "Enable debug logging", defaultValue: true
       input name: "enableDesc", type: "bool", title: "Enable descriptionText logging", defaultValue: true
+      input name: "suppressDeprecationWarning", type: "bool", title: "Suppress warning in logs about Hue Labs deprecation (see: https://www.philips-hue.com/en-us/support/article/huelabs/000003)"
    }
 }
 
@@ -98,6 +100,9 @@ void on() {
    if (settings["onRefresh"] == "1000" || settings["onRefresh"] == "5000") {
       parent.runInMillis(new Integer(settings["onRefresh"]), "refreshBridge")
    }
+   if (suppressDeprecationWarning != true) {
+      log.warn "Hue Labs is deprecated, and we suggest following Philips' advice to move to new features. See CoCoHue app for more details."
+   }
 }
 
 void off() {
@@ -105,6 +110,9 @@ void off() {
    sendBridgeCommand(["status": 0])
    if (settings["onRefresh"] == "1000" || settings["onRefresh"] == "5000") {
       parent.runInMillis(new Integer(settings["onRefresh"]), "refreshBridge")
+   }
+   if (suppressDeprecationWarning != true) {
+      log.warn "Hue Labs is deprecated, and we suggest following Philips' advice to move to new features. See CoCoHue app for more details."
    }
 }
 
@@ -195,7 +203,7 @@ private void setDefaultAttributeValues() {
    event = sendEvent(name: "switch", value: "off", isStateChange: false)
    event = sendEvent(name: "pushed", value: 1, isStateChange: false)
 }
-// ~~~~~ start include (8) RMoRobert.CoCoHue_Common_Lib ~~~~~
+// ~~~~~ start include (2) RMoRobert.CoCoHue_Common_Lib ~~~~~
 // Version 1.0.2 // library marker RMoRobert.CoCoHue_Common_Lib, line 1
 
 // 1.0.2  - HTTP error handling tweaks // library marker RMoRobert.CoCoHue_Common_Lib, line 3
@@ -269,4 +277,4 @@ void doSendEvent(String eventName, eventValue, String eventUnit=null, Boolean fo
    } // library marker RMoRobert.CoCoHue_Common_Lib, line 71
 } // library marker RMoRobert.CoCoHue_Common_Lib, line 72
 
-// ~~~~~ end include (8) RMoRobert.CoCoHue_Common_Lib ~~~~~
+// ~~~~~ end include (2) RMoRobert.CoCoHue_Common_Lib ~~~~~

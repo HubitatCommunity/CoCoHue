@@ -1,7 +1,7 @@
 /**
  * ===========================  CoCoHue - Hue Bridge Integration =========================
  *
- *  Copyright 2019-2023 Robert Morris
+ *  Copyright 2019-2024 Robert Morris
  *
  *  DESCRIPTION:
  *  Community-developed Hue Bridge integration app for Hubitat, including support for lights,
@@ -21,9 +21,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2022-09-04
+ *  Last modified: 2024-06-30
  * 
  *  Changelog:
+ *  v4.1.9 - Add note that Hue Labs features are now deprecated
  *  v4.1.2 - Additional button enhancements (relative_rotary -- Hue Tap Dial, etc.)
  *  v4.1   - Add support for button devices (with v2 API only)
  *  v4.0.3 - Immediately disconnect eventstream when option un-selected (and saved)
@@ -517,7 +518,7 @@ def pageManageBridge() {
                description: "", page: "pageSelectMotionSensors")
          href(name: "hrefSelectButtons", title: "Select Button Devices (experimental)",
                description: "", page: "pageSelectButtons")
-         href(name: "hrefSelectLabsActivators", title: "Select Hue Labs Activators",
+         href(name: "hrefSelectLabsActivators", title: "Select Hue Labs Activators (deprecated)",
                description: "", page: "pageSelectLabsActivators")
       }
       section("Advanced Options", hideable: true, hidden: true) {
@@ -995,6 +996,7 @@ def pageSelectLabsActivators() {
       }
       else {
          section("Manage Hue Labs Formula Activators") {
+            paragraph '<b>NOTE:<b> Hue Labs is deprecated as of June 2024. We suggest following advice from Philips Hue to move to new features instead. See: <a href="https://www.philips-hue.com/en-us/support/article/huelabs/000003">https://www.philips-hue.com/en-us/support/article/huelabs/000003</a><br><i>This feature may be removed from future versions of CoCoHue.</i>'
             input name: "newLabsDevs", type: "enum", title: "Select Hue Labs formula acvivators to add:",
                   multiple: true, options: arrNewLabsDevs
             input name: "boolAppendLabs", type: "bool", title: "Append \"(Hue Labs Formula)\" to Hubitat device name"
