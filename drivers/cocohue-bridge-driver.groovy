@@ -1,7 +1,7 @@
 /**
  * =============================  CoCoHue Bridge (Driver) ===============================
  *
- *  Copyright 2019-2023 Robert Morris
+ *  Copyright 2019-2024 Robert Morris
  * 
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
@@ -14,9 +14,11 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2023-01-30
+ *  Last modified: 2024-07-29
  * 
  *  Changelog:
+ *  v4.2.1  - Add scene on/off state reporting with v2 API
+ *  v4.2    - Improved eventstream reconnection logic
  *  v4.1.4  - Improved error handling, fix missing battery for motion sensors
  *  v4.1.3  - Improved eventstream data handling (when multiple devices included in same payload, thanks to @Modem-Tones)
  *  v4.1.2  - Additional button enhancements (relative_rotary -- Hue Tap Dial, etc.)
@@ -47,6 +49,8 @@ import groovy.transform.Field
 // Seems to be helpful at the moment because get spurious disconnects when SSE is working fine, shortly followed
 // by a reconnect (~6 sec for me, so 7 should cover most)
 @Field static final Integer eventStreamDisconnectGracePeriod = 8
+// For readTimeout value in eventstream connection:
+@Field static final Integer eventStreamReadTimeout = 3600
 
 @Field static final Integer debugAutoDisableMinutes = 30
 
@@ -95,12 +99,13 @@ void connectEventStream() {
    if (enableDebug) {
       log.debug "Connecting to event stream at 'https://${data.ip}/eventstream/clip/v2' with key '${data.username}'"
    }
+   interfaces.eventStream.close()
    interfaces.eventStream.connect(
       "https://${data.ip}/eventstream/clip/v2", [
       headers: ["Accept": "text/event-stream", "hue-application-key": data.username],
       rawData: true,
       pingInterval: 10,
-      readTimeout: 3600,
+      readTimeout: eventStreamReadTimeout,
       ignoreSSLIssues: true
    ])
 }
@@ -127,8 +132,11 @@ void eventStreamStatus(String message) {
    if (message.startsWith("START:")) {
       setEventStreamStatusToConnected()
    }
-   else {
+   else if (message.startsWith("STOP:")) {
       runIn(eventStreamDisconnectGracePeriod, "setEventStreamStatusToDisconnected")
+   }
+   else {
+      if (enableDebug) log.debug "Unhandled eventStreamStatus message: $message"
    }
 }
 
@@ -151,7 +159,7 @@ private void setEventStreamStatusToDisconnected() {
    else {
       state.connectionRetryTime = 5
    }
-   if (enableDebug) log.debug "reconnecting SSE in ${state.connectionRetryTime}"
+   if (enableDebug) log.debug "Reconnecting SSE in ${state.connectionRetryTime}"
    runIn(state.connectionRetryTime, "reconnectEventStream")
 }
 
@@ -179,20 +187,25 @@ void parse(String description) {
                dataEntryMap.data?.each { updateEntryMap ->
                   //log.trace "--> map = ${updateEntryMap}"
                   String fullId = updateEntryMap.id_v1
+                  String hueId
                   if (fullId != null) {
                      switch (fullId) {
                         case { it.startsWith("/lights/") }:
-                           String hueId = fullId.split("/")[-1]
+                           hueId = fullId.split("/")[-1]
                            DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Light/${hueId}")
                            if (dev != null) dev.createEventsFromSSE(updateEntryMap)
                            break
                         case { it.startsWith("/groups/") }:
-                           String hueId = fullId.split("/")[-1]
+                            hueId = fullId.split("/")[-1]
                            DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Group/${hueId}")
                            if (dev != null) dev.createEventsFromSSE(updateEntryMap)
                            break
+                        case { it.startsWith("/scenes/") }:
+                            hueId = fullId.split("/")[-1]
+                            DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Scene/${hueId}")
+                            if (dev != null) dev.createEventsFromSSE(updateEntryMap)
                         case { it.startsWith("/sensors/") }:
-                           String hueId = fullId.split("/")[-1]
+                           hueId = fullId.split("/")[-1]
                            DeviceWrapper dev = parent.getChildDevices().find { DeviceWrapper dev ->
                               hueId in dev.deviceNetworkId.tokenize('/')[-1].tokenize('|') &&
                               dev.deviceNetworkId.startsWith("${device.deviceNetworkId}/Sensor/")  // shouldn't be necessary but gave me a Light ID once in testing for a sensor, so?!
@@ -209,7 +222,7 @@ void parse(String description) {
                            }
                            break
                         default:
-                           if (enableDebug) log.debug "skipping Hue v1 ID: $hueId"
+                           if (enableDebug) log.debug "skipping Hue v1 ID: $fullId"
                      }
                   }
                }
@@ -743,7 +756,7 @@ void clearLabsSensorsCache() {
    if (enableDebug) log.debug "Running clearLabsSensorsCache..."
    state.remove("labsSensors")
 }
-// ~~~~~ start include (2) RMoRobert.CoCoHue_Common_Lib ~~~~~
+// ~~~~~ start include (8) RMoRobert.CoCoHue_Common_Lib ~~~~~
 // Version 1.0.2 // library marker RMoRobert.CoCoHue_Common_Lib, line 1
 
 // 1.0.2  - HTTP error handling tweaks // library marker RMoRobert.CoCoHue_Common_Lib, line 3
@@ -817,4 +830,4 @@ void doSendEvent(String eventName, eventValue, String eventUnit=null, Boolean fo
    } // library marker RMoRobert.CoCoHue_Common_Lib, line 71
 } // library marker RMoRobert.CoCoHue_Common_Lib, line 72
 
-// ~~~~~ end include (2) RMoRobert.CoCoHue_Common_Lib ~~~~~
+// ~~~~~ end include (8) RMoRobert.CoCoHue_Common_Lib ~~~~~

@@ -1,7 +1,7 @@
 /*
  * =============================  CoCoHue Button (Driver) ===============================
  *
- *  Copyright 2022-2023 Robert Morris
+ *  Copyright 2022-2024 Robert Morris
  * 
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
@@ -13,10 +13,11 @@
  *  for the specific language governing permissions and limitations under the License.
  *
  * =======================================================================================
- *
- *  Last modified: 2024-03-02
+
+ *  Last modified: 2024-07-29
  * 
  *  Changelog:
+ *  v4.2    -  Library updates, prep for more v2 API
  *  v4.1.5   - Improve button command compatibility
  *  v4.1.4   - Improved HTTP error handling
  *  v4.1.2   - Add relative_rotary support (Hue Tap Dial, etc.)
@@ -141,6 +142,9 @@ void createEventsFromSSE(Map data) {
          case "long_release":
             eventName = "released"
             break
+         case "id_v1":
+            if (state.id_v1 != value) state.id_v1 = value
+            break
          default:
             if (enableDebug == true) log.debug "No button event created from: ${data.button.last_event}"
             break
@@ -186,7 +190,7 @@ void setButtons(Map<String,Integer> buttons, List<String> relativeRotaries=null)
    doSendEvent("numberOfButtons", numButtons)
 }
 
-// ~~~~~ start include (2) RMoRobert.CoCoHue_Common_Lib ~~~~~
+// ~~~~~ start include (8) RMoRobert.CoCoHue_Common_Lib ~~~~~
 // Version 1.0.2 // library marker RMoRobert.CoCoHue_Common_Lib, line 1
 
 // 1.0.2  - HTTP error handling tweaks // library marker RMoRobert.CoCoHue_Common_Lib, line 3
@@ -260,4 +264,4 @@ void doSendEvent(String eventName, eventValue, String eventUnit=null, Boolean fo
    } // library marker RMoRobert.CoCoHue_Common_Lib, line 71
 } // library marker RMoRobert.CoCoHue_Common_Lib, line 72
 
-// ~~~~~ end include (2) RMoRobert.CoCoHue_Common_Lib ~~~~~
+// ~~~~~ end include (8) RMoRobert.CoCoHue_Common_Lib ~~~~~

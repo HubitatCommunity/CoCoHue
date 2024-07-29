@@ -1,7 +1,7 @@
 /*
  * =============================  CoCoHue Motion Sensor (Driver) ===============================
  *
- *  Copyright 2020-2023 Robert Morris
+ *  Copyright 2020-2024 Robert Morris
  * 
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2023-01-30
+ *  Last modified: 2024-07-29
  * 
  *  Changelog:
+ *  v4.2    - Library updates, prep for more v2 API
  *  v4.1.4  - Improved error handling, fix missing battery for motion sensors
  *  v4.0    - Add SSE support for push
  *  v3.5.1  - Refactor some code into libraries (code still precompiled before upload; should not have any visible changes)
@@ -167,13 +168,16 @@ void createEventsFromSSE(Map data) {
             eventUnit = "°${location.temperatureScale}"
             if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue as BigDecimal, eventUnit)
             break
+         case "id_v1":
+            if (state.id_v1 != value) state.id_v1 = value
+            break
          default:
             if (enableDebug == true) "not handling: $key: $value"
       }
    }
 }
 
-// ~~~~~ start include (2) RMoRobert.CoCoHue_Common_Lib ~~~~~
+// ~~~~~ start include (8) RMoRobert.CoCoHue_Common_Lib ~~~~~
 // Version 1.0.2 // library marker RMoRobert.CoCoHue_Common_Lib, line 1
 
 // 1.0.2  - HTTP error handling tweaks // library marker RMoRobert.CoCoHue_Common_Lib, line 3
@@ -247,4 +251,4 @@ void doSendEvent(String eventName, eventValue, String eventUnit=null, Boolean fo
    } // library marker RMoRobert.CoCoHue_Common_Lib, line 71
 } // library marker RMoRobert.CoCoHue_Common_Lib, line 72
 
-// ~~~~~ end include (2) RMoRobert.CoCoHue_Common_Lib ~~~~~
+// ~~~~~ end include (8) RMoRobert.CoCoHue_Common_Lib ~~~~~

@@ -1,7 +1,7 @@
 /*
  * =============================  CoCoHue CT Bulb (Driver) ===============================
  *
- *  Copyright 2019-2023 Robert Morris
+ *  Copyright 2019-2024 Robert Morris
  * 
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2023-10-24
+ *  Last modified: 2024-07-29
  * 
  *  Changelog:
+ *  v4.2    - Library updates, prep for more v2 API
  *  v4.1.8  - Fix for division by zero for unexpected colorTemperature values
  *  v4.1.7  - Fix for unexpected Hubitat event creation when v2 API reports level of 0
  *  v4.1.5  - Improved v2 brightness parsing
@@ -269,6 +270,9 @@ void createEventsFromSSE(Map data) {
             if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue, eventUnit)
             setGenericTempName(eventValue)
             break
+         case "id_v1":
+            if (state.id_v1 != value) state.id_v1 = value
+            break
          default:
             if (enableDebug == true) "not handling: $key: $value"
       }
@@ -318,7 +322,7 @@ void parseSendCommandResponse(AsyncResponse resp, Map data) {
       if (enableDebug == true) log.debug "  Not creating events from map because not specified to do or Bridge response invalid"
    }
 }
-// ~~~~~ start include (2) RMoRobert.CoCoHue_Common_Lib ~~~~~
+// ~~~~~ start include (8) RMoRobert.CoCoHue_Common_Lib ~~~~~
 // Version 1.0.2 // library marker RMoRobert.CoCoHue_Common_Lib, line 1
 
 // 1.0.2  - HTTP error handling tweaks // library marker RMoRobert.CoCoHue_Common_Lib, line 3
@@ -392,161 +396,170 @@ void doSendEvent(String eventName, eventValue, String eventUnit=null, Boolean fo
    } // library marker RMoRobert.CoCoHue_Common_Lib, line 71
 } // library marker RMoRobert.CoCoHue_Common_Lib, line 72
 
-// ~~~~~ end include (2) RMoRobert.CoCoHue_Common_Lib ~~~~~
+// ~~~~~ end include (8) RMoRobert.CoCoHue_Common_Lib ~~~~~
 
-// ~~~~~ start include (1) RMoRobert.CoCoHue_Bri_Lib ~~~~~
-// Version 1.0.3 // library marker RMoRobert.CoCoHue_Bri_Lib, line 1
+// ~~~~~ start include (2) RMoRobert.CoCoHue_Bri_Lib ~~~~~
+// Version 1.0.4 // library marker RMoRobert.CoCoHue_Bri_Lib, line 1
 
-// 1.0.3  - levelhandling tweaks // library marker RMoRobert.CoCoHue_Bri_Lib, line 3
+// 1.0.4  - accept String for setLevel() level also  // library marker RMoRobert.CoCoHue_Bri_Lib, line 3
+// 1.0.3  - levelhandling tweaks // library marker RMoRobert.CoCoHue_Bri_Lib, line 4
 
-library ( // library marker RMoRobert.CoCoHue_Bri_Lib, line 5
-   base: "driver", // library marker RMoRobert.CoCoHue_Bri_Lib, line 6
-   author: "RMoRobert", // library marker RMoRobert.CoCoHue_Bri_Lib, line 7
-   category: "Convenience", // library marker RMoRobert.CoCoHue_Bri_Lib, line 8
-   description: "For internal CoCoHue use only. Not intended for external use. Contains brightness/level-related code shared by many CoCoHue drivers.", // library marker RMoRobert.CoCoHue_Bri_Lib, line 9
-   name: "CoCoHue_Bri_Lib", // library marker RMoRobert.CoCoHue_Bri_Lib, line 10
-   namespace: "RMoRobert" // library marker RMoRobert.CoCoHue_Bri_Lib, line 11
-) // library marker RMoRobert.CoCoHue_Bri_Lib, line 12
+library ( // library marker RMoRobert.CoCoHue_Bri_Lib, line 6
+   base: "driver", // library marker RMoRobert.CoCoHue_Bri_Lib, line 7
+   author: "RMoRobert", // library marker RMoRobert.CoCoHue_Bri_Lib, line 8
+   category: "Convenience", // library marker RMoRobert.CoCoHue_Bri_Lib, line 9
+   description: "For internal CoCoHue use only. Not intended for external use. Contains brightness/level-related code shared by many CoCoHue drivers.", // library marker RMoRobert.CoCoHue_Bri_Lib, line 10
+   name: "CoCoHue_Bri_Lib", // library marker RMoRobert.CoCoHue_Bri_Lib, line 11
+   namespace: "RMoRobert" // library marker RMoRobert.CoCoHue_Bri_Lib, line 12
+) // library marker RMoRobert.CoCoHue_Bri_Lib, line 13
 
-// "SwitchLevel" commands: // library marker RMoRobert.CoCoHue_Bri_Lib, line 14
+// "SwitchLevel" commands: // library marker RMoRobert.CoCoHue_Bri_Lib, line 15
 
-void startLevelChange(direction) { // library marker RMoRobert.CoCoHue_Bri_Lib, line 16
-   if (enableDebug == true) log.debug "startLevelChange($direction)..." // library marker RMoRobert.CoCoHue_Bri_Lib, line 17
-   Map cmd = ["bri": (direction == "up" ? 254 : 1), // library marker RMoRobert.CoCoHue_Bri_Lib, line 18
-            "transitiontime": ((settings["levelChangeRate"] == "fast" || !settings["levelChangeRate"]) ? // library marker RMoRobert.CoCoHue_Bri_Lib, line 19
-                                 30 : (settings["levelChangeRate"] == "slow" ? 60 : 45))] // library marker RMoRobert.CoCoHue_Bri_Lib, line 20
-   sendBridgeCommand(cmd, false)  // library marker RMoRobert.CoCoHue_Bri_Lib, line 21
-} // library marker RMoRobert.CoCoHue_Bri_Lib, line 22
+void startLevelChange(String direction) { // library marker RMoRobert.CoCoHue_Bri_Lib, line 17
+   if (enableDebug == true) log.debug "startLevelChange($direction)..." // library marker RMoRobert.CoCoHue_Bri_Lib, line 18
+   Map cmd = ["bri": (direction == "up" ? 254 : 1), // library marker RMoRobert.CoCoHue_Bri_Lib, line 19
+            "transitiontime": ((settings["levelChangeRate"] == "fast" || !settings["levelChangeRate"]) ? // library marker RMoRobert.CoCoHue_Bri_Lib, line 20
+                                 30 : (settings["levelChangeRate"] == "slow" ? 60 : 45))] // library marker RMoRobert.CoCoHue_Bri_Lib, line 21
+   sendBridgeCommand(cmd, false)  // library marker RMoRobert.CoCoHue_Bri_Lib, line 22
+} // library marker RMoRobert.CoCoHue_Bri_Lib, line 23
 
-void stopLevelChange() { // library marker RMoRobert.CoCoHue_Bri_Lib, line 24
-   if (enableDebug == true) log.debug "stopLevelChange()..." // library marker RMoRobert.CoCoHue_Bri_Lib, line 25
-   Map cmd = ["bri_inc": 0] // library marker RMoRobert.CoCoHue_Bri_Lib, line 26
-   sendBridgeCommand(cmd, false)  // library marker RMoRobert.CoCoHue_Bri_Lib, line 27
-} // library marker RMoRobert.CoCoHue_Bri_Lib, line 28
+void stopLevelChange() { // library marker RMoRobert.CoCoHue_Bri_Lib, line 25
+   if (enableDebug == true) log.debug "stopLevelChange()..." // library marker RMoRobert.CoCoHue_Bri_Lib, line 26
+   Map cmd = ["bri_inc": 0] // library marker RMoRobert.CoCoHue_Bri_Lib, line 27
+   sendBridgeCommand(cmd, false)  // library marker RMoRobert.CoCoHue_Bri_Lib, line 28
+} // library marker RMoRobert.CoCoHue_Bri_Lib, line 29
 
-void setLevel(value) { // library marker RMoRobert.CoCoHue_Bri_Lib, line 30
-   if (enableDebug == true) log.debug "setLevel($value)" // library marker RMoRobert.CoCoHue_Bri_Lib, line 31
-   setLevel(value, ((transitionTime != null ? transitionTime.toFloat() : defaultLevelTransitionTime.toFloat())) / 1000) // library marker RMoRobert.CoCoHue_Bri_Lib, line 32
-} // library marker RMoRobert.CoCoHue_Bri_Lib, line 33
+void setLevel(value) { // library marker RMoRobert.CoCoHue_Bri_Lib, line 31
+   if (enableDebug == true) log.debug "setLevel($value)" // library marker RMoRobert.CoCoHue_Bri_Lib, line 32
+   setLevel(value, ((transitionTime != null ? transitionTime.toFloat() : defaultLevelTransitionTime.toFloat())) / 1000) // library marker RMoRobert.CoCoHue_Bri_Lib, line 33
+} // library marker RMoRobert.CoCoHue_Bri_Lib, line 34
 
-void setLevel(Number value, Number rate) { // library marker RMoRobert.CoCoHue_Bri_Lib, line 35
-   if (enableDebug == true) log.debug "setLevel($value, $rate)" // library marker RMoRobert.CoCoHue_Bri_Lib, line 36
-   // For backwards compatibility; will be removed in future version: // library marker RMoRobert.CoCoHue_Bri_Lib, line 37
-   if (levelStaging) { // library marker RMoRobert.CoCoHue_Bri_Lib, line 38
-      log.warn "Level prestaging preference enabled and setLevel() called. This is deprecated and may be removed in the future. Please move to new, standard presetLevel() command." // library marker RMoRobert.CoCoHue_Bri_Lib, line 39
-      if (device.currentValue("switch") != "on") { // library marker RMoRobert.CoCoHue_Bri_Lib, line 40
-         presetLevel(value) // library marker RMoRobert.CoCoHue_Bri_Lib, line 41
-         return // library marker RMoRobert.CoCoHue_Bri_Lib, line 42
-      } // library marker RMoRobert.CoCoHue_Bri_Lib, line 43
-   } // library marker RMoRobert.CoCoHue_Bri_Lib, line 44
-   if (value < 0) value = 1 // library marker RMoRobert.CoCoHue_Bri_Lib, line 45
-   else if (value > 100) value = 100 // library marker RMoRobert.CoCoHue_Bri_Lib, line 46
-   else if (value == 0) { // library marker RMoRobert.CoCoHue_Bri_Lib, line 47
-      off(rate) // library marker RMoRobert.CoCoHue_Bri_Lib, line 48
-      return // library marker RMoRobert.CoCoHue_Bri_Lib, line 49
-   } // library marker RMoRobert.CoCoHue_Bri_Lib, line 50
-   Integer newLevel = scaleBriToBridge(value) // library marker RMoRobert.CoCoHue_Bri_Lib, line 51
-   Integer scaledRate = (rate * 10).toInteger() // library marker RMoRobert.CoCoHue_Bri_Lib, line 52
-   Map bridgeCmd = [ // library marker RMoRobert.CoCoHue_Bri_Lib, line 53
-      "on": true, // library marker RMoRobert.CoCoHue_Bri_Lib, line 54
-      "bri": newLevel, // library marker RMoRobert.CoCoHue_Bri_Lib, line 55
-      "transitiontime": scaledRate // library marker RMoRobert.CoCoHue_Bri_Lib, line 56
-   ] // library marker RMoRobert.CoCoHue_Bri_Lib, line 57
-   Map prestagedCmds = getPrestagedCommands() // library marker RMoRobert.CoCoHue_Bri_Lib, line 58
-   if (prestagedCmds) { // library marker RMoRobert.CoCoHue_Bri_Lib, line 59
-      bridgeCmd = prestagedCmds + bridgeCmd // library marker RMoRobert.CoCoHue_Bri_Lib, line 60
-   } // library marker RMoRobert.CoCoHue_Bri_Lib, line 61
-   sendBridgeCommand(bridgeCmd) // library marker RMoRobert.CoCoHue_Bri_Lib, line 62
-} // library marker RMoRobert.CoCoHue_Bri_Lib, line 63
+void setLevel(Number value, Number rate) { // library marker RMoRobert.CoCoHue_Bri_Lib, line 36
+   if (enableDebug == true) log.debug "setLevel($value, $rate)" // library marker RMoRobert.CoCoHue_Bri_Lib, line 37
+   // For backwards compatibility; will be removed in future version: // library marker RMoRobert.CoCoHue_Bri_Lib, line 38
+   if (levelStaging) { // library marker RMoRobert.CoCoHue_Bri_Lib, line 39
+      log.warn "Level prestaging preference enabled and setLevel() called. This is deprecated and may be removed in the future. Please move to new, standard presetLevel() command." // library marker RMoRobert.CoCoHue_Bri_Lib, line 40
+      if (device.currentValue("switch") != "on") { // library marker RMoRobert.CoCoHue_Bri_Lib, line 41
+         presetLevel(value) // library marker RMoRobert.CoCoHue_Bri_Lib, line 42
+         return // library marker RMoRobert.CoCoHue_Bri_Lib, line 43
+      } // library marker RMoRobert.CoCoHue_Bri_Lib, line 44
+   } // library marker RMoRobert.CoCoHue_Bri_Lib, line 45
+   if (value < 0) value = 1 // library marker RMoRobert.CoCoHue_Bri_Lib, line 46
+   else if (value > 100) value = 100 // library marker RMoRobert.CoCoHue_Bri_Lib, line 47
+   else if (value == 0) { // library marker RMoRobert.CoCoHue_Bri_Lib, line 48
+      off(rate) // library marker RMoRobert.CoCoHue_Bri_Lib, line 49
+      return // library marker RMoRobert.CoCoHue_Bri_Lib, line 50
+   } // library marker RMoRobert.CoCoHue_Bri_Lib, line 51
+   Integer newLevel = scaleBriToBridge(value) // library marker RMoRobert.CoCoHue_Bri_Lib, line 52
+   Integer scaledRate = (rate * 10).toInteger() // library marker RMoRobert.CoCoHue_Bri_Lib, line 53
+   Map bridgeCmd = [ // library marker RMoRobert.CoCoHue_Bri_Lib, line 54
+      "on": true, // library marker RMoRobert.CoCoHue_Bri_Lib, line 55
+      "bri": newLevel, // library marker RMoRobert.CoCoHue_Bri_Lib, line 56
+      "transitiontime": scaledRate // library marker RMoRobert.CoCoHue_Bri_Lib, line 57
+   ] // library marker RMoRobert.CoCoHue_Bri_Lib, line 58
+   Map prestagedCmds = getPrestagedCommands() // library marker RMoRobert.CoCoHue_Bri_Lib, line 59
+   if (prestagedCmds) { // library marker RMoRobert.CoCoHue_Bri_Lib, line 60
+      bridgeCmd = prestagedCmds + bridgeCmd // library marker RMoRobert.CoCoHue_Bri_Lib, line 61
+   } // library marker RMoRobert.CoCoHue_Bri_Lib, line 62
+   sendBridgeCommand(bridgeCmd) // library marker RMoRobert.CoCoHue_Bri_Lib, line 63
+} // library marker RMoRobert.CoCoHue_Bri_Lib, line 64
 
-void presetLevel(Number level) { // library marker RMoRobert.CoCoHue_Bri_Lib, line 65
-   if (enableDebug == true) log.debug "presetLevel($level)" // library marker RMoRobert.CoCoHue_Bri_Lib, line 66
-   if (level < 0) level = 1 // library marker RMoRobert.CoCoHue_Bri_Lib, line 67
-   else if (level > 100) level = 100 // library marker RMoRobert.CoCoHue_Bri_Lib, line 68
-   Integer newLevel = scaleBriToBridge(level) // library marker RMoRobert.CoCoHue_Bri_Lib, line 69
-   Integer scaledRate = ((transitionTime != null ? transitionTime.toBigDecimal() : 1000) / 1000).toInteger() // library marker RMoRobert.CoCoHue_Bri_Lib, line 70
-   Boolean isOn = device.currentValue("switch") == "on" // library marker RMoRobert.CoCoHue_Bri_Lib, line 71
-   doSendEvent("levelPreset", level) // library marker RMoRobert.CoCoHue_Bri_Lib, line 72
-   if (isOn) { // library marker RMoRobert.CoCoHue_Bri_Lib, line 73
-      setLevel(level) // library marker RMoRobert.CoCoHue_Bri_Lib, line 74
-   } else { // library marker RMoRobert.CoCoHue_Bri_Lib, line 75
-      state.presetLevel = true // library marker RMoRobert.CoCoHue_Bri_Lib, line 76
-   } // library marker RMoRobert.CoCoHue_Bri_Lib, line 77
-} // library marker RMoRobert.CoCoHue_Bri_Lib, line 78
+void setLevel(value, rate) { // library marker RMoRobert.CoCoHue_Bri_Lib, line 66
+   if (enableDebug == true) log.debug "setLevel(Object $value, Object $rate)" // library marker RMoRobert.CoCoHue_Bri_Lib, line 67
+   Float floatLevel = Float.parseFloat(value.toString()) // library marker RMoRobert.CoCoHue_Bri_Lib, line 68
+   Integer intLevel = Math.round(floatLevel) // library marker RMoRobert.CoCoHue_Bri_Lib, line 69
+   Float floatRate = Float.parseFloat(rate.toString()) // library marker RMoRobert.CoCoHue_Bri_Lib, line 70
+   setLevel(intLevel, floatRate) // library marker RMoRobert.CoCoHue_Bri_Lib, line 71
+} // library marker RMoRobert.CoCoHue_Bri_Lib, line 72
 
-/** // library marker RMoRobert.CoCoHue_Bri_Lib, line 80
- * Reads device preference for on() transition time, or provides default if not available; device // library marker RMoRobert.CoCoHue_Bri_Lib, line 81
- * can use input(name: onTransitionTime, ...) to provide this // library marker RMoRobert.CoCoHue_Bri_Lib, line 82
- */ // library marker RMoRobert.CoCoHue_Bri_Lib, line 83
-Integer getScaledOnTransitionTime() { // library marker RMoRobert.CoCoHue_Bri_Lib, line 84
-   Integer scaledRate = null // library marker RMoRobert.CoCoHue_Bri_Lib, line 85
-   if (settings.onTransitionTime == null || settings.onTransitionTime == "-2" || settings.onTransitionTime == -2) { // library marker RMoRobert.CoCoHue_Bri_Lib, line 86
-      // keep null; will result in not specifiying with command // library marker RMoRobert.CoCoHue_Bri_Lib, line 87
-   } // library marker RMoRobert.CoCoHue_Bri_Lib, line 88
-   else { // library marker RMoRobert.CoCoHue_Bri_Lib, line 89
-      scaledRate = Math.round(settings.onTransitionTime.toFloat() / 100) // library marker RMoRobert.CoCoHue_Bri_Lib, line 90
-   } // library marker RMoRobert.CoCoHue_Bri_Lib, line 91
-   return scaledRate // library marker RMoRobert.CoCoHue_Bri_Lib, line 92
-} // library marker RMoRobert.CoCoHue_Bri_Lib, line 93
+void presetLevel(Number level) { // library marker RMoRobert.CoCoHue_Bri_Lib, line 74
+   if (enableDebug == true) log.debug "presetLevel($level)" // library marker RMoRobert.CoCoHue_Bri_Lib, line 75
+   if (level < 0) level = 1 // library marker RMoRobert.CoCoHue_Bri_Lib, line 76
+   else if (level > 100) level = 100 // library marker RMoRobert.CoCoHue_Bri_Lib, line 77
+   Integer newLevel = scaleBriToBridge(level) // library marker RMoRobert.CoCoHue_Bri_Lib, line 78
+   Integer scaledRate = ((transitionTime != null ? transitionTime.toBigDecimal() : 1000) / 1000).toInteger() // library marker RMoRobert.CoCoHue_Bri_Lib, line 79
+   Boolean isOn = device.currentValue("switch") == "on" // library marker RMoRobert.CoCoHue_Bri_Lib, line 80
+   doSendEvent("levelPreset", level) // library marker RMoRobert.CoCoHue_Bri_Lib, line 81
+   if (isOn) { // library marker RMoRobert.CoCoHue_Bri_Lib, line 82
+      setLevel(level) // library marker RMoRobert.CoCoHue_Bri_Lib, line 83
+   } else { // library marker RMoRobert.CoCoHue_Bri_Lib, line 84
+      state.presetLevel = true // library marker RMoRobert.CoCoHue_Bri_Lib, line 85
+   } // library marker RMoRobert.CoCoHue_Bri_Lib, line 86
+} // library marker RMoRobert.CoCoHue_Bri_Lib, line 87
 
-
-/** // library marker RMoRobert.CoCoHue_Bri_Lib, line 96
- * Reads device preference for off() transition time, or provides default if not available; device // library marker RMoRobert.CoCoHue_Bri_Lib, line 97
- * can use input(name: onTransitionTime, ...) to provide this // library marker RMoRobert.CoCoHue_Bri_Lib, line 98
- */ // library marker RMoRobert.CoCoHue_Bri_Lib, line 99
-Integer getScaledOffTransitionTime() { // library marker RMoRobert.CoCoHue_Bri_Lib, line 100
-   Integer scaledRate = null // library marker RMoRobert.CoCoHue_Bri_Lib, line 101
-   if (settings.offTransitionTime == null || settings.offTransitionTime == "-2" || settings.offTransitionTime == -2) { // library marker RMoRobert.CoCoHue_Bri_Lib, line 102
-      // keep null; will result in not specifiying with command // library marker RMoRobert.CoCoHue_Bri_Lib, line 103
-   } // library marker RMoRobert.CoCoHue_Bri_Lib, line 104
-   else if (settings.offTransitionTime == "-1" || settings.offTransitionTime == -1) { // library marker RMoRobert.CoCoHue_Bri_Lib, line 105
-      scaledRate = getScaledOnTransitionTime() // library marker RMoRobert.CoCoHue_Bri_Lib, line 106
-   } // library marker RMoRobert.CoCoHue_Bri_Lib, line 107
-   else { // library marker RMoRobert.CoCoHue_Bri_Lib, line 108
-      scaledRate = Math.round(settings.offTransitionTime.toFloat() / 100) // library marker RMoRobert.CoCoHue_Bri_Lib, line 109
-   } // library marker RMoRobert.CoCoHue_Bri_Lib, line 110
-   return scaledRate // library marker RMoRobert.CoCoHue_Bri_Lib, line 111
-} // library marker RMoRobert.CoCoHue_Bri_Lib, line 112
-
-// Internal methods for scaling // library marker RMoRobert.CoCoHue_Bri_Lib, line 114
+/** // library marker RMoRobert.CoCoHue_Bri_Lib, line 89
+ * Reads device preference for on() transition time, or provides default if not available; device // library marker RMoRobert.CoCoHue_Bri_Lib, line 90
+ * can use input(name: onTransitionTime, ...) to provide this // library marker RMoRobert.CoCoHue_Bri_Lib, line 91
+ */ // library marker RMoRobert.CoCoHue_Bri_Lib, line 92
+Integer getScaledOnTransitionTime() { // library marker RMoRobert.CoCoHue_Bri_Lib, line 93
+   Integer scaledRate = null // library marker RMoRobert.CoCoHue_Bri_Lib, line 94
+   if (settings.onTransitionTime == null || settings.onTransitionTime == "-2" || settings.onTransitionTime == -2) { // library marker RMoRobert.CoCoHue_Bri_Lib, line 95
+      // keep null; will result in not specifiying with command // library marker RMoRobert.CoCoHue_Bri_Lib, line 96
+   } // library marker RMoRobert.CoCoHue_Bri_Lib, line 97
+   else { // library marker RMoRobert.CoCoHue_Bri_Lib, line 98
+      scaledRate = Math.round(settings.onTransitionTime.toFloat() / 100) // library marker RMoRobert.CoCoHue_Bri_Lib, line 99
+   } // library marker RMoRobert.CoCoHue_Bri_Lib, line 100
+   return scaledRate // library marker RMoRobert.CoCoHue_Bri_Lib, line 101
+} // library marker RMoRobert.CoCoHue_Bri_Lib, line 102
 
 
-/** // library marker RMoRobert.CoCoHue_Bri_Lib, line 117
- * Scales Hubitat's 1-100 brightness levels to Hue Bridge's 1-254 (or 0-100) // library marker RMoRobert.CoCoHue_Bri_Lib, line 118
- * @param apiVersion: Use "1" (default) for classic, 1-254 API values; use "2" for v2/SSE 0.0-100.0 values (note: 0.0 is on) // library marker RMoRobert.CoCoHue_Bri_Lib, line 119
- */ // library marker RMoRobert.CoCoHue_Bri_Lib, line 120
-Number scaleBriToBridge(Number hubitatLevel, String apiVersion="1") { // library marker RMoRobert.CoCoHue_Bri_Lib, line 121
-   if (apiVersion != "2") { // library marker RMoRobert.CoCoHue_Bri_Lib, line 122
-      Integer scaledLevel // library marker RMoRobert.CoCoHue_Bri_Lib, line 123
-      scaledLevel = Math.round(hubitatLevel == 1 ? 1 : hubitatLevel.toBigDecimal() / 100 * 254) // library marker RMoRobert.CoCoHue_Bri_Lib, line 124
-      return Math.round(scaledLevel) as Integer // library marker RMoRobert.CoCoHue_Bri_Lib, line 125
-   } // library marker RMoRobert.CoCoHue_Bri_Lib, line 126
-   else { // library marker RMoRobert.CoCoHue_Bri_Lib, line 127
-      BigDecimal scaledLevel // library marker RMoRobert.CoCoHue_Bri_Lib, line 128
-      // for now, a quick cheat to make 1% the Hue minimum (should scale other values proportionally in future) // library marker RMoRobert.CoCoHue_Bri_Lib, line 129
-      scaledLevel = hubitatLevel == 1 ? 0.0 : hubitatLevel.toBigDecimal().setScale(2, java.math.RoundingMode.HALF_UP) // library marker RMoRobert.CoCoHue_Bri_Lib, line 130
-      return scaledLevel // library marker RMoRobert.CoCoHue_Bri_Lib, line 131
-   } // library marker RMoRobert.CoCoHue_Bri_Lib, line 132
-} // library marker RMoRobert.CoCoHue_Bri_Lib, line 133
+/** // library marker RMoRobert.CoCoHue_Bri_Lib, line 105
+ * Reads device preference for off() transition time, or provides default if not available; device // library marker RMoRobert.CoCoHue_Bri_Lib, line 106
+ * can use input(name: onTransitionTime, ...) to provide this // library marker RMoRobert.CoCoHue_Bri_Lib, line 107
+ */ // library marker RMoRobert.CoCoHue_Bri_Lib, line 108
+Integer getScaledOffTransitionTime() { // library marker RMoRobert.CoCoHue_Bri_Lib, line 109
+   Integer scaledRate = null // library marker RMoRobert.CoCoHue_Bri_Lib, line 110
+   if (settings.offTransitionTime == null || settings.offTransitionTime == "-2" || settings.offTransitionTime == -2) { // library marker RMoRobert.CoCoHue_Bri_Lib, line 111
+      // keep null; will result in not specifiying with command // library marker RMoRobert.CoCoHue_Bri_Lib, line 112
+   } // library marker RMoRobert.CoCoHue_Bri_Lib, line 113
+   else if (settings.offTransitionTime == "-1" || settings.offTransitionTime == -1) { // library marker RMoRobert.CoCoHue_Bri_Lib, line 114
+      scaledRate = getScaledOnTransitionTime() // library marker RMoRobert.CoCoHue_Bri_Lib, line 115
+   } // library marker RMoRobert.CoCoHue_Bri_Lib, line 116
+   else { // library marker RMoRobert.CoCoHue_Bri_Lib, line 117
+      scaledRate = Math.round(settings.offTransitionTime.toFloat() / 100) // library marker RMoRobert.CoCoHue_Bri_Lib, line 118
+   } // library marker RMoRobert.CoCoHue_Bri_Lib, line 119
+   return scaledRate // library marker RMoRobert.CoCoHue_Bri_Lib, line 120
+} // library marker RMoRobert.CoCoHue_Bri_Lib, line 121
 
-/** // library marker RMoRobert.CoCoHue_Bri_Lib, line 135
- * Scales Hue Bridge's 1-254 brightness levels to Hubitat's 1-100 (or 0-100) // library marker RMoRobert.CoCoHue_Bri_Lib, line 136
- * @param apiVersion: Use "1" (default) for classic, 1-254 API values; use "2" for v2/SSE 0.0-100.0 values (note: 0.0 is on) // library marker RMoRobert.CoCoHue_Bri_Lib, line 137
- */ // library marker RMoRobert.CoCoHue_Bri_Lib, line 138
-Integer scaleBriFromBridge(Number bridgeLevel, String apiVersion="1") { // library marker RMoRobert.CoCoHue_Bri_Lib, line 139
-   Integer scaledLevel // library marker RMoRobert.CoCoHue_Bri_Lib, line 140
-   if (apiVersion != "2") { // library marker RMoRobert.CoCoHue_Bri_Lib, line 141
-      scaledLevel = Math.round(bridgeLevel.toBigDecimal() / 254 * 100) // library marker RMoRobert.CoCoHue_Bri_Lib, line 142
-      if (scaledLevel < 1) scaledLevel = 1 // library marker RMoRobert.CoCoHue_Bri_Lib, line 143
-   } // library marker RMoRobert.CoCoHue_Bri_Lib, line 144
-   else { // library marker RMoRobert.CoCoHue_Bri_Lib, line 145
-      // for now, a quick cheat to make 1% the Hue minimum (should scale other values proportionally in future) // library marker RMoRobert.CoCoHue_Bri_Lib, line 146
-      scaledLevel = Math.round(bridgeLevel <= 1.49 && bridgeLevel > 0.001 ? 1 : bridgeLevel) // library marker RMoRobert.CoCoHue_Bri_Lib, line 147
-   } // library marker RMoRobert.CoCoHue_Bri_Lib, line 148
-   return scaledLevel // library marker RMoRobert.CoCoHue_Bri_Lib, line 149
-} // library marker RMoRobert.CoCoHue_Bri_Lib, line 150
+// Internal methods for scaling // library marker RMoRobert.CoCoHue_Bri_Lib, line 123
 
-// ~~~~~ end include (1) RMoRobert.CoCoHue_Bri_Lib ~~~~~
+
+/** // library marker RMoRobert.CoCoHue_Bri_Lib, line 126
+ * Scales Hubitat's 1-100 brightness levels to Hue Bridge's 1-254 (or 0-100) // library marker RMoRobert.CoCoHue_Bri_Lib, line 127
+ * @param apiVersion: Use "1" (default) for classic, 1-254 API values; use "2" for v2/SSE 0.0-100.0 values (note: 0.0 is on) // library marker RMoRobert.CoCoHue_Bri_Lib, line 128
+ */ // library marker RMoRobert.CoCoHue_Bri_Lib, line 129
+Number scaleBriToBridge(Number hubitatLevel, String apiVersion="1") { // library marker RMoRobert.CoCoHue_Bri_Lib, line 130
+   if (apiVersion != "2") { // library marker RMoRobert.CoCoHue_Bri_Lib, line 131
+      Integer scaledLevel // library marker RMoRobert.CoCoHue_Bri_Lib, line 132
+      scaledLevel = Math.round(hubitatLevel == 1 ? 1 : hubitatLevel.toBigDecimal() / 100 * 254) // library marker RMoRobert.CoCoHue_Bri_Lib, line 133
+      return Math.round(scaledLevel) as Integer // library marker RMoRobert.CoCoHue_Bri_Lib, line 134
+   } // library marker RMoRobert.CoCoHue_Bri_Lib, line 135
+   else { // library marker RMoRobert.CoCoHue_Bri_Lib, line 136
+      BigDecimal scaledLevel // library marker RMoRobert.CoCoHue_Bri_Lib, line 137
+      // for now, a quick cheat to make 1% the Hue minimum (should scale other values proportionally in future) // library marker RMoRobert.CoCoHue_Bri_Lib, line 138
+      scaledLevel = hubitatLevel == 1 ? 0.0 : hubitatLevel.toBigDecimal().setScale(2, java.math.RoundingMode.HALF_UP) // library marker RMoRobert.CoCoHue_Bri_Lib, line 139
+      return scaledLevel // library marker RMoRobert.CoCoHue_Bri_Lib, line 140
+   } // library marker RMoRobert.CoCoHue_Bri_Lib, line 141
+} // library marker RMoRobert.CoCoHue_Bri_Lib, line 142
+
+/** // library marker RMoRobert.CoCoHue_Bri_Lib, line 144
+ * Scales Hue Bridge's 1-254 brightness levels to Hubitat's 1-100 (or 0-100) // library marker RMoRobert.CoCoHue_Bri_Lib, line 145
+ * @param apiVersion: Use "1" (default) for classic, 1-254 API values; use "2" for v2/SSE 0.0-100.0 values (note: 0.0 is on) // library marker RMoRobert.CoCoHue_Bri_Lib, line 146
+ */ // library marker RMoRobert.CoCoHue_Bri_Lib, line 147
+Integer scaleBriFromBridge(Number bridgeLevel, String apiVersion="1") { // library marker RMoRobert.CoCoHue_Bri_Lib, line 148
+   Integer scaledLevel // library marker RMoRobert.CoCoHue_Bri_Lib, line 149
+   if (apiVersion != "2") { // library marker RMoRobert.CoCoHue_Bri_Lib, line 150
+      scaledLevel = Math.round(bridgeLevel.toBigDecimal() / 254 * 100) // library marker RMoRobert.CoCoHue_Bri_Lib, line 151
+      if (scaledLevel < 1) scaledLevel = 1 // library marker RMoRobert.CoCoHue_Bri_Lib, line 152
+   } // library marker RMoRobert.CoCoHue_Bri_Lib, line 153
+   else { // library marker RMoRobert.CoCoHue_Bri_Lib, line 154
+      // for now, a quick cheat to make 1% the Hue minimum (should scale other values proportionally in future) // library marker RMoRobert.CoCoHue_Bri_Lib, line 155
+      scaledLevel = Math.round(bridgeLevel <= 1.49 && bridgeLevel > 0.001 ? 1 : bridgeLevel) // library marker RMoRobert.CoCoHue_Bri_Lib, line 156
+   } // library marker RMoRobert.CoCoHue_Bri_Lib, line 157
+   return scaledLevel // library marker RMoRobert.CoCoHue_Bri_Lib, line 158
+} // library marker RMoRobert.CoCoHue_Bri_Lib, line 159
+
+// ~~~~~ end include (2) RMoRobert.CoCoHue_Bri_Lib ~~~~~
 
 // ~~~~~ start include (3) RMoRobert.CoCoHue_CT_Lib ~~~~~
 // Version 1.0.1 // library marker RMoRobert.CoCoHue_CT_Lib, line 1

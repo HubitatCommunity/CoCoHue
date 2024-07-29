@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2024-03-03
+ *  Last modified: 2024-07-28
  * 
  *  Changelog:
+ *  v4.2    - Add support for parsing on/off events from v2 API state; library improvements; prep for mre v2 API use
  *  v4.1.5  - Fix typos
  *  v4.1.4  - Improved error handling, fix missing battery for motion sensors
  *  v4.0    - Refactoring to match other CoCoHue drivers
@@ -186,6 +187,34 @@ void off() {
    }
 }
 
+/**
+ * Iterates over Hue scene state state data in Hue API v2 (SSE) format and does
+ * a sendEvent for each relevant attribute; intended to be called when EventSocket data
+ * received for device (as an alternative to polling)
+ */
+void createEventsFromSSE(Map data) {
+   if (enableDebug == true) log.debug "createEventsFromSSE($data)"
+   String eventName, eventUnit, descriptionText
+   def eventValue // could be String or number
+   Boolean hasCT = data.color_temperature?.mirek != null
+   data.each { String key, value ->
+      //log.trace "$key = $value"
+      switch (key) {
+         case "status":
+            eventName = "switch"
+            eventValue = (value.active == "inactive" || value.active == null) ? "off" : "on"
+            eventUnit = null
+            if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue, eventUnit)
+            break
+         case "id_v1":
+            if (state.id_v1 != value) state.id_v1 = value
+            break
+         default:
+            if (enableDebug == true) "not handling: $key: $value"
+      }
+   }
+}
+
 /** 
   * Parses response from Bridge (or not) after sendBridgeCommand. Updates device state if
   * appears to have been successful.
@@ -288,7 +317,7 @@ void autoOffHandler() {
 String getGroupID() {
    return state.group
 }
-// ~~~~~ start include (2) RMoRobert.CoCoHue_Common_Lib ~~~~~
+// ~~~~~ start include (8) RMoRobert.CoCoHue_Common_Lib ~~~~~
 // Version 1.0.2 // library marker RMoRobert.CoCoHue_Common_Lib, line 1
 
 // 1.0.2  - HTTP error handling tweaks // library marker RMoRobert.CoCoHue_Common_Lib, line 3
@@ -362,4 +391,4 @@ void doSendEvent(String eventName, eventValue, String eventUnit=null, Boolean fo
    } // library marker RMoRobert.CoCoHue_Common_Lib, line 71
 } // library marker RMoRobert.CoCoHue_Common_Lib, line 72
 
-// ~~~~~ end include (2) RMoRobert.CoCoHue_Common_Lib ~~~~~
+// ~~~~~ end include (8) RMoRobert.CoCoHue_Common_Lib ~~~~~

@@ -21,7 +21,7 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2024-06-30
+ *  Last modified: 2024-07-28
  * 
  *  Changelog:
  *  v4.1.9 - Add note that Hue Labs features are now deprecated
