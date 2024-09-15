@@ -4,15 +4,15 @@ CoCoHue: <b>Co</b>mmunity <b>Co</b>llection of <b>Hue</b> Bridge Apps and Driver
 (Hue Bridge Integration App for Hubitat)
 
 This is a Hue Bridge integration designed to replace (or supplement) Hubitat's buit-in Hue Bridge
-integration. It provides several advantages, including:
-1. Access to Hue bulb "effects" (color loop, select/alert, etc.)
-2. Improved group support ("Change Level" capability--`startLevelChange` and stopLevelChange` commands implemented)
-3. Scene support: create switch/button devices that can be used to activate Hue Bridge scenes
+integration. It provides several additional features compared to the built-in integration, including:
+1. Scene support: create switch/button devices that can be used to activate Hue Bridge scenes
+2. Access to Hue bulb "effects" (color loop, select/alert, etc.)
+3. Improved group support ("Change Level" capability--`startLevelChange` and stopLevelChange` commands implemented)
 4. It's open source! Customize the code to suit your requirements if so desired
 
 For discussion and more information, visit the <a href="https://community.hubitat.com/t/release-cocohue-hue-bridge-integration-including-scenes/27978">Hubitat Community forum thread</a>.
 
-**NOTE:** Users upgrading to 4.x from 3.x will need to open the CoCoHue app and select **Done** once after upgrading. It is recommended to download a hub backup before upgrading (restoring this backup is the best way to downgrade, as 4.x contains breaking changes).
+**NOTE:** Users upgrading to 5.x from 4.x will need to open the CoCoHue app and select **Done** once after upgrading. Users upgrading from older versions will need to upgrade to the latest CoCoHue 4.x release before upgrading to 5.x, select **Done**, then upgrade by following these instructions again. It is recommended to download a hub backup before upgrading (restoring this backup is the only way to downgrade, as 5.x contains breaking changes).
 
 Three installation methods are available:
 - Hubitat Package Manager (recommended if you have Hubitat Package Manager installed)
@@ -22,7 +22,8 @@ Three installation methods are available:
 ## To Install (Hubitat Package Manager/Automatic Method)
 
 CoCoHue is available via <a href="https://community.hubitat.com/t/beta-hubitat-package-manager/38016">Hubitat Package
-Manager</a>, a community app designed to make installing and updating community apps and drivers easier.
+Manager</a>, a community app designed to make installing and updating community apps and drivers easier. Search for
+"CoCoHue" or browse under the "Integrations" category for "Lights & Switches" or "LAN" tags.
 
 ## To Install (as Bundle)
 
@@ -36,33 +37,34 @@ the <a href="https://docs2.hubitat.com/en/user-interface/developer/bundles">Hubi
 for more details.
 
 ## To Install (Manual Method)
-1. Back up your hub and save a local copy before proceeding.
+1. Back up your hub and download a local copy before proceeding.
 
 2. Install the app  from the "apps" folder in this repository into the **Apps Code** section of Hubitat: https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/apps/cocohue-app.groovy
-    * **Important for users upgrading from 1.x:** if your installation is set up using the parent/child app strucutre (and you want to keep that installation), then
-    follow these steps instead. First, update the parent app: https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/deprecated/cocohue-parent-app.groovy. Then,
-    install the (child) app as above: https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/apps/cocohue-app.groovy. Finally, uncomment the
-    line `parent: "RMoRobert:CoCoHue (Parent App)"` (should be around line 50-55) in the "child" app by removing the two slashes, `//`, in front of it.
+(NOTE: If you are upgrading from 1.x, apply this app code to the old child app, not the parent; the parent app is deprecated, though existing installs should continue to work as-is.)
 
 3. Install all necessary drivers from the "drivers" folder in this repository into the **Drivers Code** section of Hubitat. (There aren't very many, so I'd recommend just installing them all, but technically all you need is the Bridge driver plus the driver for any device types you plan to use.)
     * Install the Bridge driver code: https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-bridge-driver.groovy
     * Install the bulb, group, scene, motion sensor, plug, button, etc. drivers:
       * https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-rgbw-bulb-driver.groovy
+      * https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-rgb-bulb-driver.groovy
       * https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-ct-bulb-driver.groovy
       * https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-dimmable-bulb-driver.groovy
       * https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-plug-driver.groovy
       * https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-group-driver.groovy
       * https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-motion-sensor-driver.groovy
       * https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-scene-driver.groovy
-      * https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-generic-status-driver.groovy
       * https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-button-driver.groovy
+    * NOTE: Users upgrading from v4.x or earlier may remove the CoCoHue Generic Status driver if installed, as it is now depcrecated (and any devices creating using it will no longer function and can be removed after being removed from any automations; these are/were Hue Labs activators that should be replaced with supported features).
       
 4. Install an instance of app: go to **Apps > Add User App**, choose **CoCoHue**, and follow the prompts.
 
+**NOTE**: Direct upgrades to version 5.x are possible from version 4.x only. Users of version 3.x or older must first
+upgrade to version 4.x (switch to the "cocohue-4.2" branch as an easy way to find this version, or download the release as a
+bundle ZIP by browsing old releases). Please carefully follow all instructions above, including open the app after each
+upgrade and selecting "Done."
+
 ## Feature Documentation
-CoCoHue is designed to be a replacement (although it can also be used as as supplement) for Hubitat's existing Hue integration. If any devices behave differently, this
-may be considered a bug (except for differences noted below). Please report any such behavior in the Community forum, and feel free
-to ask any questions there as well.
+CoCoHue is designed to be a replacement (although it can also be used as as supplement) for Hubitat's built-in Hue integration.
 
 Besides features offered by the built-in integration, this integration adds the following features:
 

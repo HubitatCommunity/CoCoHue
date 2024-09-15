@@ -14,16 +14,17 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2024-07-29
- * 
+ *  Last modified: 2024-09-14
+ *
  *  Changelog:
+ *  v5.0    - Use API v2 by default for device info, remove deprecated features
  *  v4.2.1  - Add scene on/off state reporting with v2 API
  *  v4.2    - Improved eventstream reconnection logic
  *  v4.1.4  - Improved error handling, fix missing battery for motion sensors
  *  v4.1.3  - Improved eventstream data handling (when multiple devices included in same payload, thanks to @Modem-Tones)
  *  v4.1.2  - Additional button enhancements (relative_rotary -- Hue Tap Dial, etc.)
  *  v4.1    - Add button device support (with v2 API only)
- *  v4.0.2  - Fix to avoid unepected "off" transition time
+ *  v4.0.2  - Fix to avoid unexpected "off" transition time
  *  v4.0.1  - Fix for "on" state of "All Hue Lights" group (if used)
  *  v4.0.1  - Minor sensor cache updates
  *  v4.0    - EventStream support for real-time updates
@@ -37,7 +38,6 @@
  *  v1.5    - Additional methods to support scenes and improved group behavior
  *  v1.0    - Initial Release
  */ 
-
 
 
 import groovy.json.JsonSlurper
@@ -54,20 +54,32 @@ import groovy.transform.Field
 
 @Field static final Integer debugAutoDisableMinutes = 30
 
+@Field static final Object eventStreamStatusLock = new Object()
+@Field static Map<Long,Boolean> eventStreamOpenStatus = [:]  // key = bridge device idAsLong, value = true if connected
+
 metadata {
-   definition(name: "CoCoHue Bridge", namespace: "RMoRobert", author: "Robert Morris", importUrl: "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-bridge-driver.groovy") {
+   definition(
+      name: "CoCoHue Bridge",
+      namespace:"RMoRobert",
+      author: "Robert Morris",
+      singleThreaded: true,
+      importUrl: "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-bridge-driver.groovy"
+   ) {
       capability "Actuator"
       capability "Refresh"
       capability "Initialize"
+      
       command "connectEventStream"
       command "disconnectEventStream"
+      command "refreshV1" // can be used to force V1 API refresh even if using V2 otherwise
+
       attribute "status", "STRING"
       attribute "eventStreamStatus", "STRING"
    }
    
    preferences() {
-      input name: "enableDebug", type: "bool", title: "Enable debug logging", defaultValue: true
-      input name: "enableDesc", type: "bool", title: "Enable descriptionText logging", defaultValue: true
+      input name: "logEnable", type: "bool", title: "Enable debug logging", defaultValue: true
+      input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true
    }   
 }
 
@@ -83,21 +95,24 @@ void updated() {
 
 void initialize() {
    log.debug "initialize()"
-   if (enableDebug) {
+   if (logEnable) {
       log.debug "Debug logging will be automatically disabled in ${debugAutoDisableMinutes} minutes"
       runIn(debugAutoDisableMinutes*60, "debugOff")
    }
-   if (parent.getEventStremEnabledSetting()) connectEventStream()
+   disconnectEventStream()
+   doSendEvent("eventStreamStatus", "disconnected")
+   if (parent.getEventStreamEnabledSetting()) runIn(3, "connectEventStream")
+
 }
 
 void connectEventStream() {
-   if (enableDebug) log.debug "connectEventStream()"
-   if (parent.getEventStremEnabledSetting() != true) {
-      log.warn "CoCoHue app is configured not to use EventStream. To reliably use this interface, it is recommended to enable this option in the app."
+   if (logEnable) log.debug "connectEventStream()"
+   if (parent.getEventStreamEnabledSetting() != true) {
+      log.warn "Parent app is configured not to use EventStream. To reliably use this interface, enable this option in the app."
    }
    Map<String,String> data = parent.getBridgeData()
-   if (enableDebug) {
-      log.debug "Connecting to event stream at 'https://${data.ip}/eventstream/clip/v2' with key '${data.username}'"
+   if (logEnable) {
+      log.debug "Connecting to event stream at 'https://${data.ip}/eventstream/clip/v2' with Hue API key '${data.username}'"
    }
    interfaces.eventStream.close()
    interfaces.eventStream.connect(
@@ -111,12 +126,12 @@ void connectEventStream() {
 }
 
 void reconnectEventStream(Boolean notIfAlreadyConnected = true) {
-   if (enableDebug) log.debug "reconnectEventStream(notIfAlreadyConnected=$notIfAlreadyConnected)"
+   if (logEnable) log.debug "reconnectEventStream(notIfAlreadyConnected=$notIfAlreadyConnected)"
    if (device.currentValue("eventStreamStatus") == "connected" && notIfAlreadyConnected) {
-      if (enableDebug) log.debug "already connected; skipping reconnection"
+      if (logEnable) log.debug "already connected; skipping reconnection"
    }   
-   else if (parent.getEventStremEnabledSetting() != true) {
-      if (enableDebug) log.debug "skipping reconnection because (parent) app configured not to use EventStream"
+   else if (parent.getEventStreamEnabledSetting() != true) {
+      if (logEnable) log.debug "skipping reconnection because (parent) app configured not to use EventStream"
    }
    else {
       connectEventStream()
@@ -128,7 +143,7 @@ void disconnectEventStream() {
 }
 
 void eventStreamStatus(String message) {
-   if (enableDebug) log.debug "eventStreamStatus: $message"
+   if (logEnable) log.debug "eventStreamStatus: $message"
    if (message.startsWith("START:")) {
       setEventStreamStatusToConnected()
    }
@@ -136,19 +151,25 @@ void eventStreamStatus(String message) {
       runIn(eventStreamDisconnectGracePeriod, "setEventStreamStatusToDisconnected")
    }
    else {
-      if (enableDebug) log.debug "Unhandled eventStreamStatus message: $message"
+      if (logEnable) log.debug "Unhandled eventStreamStatus message: $message"
    }
 }
 
-private void setEventStreamStatusToConnected() {
-   parent.setEventStreamOpenStatus(true) // notify app
+void setEventStreamStatusToConnected() {
+   synchronized(eventStreamStatusLock) {
+      if (logEnable) "set eventStreamOpenStatus[${device.idAsLong}] to true (connected)"
+      eventStreamOpenStatus[device.idAsLong] = true
+   }
    unschedule("setEventStreamStatusToDisconnected")
-   if (device.currentValue("eventStreamStatus") == "disconnected") doSendEvent("eventStreamStatus", "connected")
-   state.connectionRetryTime = 3
+   if (device.currentValue("eventStreamStatus") != "connected") doSendEvent("eventStreamStatus", "connected")
+   state.connectionRetryTime = 4
 }
 
-private void setEventStreamStatusToDisconnected() {
-   parent.setEventStreamOpenStatus(false) // notify app
+void setEventStreamStatusToDisconnected() {
+   synchronized(eventStreamStatusLock) {
+      if (logEnable) "set eventStreamOpenStatus[${device.idAsLong}] to false (disconnected)"
+      eventStreamOpenStatus[device.idAsLong] = false
+   }
    doSendEvent("eventStreamStatus", "disconnected")
    if (state.connectionRetryTime) {
       state.connectionRetryTime *= 2
@@ -159,15 +180,26 @@ private void setEventStreamStatusToDisconnected() {
    else {
       state.connectionRetryTime = 5
    }
-   if (enableDebug) log.debug "Reconnecting SSE in ${state.connectionRetryTime}"
+   if (logEnable) log.debug "Will attempt eventstream reconnection in ${state.connectionRetryTime}"
    runIn(state.connectionRetryTime, "reconnectEventStream")
 }
 
-// For EventStream:
+/** Returns true if evenstream currently connected, false if not (or unknown), intended to be used by parent
+  * app if needed
+*/
+Boolean getEventStreamOpenStatus() {
+   if (logEnable) "getEventStreamOpenStatus()"
+   synchronized(eventStreamStatusLock) {
+      return eventStreamOpenStatus[device.idAsLong] == true
+   }
+}
+
+// For Eventstream:
 void parse(String description) {
-   if (enableDebug) log.debug "parse: $description"
+   if (logEnable) log.debug "parse: $description"
    List<String> messages = description.split("\n\n")
    setEventStreamStatusToConnected() // should help avoid spurious disconnect messages?
+   if (logEnable) log.debug "messages (${messages.size()} total): $messages"
    messages.each { String message -> 
       List<String> lines = description.split("\n")
       StringBuilder sbData = new StringBuilder()
@@ -176,7 +208,7 @@ void parse(String description) {
             sbData << line.substring(6)
          }
          else {
-            if (enableDebug) log.debug "ignoring line: $line"
+            if (logEnable) log.debug "ignoring line: $line"
          }
       }
       if (sbData) {
@@ -186,103 +218,184 @@ void parse(String description) {
             if (dataEntryMap.type == "update") {
                dataEntryMap.data?.each { updateEntryMap ->
                   //log.trace "--> map = ${updateEntryMap}"
-                  String fullId = updateEntryMap.id_v1
-                  String hueId
-                  if (fullId != null) {
-                     switch (fullId) {
-                        case { it.startsWith("/lights/") }:
-                           hueId = fullId.split("/")[-1]
-                           DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Light/${hueId}")
-                           if (dev != null) dev.createEventsFromSSE(updateEntryMap)
+                  String idV1
+                  if (updateEntryMap.id_v1 != null) idV1 = updateEntryMap.id_v1.split("/")[-1]
+                  String idV2 = updateEntryMap.id
+                  String idV1Num
+                  DeviceWrapper dev
+                  if (idV2 != null) {
+                     switch (updateEntryMap.type) {
+                        case "light":
+                           dev = parent.getChildDevice("${device.deviceNetworkId}/Light/${idV2}")
+                           if (dev == null) dev = parent.getChildDevice("${device.deviceNetworkId}/Light/${idV1}")
                            break
-                        case { it.startsWith("/groups/") }:
-                            hueId = fullId.split("/")[-1]
-                           DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Group/${hueId}")
-                           if (dev != null) dev.createEventsFromSSE(updateEntryMap)
+                        case "grouped_light":  // does this one actually happpen?
+                        case "room":
+                        case "zone":
+                        case "bridge_home":
+                           dev = parent.getChildDevice("${device.deviceNetworkId}/Group/${idV2}")
+                           if (dev == null)  dev = parent.getChildDevice("${device.deviceNetworkId}/Group/${idV1}")
                            break
-                        case { it.startsWith("/scenes/") }:
-                            hueId = fullId.split("/")[-1]
-                            DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Scene/${hueId}")
-                            if (dev != null) dev.createEventsFromSSE(updateEntryMap)
-                        case { it.startsWith("/sensors/") }:
-                           hueId = fullId.split("/")[-1]
-                           DeviceWrapper dev = parent.getChildDevices().find { DeviceWrapper dev ->
-                              hueId in dev.deviceNetworkId.tokenize('/')[-1].tokenize('|') &&
-                              dev.deviceNetworkId.startsWith("${device.deviceNetworkId}/Sensor/")  // shouldn't be necessary but gave me a Light ID once in testing for a sensor, so?!
-                           }
-                           if (dev != null) {
-                              dev.createEventsFromSSE(updateEntryMap)
-                           }
-                           else {
-                              // try button; should eventually switch to v2 for all of this...
-                              if (updateEntryMap.owner?.rid) dev = parent.getChildDevice("${device.deviceNetworkId}/Button/${updateEntryMap.owner.rid}")
-                              if (dev != null) {
-                                 dev.createEventsFromSSE(updateEntryMap)
+                        case "scene":
+                           dev = parent.getChildDevice("${device.deviceNetworkId}/Scene/${idV2}")
+                           if (dev == null)  dev = parent.getChildDevice("${device.deviceNetworkId}/Scene/${idV1}")
+                           break
+                        case "motion":
+                        case "temperature":
+                        case "light_level": //todo: test or check is correct?
+                           String ownerId = updateEntryMap.owner?.rid
+                           dev = parent.getChildDevice("${device.deviceNetworkId}/Sensor/${ownerId}")
+                           if (dev == null && idV1 != null) {
+                              // or for now also check V1 sensor ID
+                              dev = parent.getChildDevices().find { DeviceWrapper d ->
+                                 idV1 in d.deviceNetworkId.tokenize('/')[-1].tokenize('|') &&
+                                 d.deviceNetworkId.startsWith("${device.deviceNetworkId}/Sensor/")  // shouldn't be necessary but gave me a Light ID once in testing for a sensor, so?!
                               }
                            }
                            break
+                        case "button":
+                        case "relative_rotary":
+                           String ownerId = updateEntryMap.owner?.rid
+                           dev = parent.getChildDevice("${device.deviceNetworkId}/Button/${ownerId}")
+                           break
+                        case "device_power": // could be motion sensor or button
+                           dev = parent.getChildDevice("${device.deviceNetworkId}/Sensor/${ownerId}")
+                           if (dev == null) parent.getChildDevice("${device.deviceNetworkId}/Button/${ownerId}")
+                           break
                         default:
-                           if (enableDebug) log.debug "skipping Hue v1 ID: $fullId"
+                           if (logEnable) log.debug "skipping Hue v1 ID: $idV1"
                      }
+                     // If child device found, send map to it for parsing:
+                     if (dev != null) dev.createEventsFromMapV2(updateEntryMap)
                   }
                }
             }
             else {
-               if (enableDebug) log.debug "skip: $dataEntryMap"
+               if (logEnable) log.debug "skip: $dataEntryMap"
             }
          }
       }
       else {
-         if (enableDebug) log.trace "no data parsed from message: $message"
+         if (logEnable) log.trace "no data parsed from message: $message"
       }
    }
 }
 
 void refresh() {
-   if (enableDebug) log.debug "refresh()"
+   if (logEnable) log.debug "refresh()"
    Map<String,String> data = parent.getBridgeData()
-   Map params = [
-      uri: data.fullHost,
-      path: "/api/${data.username}/",
-      contentType: 'application/json',
-      timeout: 15
-   ]
    try {
-      asynchttpGet("parseStates", params)
-   } catch (Exception ex) {
-      log.error "Error in refresh: $ex"
+      if (data.apiVersion == APIV1 || data.apiVersion == null) {
+         refreshV1()
+      }
+      else {
+         bridgeAsyncGetV2("parseStatesV2", "/resource", data)
+      }
+   }
+   catch (Exception ex) {
+      log.error "Error in refresh(): $ex"
+   }
+}
+
+void refreshV1() {
+   if (logEnable) log.debug "refreshV1()"
+   Map<String,String> data = parent.getBridgeData()
+   try {
+      Map params = [
+         uri: data.fullHost,
+         path: "/api/${data.username}/",
+         contentType: 'application/json',
+         timeout: 15
+      ]
+      asynchttpGet("parseStatesV1", params)
+   }
+   catch (Exception ex) {
+      log.error "Error in refreshV1(): $ex"
    }
 }
 
 void scheduleRefresh() {
-   if (enableDebug) log.debug "scheduleRefresh()"
+   if (logEnable) log.debug "scheduleRefresh()"
    
 }
 
-// For HTTP API-based parsing/refreshes:
+/** Returns V1-format bulb/light type (e.g., "extended color light") based on information
+  * found in V2 API light service data (e.g., presence or absence of color_temperature service, color, etc.)
+*/
+String determineLightType(Map data) {
+   if (data.color && data.color_temperature) return "extended color light"
+   else if (data.color_temperature) return "color temperature light"
+   else if (data.color) return "color light"
+   else if (data.dimming) return "dimmable light"
+   else if (data.on) return "on/off light"
+   else return "UNKNOWN"
+}
 
-/** Callback method that handles full Bridge refresh. Eventually delegated to individual
- *  methods below.
+/** Callback method that handles full Bridge refresh for V2 API. Eventually delegated to
+ *  individual methods below.
  */
-private void parseStates(AsyncResponse resp, Map data) { 
-   if (enableDebug) log.debug "parseStates: States from Bridge received. Now parsing..."
+void parseStatesV2(AsyncResponse resp, Map data) { 
+   if (logEnable) log.debug "parseStatesV2: States from Bridge received. Now parsing..."
    if (checkIfValidResponse(resp)) {
-      parseLightStates(resp.json.lights)
-      parseGroupStates(resp.json.groups)
-      parseSensorStates(resp.json.sensors)
-      parseLabsSensorStates(resp.json.sensors)
+      //TODO: Check that all are updated for v2 (in progress!)
+      // Lights:
+      List<Map> lightsData = resp.json.data.findAll { it.type == "light" }
+      // Groups (and Rooms and Zones):
+      List<Map> roomsData = resp.json.data.findAll { it.type == "room" }  // probably needed? check if needed here...
+      List<Map> zonesData = resp.json.data.findAll { it.type == "zone" }  // probably needed? check if needed here...
+      List<Map> groupsData = resp.json.data.findAll { it.type == "grouped_light" }
+      // Scenes:
+      List<Map> scenesData = resp.json.data.findAll { it.type == "scene" }
+      // Motion sensors (motion, temperature, lux, battery):
+      List<Map> motionData = resp.json.data.findAll { it.type == "motion" }
+      //log.trace "motion = $motionData"
+      List<Map> temperatureData = resp.json.data.findAll { it.type == "temperature" }
+      //log.trace  "ill = $illuminanceData"
+      List<Map> illuminanceData = resp.json.data.findAll { it.type == "light_level" }
+      //log.trace "ll = $illuminanceData"
+      List<Map> batteryData = resp.json.data.findAll { it.type == "device_power" }
+      //log.trace "batt = $batteryData"
+      // TODO: batteryData could also be useful for buttons/remotes?
+      // Probably does not make sense to parse other button events now (only in real time)
+      // Check if anything else?
+      parseLightStatesV2(lightsData)
+      parseGroupStatesV2(groupsData)
+      parseSceneStatesV2(scenesData)
+      // TODO: see if can combine this data into one instead of calling 4x total:
+      parseMotionSensorStatesV2(motionData)
+      parseMotionSensorStatesV2(temperatureData)
+      parseMotionSensorStatesV2(illuminanceData)
+      parseMotionSensorStatesV2(batteryData)
    }
 }
 
-private void parseLightStates(Map lightsJson) {
-   if (enableDebug) log.debug "Parsing light states from Bridge..."
+/** Callback method that handles full Bridge refresh for V1 API. Eventually delegated to
+ *  individual methods below. For Hue V1 API.
+ */
+void parseStatesV1(AsyncResponse resp, Map data) { 
+   if (logEnable) log.debug "parseStatesV1() - States from Bridge received. Now parsing..."
+   if (checkIfValidResponse(resp)) {
+      parseLightStatesV1(resp.json.lights)
+      parseGroupStatesV1(resp.json.groups)
+      parseMotionSensorStatesV1(resp.json.sensors)
+   }
+}
+
+void parseLightStatesV2(List lightsJson) {
+   if (logEnable) log.debug "parseLightStatesV2()"
    // Uncomment this line if asked to for debugging (or you're curious):
    //log.debug "lightsJson = $lightsJson"
    try {
-      lightsJson.each { id, val ->
-         DeviceWrapper device = parent.getChildDevice("${device.deviceNetworkId}/Light/${id}")
-         if (device) {
-            device.createEventsFromMap(val.state, true)
+      lightsJson.each { Map data ->
+         String id = data.id 
+         String id_v1 = data.id_v1 - "/lights/"
+         DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Light/${id}")
+         if (dev == null) {
+            dev = parent.getChildDevice("${device.deviceNetworkId}/Light/${id_v1}")
+            if (dev != null) log.warn "Device ${dev.displayName} with Hue V1 ID $id_v1 and V2 ID $id never converted to V2 DNI format. Try selecting \"Done\" in the parent app to retry conversion. Found and using V1 device for now."
+         }
+         if (dev != null) {
+            dev.createEventsFromMapV2(data)
          }
       }
       if (device.currentValue("status") != "Online") doSendEvent("status", "Online")
@@ -292,23 +405,71 @@ private void parseLightStates(Map lightsJson) {
    }
 }
 
-private void parseGroupStates(Map groupsJson) {
-   if (enableDebug) log.debug "Parsing group states from Bridge..."
+void parseLightStatesV1(Map lightsJson) {
+   if (logEnable) log.debug "parseLightStatesV1()"
+   // Uncomment this line if asked to for debugging (or you're curious):
+   //log.debug "lightsJson = $lightsJson"
+   try {
+      lightsJson.each { id, val ->
+         DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Light/${id}")
+         if (dev == null) dev = parent.getChildDevices().find {
+            it.deviceNetworkId.startsWith("${device.deviceNetworkId}/Light/") && it.getHueDeviceIdV1() == id
+         }
+         if (dev) {
+            dev.createEventsFromMapV1(val.state, true)
+         }
+      }
+      if (device.currentValue("status") != "Online") doSendEvent("status", "Online")
+   }
+   catch (Exception ex) {
+      log.error "Error parsing light states: ${ex}"
+   }
+}
+
+void parseGroupStatesV2(List groupsJson) {
+   if (logEnable) log.debug "parseGroupStatesV2()"
+   // Uncomment this line if asked to for debugging (or you're curious):
+   //log.debug "groupsJson = $groupsJson"
+   try {
+      groupsJson.each { Map data ->
+         String id = data.id 
+         String id_v1 = data.id_v1 - "/groups/"
+         DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Group/${id}")
+         if (dev == null) {
+            dev = parent.getChildDevice("${device.deviceNetworkId}/Group/${id_v1}")
+            if (dev != null) log.warn "Device ${dev.displayName} with Hue V1 ID $id_v1 and V2 ID $id never converted to V2 DNI format. Try selecting \"Done\" in the parent app to retry conversion. Found and using V1 device for now."
+         }
+         if (dev != null) {
+            dev.createEventsFromMapV2(data)
+         }
+      }
+      if (device.currentValue("status") != "Online") doSendEvent("status", "Online")
+   }
+   catch (Exception ex) {
+      log.error "Error parsing group states: ${ex}"
+   }
+}
+
+void parseGroupStatesV1(Map groupsJson) {
+   if (logEnable) log.debug "parseGroupStatesV1()"
    // Uncomment this line if asked to for debugging (or you're curious):
    //log.debug "groupsJson = $groupsJson"
    try {
       groupsJson.each { id, val ->
          DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Group/${id}")
-         if (dev) {
-            dev.createEventsFromMap(val.action, true)
-            dev.createEventsFromMap(val.state, true)
+         if (dev == null) dev = parent.getChildDevices().find {
+            it.deviceNetworkId.startsWith("${device.deviceNetworkId}/Group/") && it.getHueDeviceIdV1() == id
+         }
+         if (dev != null) {
+            dev.createEventsFromMapV1(val.action, true)
+            dev.createEventsFromMapV1(val.state, true)
             dev.setMemberBulbIDs(val.lights)
          }
       }
       Boolean anyOn = groupsJson.any { it.value?.state?.any_on == true }
       DeviceWrapper allLightsDev = parent.getChildDevice("${device.deviceNetworkId}/Group/0")
       if (allLightsDev != null) {
-         allLightsDev.createEventsFromMap(['any_on': anyOn], true)
+         allLightsDev.createEventsFromMapV1(['any_on': anyOn], true)
       }
       
    }
@@ -317,8 +478,61 @@ private void parseGroupStates(Map groupsJson) {
    }
 }
 
-private void parseSensorStates(Map sensorsJson) {
-   if (enableDebug) log.debug "Parsing sensor states from Bridge..."
+void parseSceneStatesV2(List scenesJson) {
+   if (logEnable) log.debug "parseSceneStatesV2()"
+   // Uncomment this line if asked to for debugging (or you're curious):
+   //log.debug "scenesJson = $scenesJson"
+   try {
+      scenesJson.each { Map data ->
+         String id = data.id 
+         String id_v1 = data.id_v1 - "/scene/"
+         DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Scene/${id}")
+         if (dev == null) {
+            dev = parent.getChildDevice("${device.deviceNetworkId}/Scene/${id_v1}")
+            if (dev != null) log.warn "Device ${dev.displayName} with Hue V1 ID $id_v1 and V2 ID $id never converted to V2 DNI format. Try selecting \"Done\" in the parent app to retry conversion. Found and using V1 device for now."
+         }
+         if (dev != null) {
+            dev.createEventsFromMapV2(data)
+         }
+      }
+      if (device.currentValue("status") != "Online") doSendEvent("status", "Online")
+   }
+   catch (Exception ex) {
+      log.error "Error parsing group states: ${ex}"
+   }
+}
+
+void parseMotionSensorStatesV2(List sensorJson) {
+   if (logEnable) log.debug "parseMotionSensorStatesV2()"
+   // Uncomment this line if asked to for debugging (or you're curious):
+   //log.debug "sensorJson = $sensorJson"
+   try {
+      sensorJson.each { Map data ->
+         String id = data.owner.rid // use owner ID for sensor to keep same physical devices together more easily 
+         String id_v1 = data.id_v1 - "/sensors/"
+         DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Sensor/${id}")
+         if (dev == null) {
+               dev = parent.getChildDevices().find { DeviceWrapper d ->
+                  d.deviceNetworkId.startsWith("${device.deviceNetworkId}/Sensor/") &&
+                  id_v1 in d.deviceNetworkId.tokenize('/')[-1].tokenize('|')
+               }
+            if (dev != null) log.warn "Device ${dev.displayName} with Hue V1 ID $id_v1 and V2 ID $id never converted to V2 DNI format. Try selecting \"Done\" in the parent app to retry conversion. Found and using V1 device for now."
+         }
+         if (dev != null) {
+            dev.createEventsFromMapV2(data)
+         }
+      }
+      if (device.currentValue("status") != "Online") doSendEvent("status", "Online")
+   }
+   catch (Exception ex) {
+      log.error "Error parsing group states: ${ex}"
+   }
+}
+
+// Not used for new installs, but existing may have V1 IDs for sensors from CoCoHue 3.x/4.x, so keeping this V1
+// method around for now just in case:
+void parseMotionSensorStatesV1(Map sensorsJson) {
+   if (logEnable) log.debug "Parsing sensor states from Bridge..."
    // Uncomment this line if asked to for debugging (or you're curious):
    // log.trace "sensorsJson = ${groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(sensorsJson))}"
    try {
@@ -327,12 +541,12 @@ private void parseSensorStates(Map sensorsJson) {
           val.type == "ZHAPresence" || val.type == "ZHALightLevel" || val.type == "ZHATemperature") {
             DeviceWrapper sensorDev = parent.getChildDevices().findAll { DeviceWrapper it ->
                it.deviceNetworkId.startsWith("${device.deviceNetworkId}/Sensor/") &&
-               (key as String) in it.deviceNetworkId.tokenize('/')[3].tokenize('|')
+               (key as String) in it.deviceNetworkId.tokenize('/')[-1].tokenize('|')
             }[0]
             if (sensorDev != null) {
-               sensorDev.createEventsFromMap(val.state)
+               sensorDev.createEventsFromMapV1(val.state)
                // All entries have config.battery, so just picking one to parse here to avoid redundancy:
-               if (val.type == "ZLLPresence" || val.type == "ZHAPresence") sensorDev.createEventsFromMap(["battery": val.config.battery])
+               if (val.type == "ZLLPresence" || val.type == "ZHAPresence") sensorDev.createEventsFromMapV1(["battery": val.config.battery])
             }
          }
       }
@@ -349,8 +563,8 @@ private void parseSensorStates(Map sensorsJson) {
  *  allBulbs in state when finished. Intended to be called
  *  during bulb discovery in app.
  */
-void getAllBulbs() {
-   if (enableDebug) log.debug "Getting bulb list from Bridge..."
+void getAllBulbsV1() {
+   if (logEnable) log.debug "Getting bulb list from Bridge..."
    //clearBulbsCache()
    Map<String,String> data = parent.getBridgeData()
    Map params = [
@@ -359,11 +573,11 @@ void getAllBulbs() {
       contentType: "application/json",
       timeout: 15
       ]
-   asynchttpGet("parseGetAllBulbsResponse", params)
+   asynchttpGet("parseGetAllBulbsResponseV1", params)
 }
 
-private void parseGetAllBulbsResponse(resp, data) {
-   if (enableDebug) log.debug "Parsing in parseGetAllBulbsResponse"
+void parseGetAllBulbsResponseV1(resp, data) {
+   if (logEnable) log.debug "parseGetAllBulbsResponseV1()"
    if (checkIfValidResponse(resp)) {
       try {
          Map bulbs = [:]
@@ -371,13 +585,37 @@ private void parseGetAllBulbsResponse(resp, data) {
             bulbs[key] = [name: val.name, type: val.type]
          }
          state.allBulbs = bulbs
-         if (enableDebug) log.debug "  All bulbs received from Bridge: $bulbs"
+         if (logEnable) log.debug "  All bulbs received from Bridge: $bulbs"
       }
       catch (Exception ex) {
          log.error "Error parsing all bulbs response: $ex"
       }
    }
 }
+
+void getAllBulbsV2() {
+   if (logEnable) log.debug "Getting bulb list from Bridge..."
+   //clearBulbsCache()
+   bridgeAsyncGetV2("parseGetAllBulbsResponseV2", "/resource/light")
+}
+
+void parseGetAllBulbsResponseV2(resp, Map data=null) {
+   if (logEnable) log.debug "parseGetAllBulbsResponseV2()"
+   if (checkIfValidResponse(resp)) {
+      try {
+         Map bulbs = [:]
+         resp.json.data.each { Map bulbData ->
+            bulbs[bulbData.id] = [name: bulbData.metadata.name, type: determineLightType(bulbData)]
+         }
+         state.allBulbs = bulbs
+         if (logEnable) log.debug "  All bulbs received from Bridge: $bulbs"
+      }
+      catch (Exception ex) {
+         log.error "Error parsing all bulbs response: $ex"
+      }
+   }
+}
+
 
 /** Intended to be called from parent app to retrive previously
  *  requested list of bulbs
@@ -390,7 +628,7 @@ Map getAllBulbsCache() {
  * not working with old data
  */
 void clearBulbsCache() {
-   if (enableDebug) log.debug "Running clearBulbsCache..."
+   if (logEnable) log.debug "Running clearBulbsCache..."
    state.remove('allBulbs')
 }
 
@@ -400,8 +638,8 @@ void clearBulbsCache() {
  *  allBulbs in state when finished. Intended to be called
  *  during bulb discovery in app.
  */
-void getAllGroups() {
-   if (enableDebug) log.debug "Getting group list from Bridge..."
+void getAllGroupsV1() {
+   if (logEnable) log.debug "Getting group list from Bridge..."
    //clearGroupsCache()
    Map<String,String> data = parent.getBridgeData()
    Map params = [
@@ -410,11 +648,11 @@ void getAllGroups() {
       contentType: "application/json",
       timeout: 15
    ]
-   asynchttpGet("parseGetAllGroupsResponse", params)
+   asynchttpGet("parseGetAllGroupsResponseV1", params)
 }
 
-private void parseGetAllGroupsResponse(resp, data) {
-   if (enableDebug) log.debug "Parsing in parseGetAllGroupsResponse"
+void parseGetAllGroupsResponseV1(resp, data) {
+   if (logEnable) log.debug "Parsing in parseGetAllGroupsResponseV1"
    if (checkIfValidResponse(resp)) {
       try {
          Map groups = [:]
@@ -423,10 +661,63 @@ private void parseGetAllGroupsResponse(resp, data) {
          }
          groups[0] = [name: "All Hue Lights", type:  "LightGroup"] // add "all Hue lights" group, ID 0
          state.allGroups = groups
-         if (enableDebug) log.debug "  All groups received from Bridge: $groups"
+         if (logEnable) log.debug "  All groups received from Bridge: $groups"
       }
       catch (Exception ex) {
          log.error "Error parsing all groups response: $ex"
+      }
+   }
+}
+
+void getAllGroupsV2() {
+   // sends two calls, one to /rooms and one to /zones
+   // uses /grouped_light moslty to get "All Hue Lights" equivalent, as the /room and /zone
+   // endpoints should cover all practical cases and also get the name and other needed info for display
+   // To use results in parent app: look at state.allRooms and state.allZones (not state.allGroups like v1)
+   if (logEnable) log.debug "getAllGroupsV2()"
+   //clearBulbsCache()
+   // TODO: Maybe just fetch /resource instead of three calls here? For now, spacing out to avoid HTTP 429
+   Map<String,String> bridgeData = parent.getBridgeData()
+   bridgeAsyncGetV2("parseGetAllGroupsOrRoomsOrZonesResponseV2", "/resource/grouped_light", bridgeData, [type: "grouped_light"])
+   pauseExecution(500)
+   bridgeAsyncGetV2("parseGetAllGroupsOrRoomsOrZonesResponseV2", "/resource/room", bridgeData, [type: "room"])
+   pauseExecution(500)
+   bridgeAsyncGetV2("parseGetAllGroupsOrRoomsOrZonesResponseV2", "/resource/zone", bridgeData, [type: "zone"])
+}
+
+void parseGetAllGroupsOrRoomsOrZonesResponseV2(resp, Map<String,String> data) {
+   if (logEnable) log.debug "parseGetAllGroupsOrRoomsOrZonesResponseV2(), type = ${data.type}"
+   if (checkIfValidResponse(resp)) {
+      try {
+         if (data.type == "room" || data.type == "zone") {
+            Map roomsOrZones = [:]
+            resp.json.data.each { Map roomOrZoneData ->
+               String groupedLightId = roomOrZoneData.services.find({ svc -> svc.rtype == "grouped_light" })?.rid
+               if (groupedLightId != null) {
+                  roomsOrZones[groupedLightId] = [name: roomOrZoneData.metadata.name, type: data.type, "${data.type}Id": roomOrZoneData.id]
+               }
+               else {
+                  if (logEnable) log.debug "No grouped_light service found for room ID ${roomOrZoneData.id}"
+               }
+            }
+            if (data.type == "room") state.allRooms = roomsOrZones
+            else state.allZones = roomsOrZones
+            if (logEnable) log.debug "  All ${data.type}s received from Bridge: $roomsOrZones"
+         }
+         else if (data.type == "grouped_light") {
+            // really only use to find equivalent of group 0 in V1 API or "All Hue Lights"
+            Map allHueLightsGroup = resp.json.data?.find { it.owner?.rtype == "bridge_home" }
+            if (allHueLightsGroup != null) {
+               state.allGroups = [:]
+               state.allGroups[allHueLightsGroup.id] = [name: "All Hue Lights", type: "grouped_light"]
+            }
+         }
+         else {
+            log.warn "Unexpected type; should be \"room\", \"zone\", or \"grouped_light\": ${data.type}"
+         }
+      }
+      catch (Exception ex) {
+         log.error "Error parsing all rooms or zones response: $ex"
       }
    }
 }
@@ -442,8 +733,38 @@ Map getAllGroupsCache() {
  * not working with old data
  */
 void clearGroupsCache() {
-    if (enableDebug) log.debug "Running clearGroupsCache..."
-    state.remove('allGroups')
+   if (logEnable) log.debug "Running clearGroupsCache..."
+   state.remove("allGroups")
+}
+
+/** Intended to be called from parent app to retrive previously
+ *  requested list of rooms
+ */
+Map getAllRoomsCache() {
+   return state.allRooms ?: [:]
+}
+
+/** Clears cache of room IDs/names (and group light data inside); useful for parent app to call if trying to ensure
+ * not working with old data
+ */
+void clearRoomsCache() {
+   if (logEnable) log.debug "Running clearRoomsCache..."
+   state.remove("allRooms")
+}
+
+/** Intended to be called from parent app to retrive previously
+ *  requested list of zones
+ */
+Map getAllZonesCache() {
+   return state.allZones ?: [:]
+}
+
+/** Clears cache of zone IDs/names (and group light data inside); useful for parent app to call if trying to ensure
+ * not working with old data
+ */
+void clearZonesCache() {
+    if (logEnable) log.debug "Running clearZonesCache..."
+    state.remove("allZones")
 }
 
 // ------------ SCENES ------------
@@ -452,9 +773,9 @@ void clearGroupsCache() {
  *  allScenes in state when finished. Intended to be called
  *  during bulb discovery in app.
  */
-void getAllScenes() {
-   if (enableDebug) log.debug "Getting scene list from Bridge..."
-   getAllGroups() // so can get room names, etc.
+void getAllScenesV1() {
+   if (logEnable) log.debug "getAllScenesV1()"
+   getAllGroupsV1() // so can get room names, etc.
    //clearScenesCache()
    Map<String,String> data = parent.getBridgeData()
    Map params = [
@@ -463,11 +784,11 @@ void getAllScenes() {
       contentType: "application/json",
       timeout: 15
    ]
-   asynchttpGet("parseGetAllScenesResponse", params)
+   asynchttpGet("parseGetAllScenesResponseV1", params)
 }
 
-private void parseGetAllScenesResponse(resp, data) {
-   if (enableDebug) log.debug "Parsing all scenes response..."
+void parseGetAllScenesResponseV1(resp, Map data=null) {
+   if (logEnable) log.debug "parseGetAllScenesResponseV1()"
    if (checkIfValidResponse(resp)) {
       try {
          Map scenes = [:]
@@ -476,10 +797,34 @@ private void parseGetAllScenesResponse(resp, data) {
             if (val.group) scenes[key] << ["group": val.group]
          }
          state.allScenes = scenes
-         if (enableDebug) log.debug "  All scenes received from Bridge: $scenes"
+         if (logEnable) log.debug "  All scenes received from Bridge: $scenes"
       }
       catch (Exception ex) {
          log.error "Error parsing all scenes response: ${ex}"   
+      }
+   }
+}
+
+void getAllScenesV2() {
+   if (logEnable) log.debug "getAllScenesV2()"
+   getAllGroupsV2() // so can get room names, etc.
+   //clearScenesCache()
+   pauseExecution(750)
+   bridgeAsyncGetV2("parseGetAllScenesResponseV2", "/resource/scene")
+}
+
+void parseGetAllScenesResponseV2(resp, Map data=null) {
+   if (checkIfValidResponse(resp)) {
+      try {
+         Map scenes = [:]
+         resp.json.data.each { Map sceneData ->
+            scenes[sceneData.id] = [name: sceneData.metadata.name, group: sceneData.group?.rid]
+         }
+         state.allScenes = scenes
+         if (logEnable) log.debug "  All scenes received from Bridge: $scenes"
+      }
+      catch (Exception ex) {
+         log.error "Error parsing all scenes response: $ex"
       }
    }
 }
@@ -495,61 +840,43 @@ Map getAllScenesCache() {
  * not working with old data
  */
 void clearScenesCache() {
-   if (enableDebug) log.debug "Running clearScenesCache..."
-   state.remove('allScenes')
+   if (logEnable) log.debug "Running clearScenesCache..."
+   state.remove("allScenes")
 }
 
 // ------------ SENSORS (Motion/etc.) ------------
+// No V1 for these
 
-/** Requests list of all sensors from Hue Bridge; updates
- *  allSensors in state when finished. (Filters down to only Hue
- *  Motion sensors.) Intended to be called during sensor discovery in app.
- */
-void getAllSensors() {
-   if (enableDebug) log.debug "Getting sensor list from Bridge..."
-   Map<String,String> data = parent.getBridgeData()
-   Map params = [
-      uri: data.fullHost,
-      path: "/api/${data.username}/sensors",
-      contentType: "application/json",
-      timeout: 15
-   ]
-   asynchttpGet("parseGetAllSensorsResponse", params)
+void getAllSensorsV2() {
+   if (logEnable) log.debug "getAllSensorsV2()"
+   // Seem to be able to get everything needed for discovery from /devices? Do need this for refresh/polling...
+   // Map motionParams = [
+   //    uri: "https://${data.ip}",
+   //    path: "/clip/v2/resource/motion",
+   //    headers: ["hue-application-key": data.username],
+   //    contentType: "application/json",
+   //    timeout: 15,
+   //    ignoreSSLIssues: true
+   // ]
+   bridgeAsyncGetV2("parseGetAllSensorsResponseV2", "/resource/device")
 }
 
-private void parseGetAllSensorsResponse(resp, data) {
-   if (enableDebug) log.debug "Parsing all sensors response..."
+void parseGetAllSensorsResponseV2(resp, Map data=null) {
+   if (logEnable) log.debug "parseGetAllSensorsResponseV2()"
    if (checkIfValidResponse(resp)) {
       try {
-         Map allSensors = [:]
-         resp.json.each { key, val ->
-            if (val.type == "ZLLPresence" || val.type == "ZLLLightLevel" || val.type == "ZLLTemperature") {
-               String mac = val?.uniqueid?.substring(0,23)
-               if (mac != null) {
-                  if (!(allSensors[mac])) allSensors[mac] = [:]
-                  if (allSensors[mac]?.ids) allSensors[mac].ids.add(key)
-                  else allSensors[mac].ids = [key]
-               }
-               if (allSensors[mac].name) {
-                  // The ZLLPresence endpoint appears to be the one carrying the user-defined name
-                  if (val.type == "ZLLPresence") allSensors[mac].name = val.name
-               }
-               else {
-                  //...but get the other names if none has been set, just in case
-                  allSensors[mac].name = val.name
-               }
-            }
+         List<Map> motionDevs = resp.json?.data?.findAll { Map devData ->
+            devData.services.any { svc -> svc.rtype == "motion"}
          }
-         Map<String,Map> hueMotionSensors = [:]
-         allSensors.each { key, value ->
-            // Hue  Motion sensors should have all three types, so just further filtering:
-            if (value.ids?.size >= 3) hueMotionSensors << [(key): value]
+         Map sensors = [:]
+         motionDevs.each { Map devData ->
+            sensors[devData.id] = devData.metadata.name
          }
-         state.allSensors = hueMotionSensors
-         if (enableDebug) log.debug "  All sensors received from Bridge: $hueMotionSensors"
+         state.allSensors = sensors
+         if (logEnable) log.debug "  All sensors received from Bridge: $sensors"
       }
       catch (Exception ex) {
-         log.error "Error parsing all sensors response: ${ex}"   
+         log.error "Error parsing all sensors response: $ex"
       }
    }
 }
@@ -565,33 +892,25 @@ Map<String,Map> getAllSensorsCache() {
  * not working with old data
  */
 void clearSensorsCache() {
-   if (enableDebug) log.debug "Running clearSensorsCache..."
-   state.remove('allSensors')
+   if (logEnable) log.debug "Running clearSensorsCache..."
+   state.remove("allSensors")
 }
 
 // ------------ BUTTONS ------------
+// no V1 for these
 
 /** Requests list of all button devices from Hue Bridge; updates
  *  allButtons in state when finished. Intended to be called
  *  during buttoon discovery in app.
  */
-void getAllButtons() {
-   if (enableDebug) log.debug "Getting button list from Bridge..."
+void getAllButtonsV2() {
+   if (logEnable) log.debug "getAllButtonsV2()"
    //clearButtonsCache()
-   Map<String,String> data = parent.getBridgeData()
-   Map params = [
-      uri: "https://${data.ip}",
-      path: "/clip/v2/resource/device",
-      headers: ["hue-application-key": data.username],
-      contentType: "application/json",
-      timeout: 15,
-      ignoreSSLIssues: true
-   ]
-   asynchttpGet("parseGetAllButtonsResponse", params)
+   bridgeAsyncGetV2("parseGetAllButtonsResponseV2", "/resource/device")
 }
 
-private void parseGetAllButtonsResponse(resp, data) {
-   if (enableDebug) log.debug "Parsing in parseGetAllButtonsResponse"
+void parseGetAllButtonsResponseV2(resp, data) {
+   if (logEnable) log.debug "parseGetAllButtonsResponseV2()"
    if (checkIfValidResponse(resp)) {
       try {
          Map buttons = [:]
@@ -611,10 +930,10 @@ private void parseGetAllButtonsResponse(resp, data) {
                   response.data.data.each {
                      if (buttons[it.owner.rid] == null) buttons[it.owner.rid] = [buttons: [:]]
                      buttons[it.owner.rid].buttons << [(it.id): it.metadata.control_id]
-                     
                   }
             }
          )
+         pauseExecution(500)
          // Check for relative_rotary, too (Hue Tap Dial, Lutron Aurora)
          params = [
             uri: "https://${bridgeData.ip}",
@@ -653,8 +972,8 @@ private void parseGetAllButtonsResponse(resp, data) {
             log.warn "No data in returned JSON: $data"
          }
          state.allButtons = buttons
-         state.allRelativeRotaries = relativeRotaries
-         if (enableDebug) log.debug "  All buttons received from Bridge: $buttons"
+         //state.allRelativeRotaries = relativeRotaries
+         if (logEnable) log.debug "  All buttons received from Bridge: $buttons"
       }
       catch (Exception ex) {
          log.error "Error parsing all buttons response: $ex"
@@ -673,161 +992,132 @@ Map getAllButtonsCache() {
  * not working with old data
  */
 void clearButtonsCache() {
-   if (enableDebug) log.debug "Running clearButtonsCache..."
+   if (logEnable) log.debug "Running clearButtonsCache..."
    state.remove('allButtons')
 }
 
-// ------------ HUE LABS SENSORS ------------
+// ~~~ IMPORTED FROM RMoRobert.CoCoHue_Common_Lib ~~~
+// Version 1.0.3
+// For use with CoCoHue drivers (not app)
 
-/** Requests list of all Hue Bridge state; callback will parse resourcelinks and sensors
+/**
+ * 1.0.4 - Add common bridgeAsyncGetV2() method (goal to reduce individual driver code)
+ * 1.0.3 - Add APIV1 and APIV2 "constants"
+ * 1.0.2  - HTTP error handling tweaks
  */
-void getAllLabsDevices() {
-   if (enableDebug) log.debug "Getting resourcelink list from Bridge..."
-   Map<String,String> data = parent.getBridgeData()
+
+void debugOff() {
+   log.warn "Disabling debug logging"
+   device.updateSetting("logEnable", [value:"false", type:"bool"])
+}
+
+/** Performs basic check on data returned from HTTP response to determine if should be
+  * parsed as likely Hue Bridge data or not; returns true (if OK) or logs errors/warnings and
+  * returns false if not
+  * @param resp The async HTTP response object to examine
+  */
+private Boolean checkIfValidResponse(hubitat.scheduling.AsyncResponse resp) {
+   if (logEnable == true) log.debug "Checking if valid HTTP response/data from Bridge..."
+   Boolean isOK = true
+   if (resp.status < 400) {
+      if (resp.json == null) {
+         isOK = false
+         if (resp.headers == null) log.error "Error: HTTP ${resp.status} when attempting to communicate with Bridge"
+         else log.error "No JSON data found in response. ${resp.headers.'Content-Type'} (HTTP ${resp.status})"
+         parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery 
+         parent.setBridgeOnlineStatus(false)
+      }
+      else if (resp.json) {
+         if ((resp.json instanceof List) && resp.json.getAt(0).error) {
+            // Bridge (not HTTP) error (bad username, bad command formatting, etc.):
+            isOK = false
+            log.warn "Error from Hue Bridge: ${resp.json[0].error}"
+            // Not setting Bridge to offline when light/scene/group devices end up here because could
+            // be old/bad ID and don't want to consider Bridge offline just for that (but also won't set
+            // to online because wasn't successful attempt)
+         }
+         // Otherwise: probably OK (not changing anything because isOK = true already)
+      }
+      else {
+         isOK = false
+         log.warn("HTTP status code ${resp.status} from Bridge")
+         // TODO: Update for mDNS if/when switch:
+         if (resp?.status >= 400) parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery 
+         parent.setBridgeOnlineStatus(false)
+      }
+      if (isOK == true) parent.setBridgeOnlineStatus(true)
+   }
+   else {
+      log.warn "Error communicating with Hue Bridge: HTTP ${resp?.status}"
+      isOK = false
+   }
+   return isOK
+}
+
+void doSendEvent(String eventName, eventValue, String eventUnit=null, Boolean forceStateChange=false) {
+   //if (logEnable == true) log.debug "doSendEvent($eventName, $eventValue, $eventUnit)"
+   String descriptionText = "${device.displayName} ${eventName} is ${eventValue}${eventUnit ?: ''}"
+   if (settings.txtEnable == true) log.info(descriptionText)
+   if (eventUnit) {
+      if (forceStateChange == true) sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, unit: eventUnit, isStateChange: true) 
+      else sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, unit: eventUnit) 
+   } else {
+      if (forceStateChange == true) sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, isStateChange: true) 
+      else sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText) 
+   }
+}
+
+// HTTP methods (might be better to split into separate library if not needed for some?)
+
+/** Performs asynchttpGet() to Bridge using data retrieved from parent app or as passed in
+  * @param callbackMethod Callback method
+  * @param clipV2Path The Hue V2 API path (without '/clip/v2', automatically prepended), e.g. '/resource' or '/resource/light'
+  * @param bridgeData Bridge data from parent getBridgeData() call, or will call this method on parent if null
+  * @param data Extra data to pass as optional third (data) parameter to asynchtttpGet() method
+  */
+void bridgeAsyncGetV2(String callbackMethod, String clipV2Path, Map<String,String> bridgeData = null, Map data = null) {
+   if (bridgeData == null) {
+      bridgeData = parent.getBridgeData()
+   }
    Map params = [
-      uri: data.fullHost,
-      path: "/api/${data.username}/",
+      uri: "https://${bridgeData.ip}",
+      path: "/clip/v2${clipV2Path}",
+      headers: ["hue-application-key": bridgeData.username],
       contentType: "application/json",
-      timeout: 15
+      timeout: 15,
+      ignoreSSLIssues: true
    ]
-   asynchttpGet("parseGetAllLabsDevicesResponse", params)
-}
-
-private void parseGetAllLabsDevicesResponse(resp, data) {
-   if (enableDebug) log.debug "Parsing all Labs devices response..."
-   if (checkIfValidResponse(resp)) {
-      try {
-         Map names = [:]
-         Map activatorSensors = resp.json.sensors.findAll { key, val ->
-            val["type"]  == "CLIPGenericStatus" && val["modelid"] == "HUELABSVTOGGLE"
-         }
-         activatorSensors.each { key, val ->
-            resp.json.resourcelinks.each { rlId, rlVal ->
-               if (rlVal.links?.any { it == "/sensors/${key}" }) {
-                  names[(key)] = rlVal.name
-               } 
-            }
-            //val["name"] = resp.json.resourcelinks.find { rlid, rlval -> rlval.links.find { idx, dev -> dev == "/sensors/${key}"} }
-         }
-         names.each { id, name ->
-            activatorSensors[id].name = name
-         }
-         state.labsSensors = activatorSensors
-      }
-      catch (Exception ex) {
-         log.error "Error parsing all Labs sensors response: ${ex}"   
-      }
-      if (enableDebug) log.debug "  All Labs sensors received from Bridge: $activatorSensors"
-   }
-}
-
-/** Callback method that handles updating attributes on child sensor
- *  devices when Bridge refreshed
- */
-private void parseLabsSensorStates(sensorJson) {
-   if (enableDebug) log.debug "Parsing Labs sensor states..."
-   // Uncomment this line if asked to for debugging (or you're curious):
-   //log.debug "sensorJson = $sensorJson"
-   try {
-      sensorJson.each { id, val ->
-         DeviceWrapper device = parent.getChildDevice("${device.deviceNetworkId}/SensorRL/${id}")
-         if (device) {
-            device.createEventsFromMap(val.state)
-         }
-      }
-   }
-   catch (Exception ex) {
-      log.error "Error parsing Labs sensor states: ${ex}"   
-   }
+   asynchttpGet(callbackMethod, params, data)
 }
 
 
-/** Intended to be called from parent app to retrive previously
- *  requested list of Labs actiavtor devices
- */
-Map getAllLabsSensorsCache() {
-   return state.labsSensors 
-}
 
-/** Clears cache of Labs activator devices; useful for parent app to call if trying to ensure
- * not working with old data
- */
-void clearLabsSensorsCache() {
-   if (enableDebug) log.debug "Running clearLabsSensorsCache..."
-   state.remove("labsSensors")
-}
-// ~~~~~ start include (8) RMoRobert.CoCoHue_Common_Lib ~~~~~
-// Version 1.0.2 // library marker RMoRobert.CoCoHue_Common_Lib, line 1
+// ~~~ IMPORTED FROM RMoRobert.CoCoHue_Constants_Lib ~~~
+// Version 1.0.0
 
-// 1.0.2  - HTTP error handling tweaks // library marker RMoRobert.CoCoHue_Common_Lib, line 3
+// --------------------------------------
+// APP AND DRIVER NAMESPACE AND NAMES:
+// --------------------------------------
+@Field static final String NAMESPACE                  = "RMoRobert"
+@Field static final String DRIVER_NAME_BRIDGE         = "CoCoHue Bridge"
+@Field static final String DRIVER_NAME_BUTTON         = "CoCoHue Button"
+@Field static final String DRIVER_NAME_CT_BULB        = "CoCoHue CT Bulb"
+@Field static final String DRIVER_NAME_DIMMABLE_BULB  = "CoCoHue Dimmable Bulb"
+@Field static final String DRIVER_NAME_GROUP          = "CoCoHue Group"
+@Field static final String DRIVER_NAME_MOTION         = "CoCoHue Motion Sensor"
+@Field static final String DRIVER_NAME_PLUG           = "CoCoHue Plug"
+@Field static final String DRIVER_NAME_RGBW_BULB      = "CoCoHue RGBW Bulb"
+@Field static final String DRIVER_NAME_RGB_BULB       = "CoCoHue RGB Bulb"
+@Field static final String DRIVER_NAME_SCENE          = "CoCoHue Scene"
 
-library ( // library marker RMoRobert.CoCoHue_Common_Lib, line 5
-   base: "driver", // library marker RMoRobert.CoCoHue_Common_Lib, line 6
-   author: "RMoRobert", // library marker RMoRobert.CoCoHue_Common_Lib, line 7
-   category: "Convenience", // library marker RMoRobert.CoCoHue_Common_Lib, line 8
-   description: "For internal CoCoHue use only. Not intended for external use. Contains common code shared by many CoCoHue drivers.", // library marker RMoRobert.CoCoHue_Common_Lib, line 9
-   name: "CoCoHue_Common_Lib", // library marker RMoRobert.CoCoHue_Common_Lib, line 10
-   namespace: "RMoRobert" // library marker RMoRobert.CoCoHue_Common_Lib, line 11
-) // library marker RMoRobert.CoCoHue_Common_Lib, line 12
+// --------------------------------------
+// DNI PREFIX for child devices:
+// --------------------------------------
+@Field static final String DNI_PREFIX = "CCH"
 
-void debugOff() { // library marker RMoRobert.CoCoHue_Common_Lib, line 14
-   log.warn "Disabling debug logging" // library marker RMoRobert.CoCoHue_Common_Lib, line 15
-   device.updateSetting("enableDebug", [value:"false", type:"bool"]) // library marker RMoRobert.CoCoHue_Common_Lib, line 16
-} // library marker RMoRobert.CoCoHue_Common_Lib, line 17
-
-/** Performs basic check on data returned from HTTP response to determine if should be // library marker RMoRobert.CoCoHue_Common_Lib, line 19
-  * parsed as likely Hue Bridge data or not; returns true (if OK) or logs errors/warnings and // library marker RMoRobert.CoCoHue_Common_Lib, line 20
-  * returns false if not // library marker RMoRobert.CoCoHue_Common_Lib, line 21
-  * @param resp The async HTTP response object to examine // library marker RMoRobert.CoCoHue_Common_Lib, line 22
-  */ // library marker RMoRobert.CoCoHue_Common_Lib, line 23
-private Boolean checkIfValidResponse(hubitat.scheduling.AsyncResponse resp) { // library marker RMoRobert.CoCoHue_Common_Lib, line 24
-   if (enableDebug == true) log.debug "Checking if valid HTTP response/data from Bridge..." // library marker RMoRobert.CoCoHue_Common_Lib, line 25
-   Boolean isOK = true // library marker RMoRobert.CoCoHue_Common_Lib, line 26
-   if (resp.status < 400) { // library marker RMoRobert.CoCoHue_Common_Lib, line 27
-      if (resp.json == null) { // library marker RMoRobert.CoCoHue_Common_Lib, line 28
-         isOK = false // library marker RMoRobert.CoCoHue_Common_Lib, line 29
-         if (resp.headers == null) log.error "Error: HTTP ${resp.status} when attempting to communicate with Bridge" // library marker RMoRobert.CoCoHue_Common_Lib, line 30
-         else log.error "No JSON data found in response. ${resp.headers.'Content-Type'} (HTTP ${resp.status})" // library marker RMoRobert.CoCoHue_Common_Lib, line 31
-         parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery  // library marker RMoRobert.CoCoHue_Common_Lib, line 32
-         parent.setBridgeStatus(false) // library marker RMoRobert.CoCoHue_Common_Lib, line 33
-      } // library marker RMoRobert.CoCoHue_Common_Lib, line 34
-      else if (resp.json) { // library marker RMoRobert.CoCoHue_Common_Lib, line 35
-         if (resp.json instanceof List && resp.json[0]?.error) { // library marker RMoRobert.CoCoHue_Common_Lib, line 36
-            // Bridge (not HTTP) error (bad username, bad command formatting, etc.): // library marker RMoRobert.CoCoHue_Common_Lib, line 37
-            isOK = false // library marker RMoRobert.CoCoHue_Common_Lib, line 38
-            log.warn "Error from Hue Bridge: ${resp.json[0].error}" // library marker RMoRobert.CoCoHue_Common_Lib, line 39
-            // Not setting Bridge to offline when light/scene/group devices end up here because could // library marker RMoRobert.CoCoHue_Common_Lib, line 40
-            // be old/bad ID and don't want to consider Bridge offline just for that (but also won't set // library marker RMoRobert.CoCoHue_Common_Lib, line 41
-            // to online because wasn't successful attempt) // library marker RMoRobert.CoCoHue_Common_Lib, line 42
-         } // library marker RMoRobert.CoCoHue_Common_Lib, line 43
-         // Otherwise: probably OK (not changing anything because isOK = true already) // library marker RMoRobert.CoCoHue_Common_Lib, line 44
-      } // library marker RMoRobert.CoCoHue_Common_Lib, line 45
-      else { // library marker RMoRobert.CoCoHue_Common_Lib, line 46
-         isOK = false // library marker RMoRobert.CoCoHue_Common_Lib, line 47
-         log.warn("HTTP status code ${resp.status} from Bridge") // library marker RMoRobert.CoCoHue_Common_Lib, line 48
-         if (resp?.status >= 400) parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery  // library marker RMoRobert.CoCoHue_Common_Lib, line 49
-         parent.setBridgeStatus(false) // library marker RMoRobert.CoCoHue_Common_Lib, line 50
-      } // library marker RMoRobert.CoCoHue_Common_Lib, line 51
-      if (isOK == true) parent.setBridgeStatus(true) // library marker RMoRobert.CoCoHue_Common_Lib, line 52
-   } // library marker RMoRobert.CoCoHue_Common_Lib, line 53
-   else { // library marker RMoRobert.CoCoHue_Common_Lib, line 54
-      log.warn "Error communiating with Hue Bridge: HTTP ${resp?.status}" // library marker RMoRobert.CoCoHue_Common_Lib, line 55
-      isOK = false // library marker RMoRobert.CoCoHue_Common_Lib, line 56
-   } // library marker RMoRobert.CoCoHue_Common_Lib, line 57
-   return isOK // library marker RMoRobert.CoCoHue_Common_Lib, line 58
-} // library marker RMoRobert.CoCoHue_Common_Lib, line 59
-
-void doSendEvent(String eventName, eventValue, String eventUnit=null, Boolean forceStateChange=false) { // library marker RMoRobert.CoCoHue_Common_Lib, line 61
-   //if (enableDebug == true) log.debug "doSendEvent($eventName, $eventValue, $eventUnit)" // library marker RMoRobert.CoCoHue_Common_Lib, line 62
-   String descriptionText = "${device.displayName} ${eventName} is ${eventValue}${eventUnit ?: ''}" // library marker RMoRobert.CoCoHue_Common_Lib, line 63
-   if (settings.enableDesc == true) log.info(descriptionText) // library marker RMoRobert.CoCoHue_Common_Lib, line 64
-   if (eventUnit) { // library marker RMoRobert.CoCoHue_Common_Lib, line 65
-      if (forceStateChange == true) sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, unit: eventUnit, isStateChange: true)  // library marker RMoRobert.CoCoHue_Common_Lib, line 66
-      else sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, unit: eventUnit)  // library marker RMoRobert.CoCoHue_Common_Lib, line 67
-   } else { // library marker RMoRobert.CoCoHue_Common_Lib, line 68
-      if (forceStateChange == true) sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, isStateChange: true)  // library marker RMoRobert.CoCoHue_Common_Lib, line 69
-      else sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText)  // library marker RMoRobert.CoCoHue_Common_Lib, line 70
-   } // library marker RMoRobert.CoCoHue_Common_Lib, line 71
-} // library marker RMoRobert.CoCoHue_Common_Lib, line 72
-
-// ~~~~~ end include (8) RMoRobert.CoCoHue_Common_Lib ~~~~~
+// --------------------------------------
+// OTHER:
+// --------------------------------------
+// Used in app and Bridge driver, may eventually find use in more:
+@Field static final String APIV1 = "V1"
+@Field static final String APIV2 = "V2"

@@ -1,5 +1,5 @@
 /*
- * =============================  CoCoHue Scene (Driver) ===============================
+ * =============================  CoCoHue Scene ===============================
  *
  *  Copyright 2019-2024 Robert Morris
  * 
@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2024-07-28
- * 
+ *  Last modified: 2024-09-14
+ *
  *  Changelog:
+ *  v5.0   - Use API v2 by default, remove deprecated features
  *  v4.2    - Add support for parsing on/off events from v2 API state; library improvements; prep for mre v2 API use
  *  v4.1.5  - Fix typos
  *  v4.1.4  - Improved error handling, fix missing battery for motion sensors
@@ -37,7 +38,6 @@
  */ 
 
 
-
 import hubitat.scheduling.AsyncResponse
 import groovy.transform.Field
 
@@ -53,19 +53,19 @@ metadata {
    }
 
    preferences {
-      input name: "onPropagation", type: "enum", title: "Scene \"on\"/\"off\" behavior: when this scene is activated...",
+      input name: "onPropagation", type: "enum", title: "Scene \"on\"/\"off\" behavior: when this scene is activated... (applicable only if not using V2 API/eventstream)",
          options: [["none": "Do not manipulate other scene device states"],
                    ["groupScenesOff": "Mark other scenes for this group as off (if GroupScene)"],
-                   ["allScenesOff": "Mark all other CoCoHue scenes as off"],
+                   ["allScenesOff": "Mark all other scenes on hub from Bridge as off"],
                    ["autoOff": "Automatically mark as off in 5 seconds"]],
          defaultValue: "groupScenesOff"
-      input name: "onRefresh", type: "enum", title: "Bridge refresh on activation/deactivation: when this scene is activated or deactivated by a Hubitat command...",
+      input name: "onRefresh", type: "enum", title: "Bridge refresh on activation/deactivation: when this scene is activated or deactivated by a Hubitat command...  (suggested only if not using V2 API/eventstream and depend on status)",
          options: [["none": "Do not refresh Bridge"],
                    ["1000": "Refresh Bridge device in 1s"],
                    ["5000": "Refresh Bridge device in 5s"]],
          defaultValue: "none"
-      input name: "enableDebug", type: "bool", title: "Enable debug logging", defaultValue: true
-      input name: "enableDesc", type: "bool", title: "Enable descriptionText logging", defaultValue: true
+      input name: "logEnable", type: "bool", title: "Enable debug logging", defaultValue: true
+      input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true
    }
 }
 
@@ -83,7 +83,7 @@ void updated() {
 void initialize() {
    log.debug "initialize()"
    sendEvent(name: "numberOfButtons", value: 1)
-   if (enableDebug) {
+   if (logEnable) {
       log.debug "Debug logging will be automatically disabled in ${debugAutoDisableMinutes} minutes"
       runIn(debugAutoDisableMinutes*60, "debugOff")
    }
@@ -101,17 +101,34 @@ void parse(String description) {
 }
 
 /**
- * Parses Hue Bridge scene ID number out of Hubitat DNI for use with Hue API calls
- * Hubitat DNI is created in format "CCH/BridgeMACAbbrev/Scenes/HueSceneID", so just
- * looks for number after third "/" character
+ * Parses V1 Hue Bridge scene ID number out of Hubitat DNI for use with Hue V1 API calls
+ * Hubitat DNI is created in format "CCH/BridgeMACAbbrev/Scene/HueDeviceID", so just
+ * looks for number after third "/" character; or try state if DNI is V2 format (avoid if posssible,
+ *  as Hue is likely to deprecate V1 ID data in future)
  */
-String getHueDeviceNumber() {
+String getHueDeviceIdV1() {
+   String id = device.deviceNetworkId.split("/")[3]
+   if (id.length() > 32) { // max length of last part of V1 IDs per V2 API regex spec
+      id = state.id_v1?.split("/")[-1]
+      if (state.id_v1 == null) {
+         log.warn "Attempting to retrieve V1 ID but not in DNI or state."
+      }
+   }
+   return id
+}
+
+/**
+ * Parses V2 Hue Bridge device ID out of Hubitat DNI for use with Hue V2 API calls
+ * Hubitat DNI is created in format "CCH/BridgeMACAbbrev/Scene/HueDeviceID", so just
+ * looks for string after third "/" character
+ */
+String getHueDeviceIdV2() {
    return device.deviceNetworkId.split("/")[3]
 }
 
 void on() {
    Map<String,String> data = parent.getBridgeData()
-   Map cmd = ["scene": getHueDeviceNumber()]
+   Map cmd = ["scene": getHueDeviceIdV1()]
    Map params = [
       uri: data.fullHost,
       path: "/api/${data.username}/groups/0/action",
@@ -119,27 +136,27 @@ void on() {
       body: cmd,
       timeout: 15
       ]
-   asynchttpPut("parseSendCommandResponse", params, [attribute: 'switch', value: 'on'])
+   asynchttpPut("parseSendCommandResponseV1", params, [attribute: 'switch', value: 'on'])
    if (settings["onRefresh"] == "1000" || settings["onRefresh"] == "5000") {
       parent.runInMillis(settings["onRefresh"] as Integer, "refreshBridge")
    }
-   if (enableDebug) log.debug "Command sent to Bridge: $cmd"
+   if (logEnable) log.debug "Command sent to Bridge: $cmd"
 }
 
 void off() {
-   if (enableDebug) log.debug "off()"
+   if (logEnable) log.debug "off()"
    if (state.type == "GroupScene") {
-      if (enableDebug) log.debug "Scene is GroupScene; turning off group $state.group"
+      if (logEnable) log.debug "Scene is GroupScene; turning off group $state.group"
       List<String> dniParts = device.deviceNetworkId.split("/")
       String dni = "${dniParts[0]}/${dniParts[1]}/Group/${state.group}"
       com.hubitat.app.DeviceWrapper dev = parent.getChildDevice(dni)
       if (dev) {
-         if (enableDebug) log.debug "Hubitat device for group ${state.group} found; turning off"
+         if (logEnable) log.debug "Hubitat device for group ${state.group} found; turning off"
          dev.off()
          doSendEvent("switch", "off", null) // optimistic here; group device will catch if problem
       }
       else {
-         if (enableDebug) log.debug "Device not found; sending command directly to turn off Hue group"
+         if (logEnable) log.debug "Device not found; sending command directly to turn off Hue group"
          Map<String,String> data = parent.getBridgeData()
          Map cmd = ["on": false]
          Map params = [
@@ -149,22 +166,22 @@ void off() {
                body: cmd,
                timeout: 15
          ]
-         asynchttpPut("parseSendCommandResponse", params, [attribute: 'switch', value: 'off'])
-         if (enableDebug) log.debug "Command sent to Bridge: $cmd"
+         asynchttpPut("parseSendCommandResponseV1", params, [attribute: 'switch', value: 'off'])
+         if (logEnable) log.debug "Command sent to Bridge: $cmd"
       }
    } else if (state.type == "LightScene") {
       doSendEvent("switch", "off", null) // optimistic here (would be difficult to determine and aggregate individual light responses and should be rare anyway)
-      if (enableDebug) log.debug "Scene is LightScene; turning off lights $state.lights"
+      if (logEnable) log.debug "Scene is LightScene; turning off lights $state.lights"
       state.lights.each {
          List<String> dniParts = device.deviceNetworkId.split("/")
          String dni = "${dniParts[0]}/${dniParts[1]}/Light/${it}"
          com.hubitat.app.DeviceWrapper dev = parent.getChildDevice(dni)
          if (dev) {
-            if (enableDebug) log.debug "Hubitat device for light ${it} found; turning off"
+            if (logEnable) log.debug "Hubitat device for light ${it} found; turning off"
             dev.off()
          }
          else {
-            if (enableDebug) log.debug "Device not found; sending command directly to turn off Hue light"
+            if (logEnable) log.debug "Device not found; sending command directly to turn off Hue light"
             Map<String,String> data = parent.getBridgeData()
             Map cmd = ["on": false]
             Map params = [
@@ -174,8 +191,8 @@ void off() {
                body: cmd,
                timeout: 15
             ]
-            asynchttpPut("parseSendCommandResponse", params)
-            if (enableDebug) log.debug "Command sent to Bridge: $cmd"
+            asynchttpPut("parseSendCommandResponseV1", params)
+            if (logEnable) log.debug "Command sent to Bridge: $cmd"
          }
       }
       if (settings["onRefresh"] == "1000" || settings["onRefresh"] == "5000") {
@@ -192,8 +209,8 @@ void off() {
  * a sendEvent for each relevant attribute; intended to be called when EventSocket data
  * received for device (as an alternative to polling)
  */
-void createEventsFromSSE(Map data) {
-   if (enableDebug == true) log.debug "createEventsFromSSE($data)"
+void createEventsFromMapV2(Map data) {
+   if (logEnable == true) log.debug "createEventsFromMapV2($data)"
    String eventName, eventUnit, descriptionText
    def eventValue // could be String or number
    Boolean hasCT = data.color_temperature?.mirek != null
@@ -210,21 +227,21 @@ void createEventsFromSSE(Map data) {
             if (state.id_v1 != value) state.id_v1 = value
             break
          default:
-            if (enableDebug == true) "not handling: $key: $value"
+            if (logEnable == true) "not handling: $key: $value"
       }
    }
 }
 
 /** 
-  * Parses response from Bridge (or not) after sendBridgeCommand. Updates device state if
+  * Parses response from Bridge (or not) after sendBridgeCommandV1. Updates device state if
   * appears to have been successful.
   * @param resp Async HTTP response object
   * @param data Map with keys 'attribute' and 'value' containing event data to send if successful (e.g., [attribute: 'switch', value: 'off'])
   */
-void parseSendCommandResponse(AsyncResponse resp, Map data) {
-   if (enableDebug) log.debug "Response from Bridge: ${resp.status}; data from app = $data"
+void parseSendCommandResponseV1(AsyncResponse resp, Map data) {
+   if (logEnable) log.debug "Response from Bridge: ${resp.status}; data from app = $data"
    if (checkIfValidResponse(resp) && data?.attribute != null && data?.value != null) {
-      if (enableDebug) log.debug "  Bridge response valid; running creating events"
+      if (logEnable) log.debug "  Bridge response valid; running creating events"
       if (device.currentValue(data.attribute) != data.value) doSendEvent(data.attribute, data.value)   
       if (data.attribute == "switch" && data.value == "on") {
          if (settings["onPropagation"] == "groupScenesOff") {
@@ -237,28 +254,28 @@ void parseSendCommandResponse(AsyncResponse resp, Map data) {
             runIn(5, autoOffHandler)
          }
          else {
-            if (enableDebug) log.debug "No scene onPropagation configured; leaving other scene states as-is"
+            if (logEnable) log.debug "No scene onPropagation configured; leaving other scene states as-is"
          }
       }
    }
    else {
-      if (enableDebug) log.debug "  Not creating events from map because not specified to do or Bridge response invalid"
+      if (logEnable) log.debug "  Not creating events from map because not specified to do or Bridge response invalid"
    }
 }
 
 void push(Number btnNum) {
-   if (enableDebug) log.debug "push($btnNum)"
+   if (logEnable) log.debug "push($btnNum)"
    on()
    doSendEvent("pushed", 1, null, true)
 }
 
 /** Gets data about scene from Bridge; does not update bulb/group status */
 void refresh() {
-   if (enableDebug) log.debug "refresh()"
+   if (logEnable) log.debug "refresh()"
    Map<String,String> data = parent.getBridgeData()
    Map sceneParams = [
       uri: data.fullHost,
-      path: "/api/${data.username}/scenes/${getHueDeviceNumber()}",
+      path: "/api/${data.username}/scenes/${getHueDeviceIdV1()}",
       contentType: 'application/json',
       timeout: 15
       ]
@@ -269,7 +286,7 @@ void refresh() {
  * Parses data returned when getting scene data from Bridge
  */
 void parseSceneAttributeResponse(resp, data) {
-   if (enableDebug) log.debug "parseSceneAttributeResponse response from Bridge: $resp.status"
+   if (logEnable) log.debug "parseSceneAttributeResponse response from Bridge: $resp.status"
    Map sceneAttributes
    try {
       sceneAttributes = resp.json
@@ -301,7 +318,7 @@ void parseSceneAttributeResponse(resp, data) {
  * approximately warm white and off.
  */
 private void setDefaultAttributeValues() {
-   if (enableDebug) log.debug "Setting scene device states to sensibile default values..."
+   if (logEnable) log.debug "Setting scene device states to sensibile default values..."
    event = sendEvent(name: "switch", value: "off", isStateChange: false)
    event = sendEvent(name: "pushed", value: 1, isStateChange: false)
 }
@@ -317,78 +334,129 @@ void autoOffHandler() {
 String getGroupID() {
    return state.group
 }
-// ~~~~~ start include (8) RMoRobert.CoCoHue_Common_Lib ~~~~~
-// Version 1.0.2 // library marker RMoRobert.CoCoHue_Common_Lib, line 1
 
-// 1.0.2  - HTTP error handling tweaks // library marker RMoRobert.CoCoHue_Common_Lib, line 3
+// ~~~ IMPORTED FROM RMoRobert.CoCoHue_Common_Lib ~~~
+// Version 1.0.3
+// For use with CoCoHue drivers (not app)
 
-library ( // library marker RMoRobert.CoCoHue_Common_Lib, line 5
-   base: "driver", // library marker RMoRobert.CoCoHue_Common_Lib, line 6
-   author: "RMoRobert", // library marker RMoRobert.CoCoHue_Common_Lib, line 7
-   category: "Convenience", // library marker RMoRobert.CoCoHue_Common_Lib, line 8
-   description: "For internal CoCoHue use only. Not intended for external use. Contains common code shared by many CoCoHue drivers.", // library marker RMoRobert.CoCoHue_Common_Lib, line 9
-   name: "CoCoHue_Common_Lib", // library marker RMoRobert.CoCoHue_Common_Lib, line 10
-   namespace: "RMoRobert" // library marker RMoRobert.CoCoHue_Common_Lib, line 11
-) // library marker RMoRobert.CoCoHue_Common_Lib, line 12
+/**
+ * 1.0.4 - Add common bridgeAsyncGetV2() method (goal to reduce individual driver code)
+ * 1.0.3 - Add APIV1 and APIV2 "constants"
+ * 1.0.2  - HTTP error handling tweaks
+ */
 
-void debugOff() { // library marker RMoRobert.CoCoHue_Common_Lib, line 14
-   log.warn "Disabling debug logging" // library marker RMoRobert.CoCoHue_Common_Lib, line 15
-   device.updateSetting("enableDebug", [value:"false", type:"bool"]) // library marker RMoRobert.CoCoHue_Common_Lib, line 16
-} // library marker RMoRobert.CoCoHue_Common_Lib, line 17
+void debugOff() {
+   log.warn "Disabling debug logging"
+   device.updateSetting("logEnable", [value:"false", type:"bool"])
+}
 
-/** Performs basic check on data returned from HTTP response to determine if should be // library marker RMoRobert.CoCoHue_Common_Lib, line 19
-  * parsed as likely Hue Bridge data or not; returns true (if OK) or logs errors/warnings and // library marker RMoRobert.CoCoHue_Common_Lib, line 20
-  * returns false if not // library marker RMoRobert.CoCoHue_Common_Lib, line 21
-  * @param resp The async HTTP response object to examine // library marker RMoRobert.CoCoHue_Common_Lib, line 22
-  */ // library marker RMoRobert.CoCoHue_Common_Lib, line 23
-private Boolean checkIfValidResponse(hubitat.scheduling.AsyncResponse resp) { // library marker RMoRobert.CoCoHue_Common_Lib, line 24
-   if (enableDebug == true) log.debug "Checking if valid HTTP response/data from Bridge..." // library marker RMoRobert.CoCoHue_Common_Lib, line 25
-   Boolean isOK = true // library marker RMoRobert.CoCoHue_Common_Lib, line 26
-   if (resp.status < 400) { // library marker RMoRobert.CoCoHue_Common_Lib, line 27
-      if (resp.json == null) { // library marker RMoRobert.CoCoHue_Common_Lib, line 28
-         isOK = false // library marker RMoRobert.CoCoHue_Common_Lib, line 29
-         if (resp.headers == null) log.error "Error: HTTP ${resp.status} when attempting to communicate with Bridge" // library marker RMoRobert.CoCoHue_Common_Lib, line 30
-         else log.error "No JSON data found in response. ${resp.headers.'Content-Type'} (HTTP ${resp.status})" // library marker RMoRobert.CoCoHue_Common_Lib, line 31
-         parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery  // library marker RMoRobert.CoCoHue_Common_Lib, line 32
-         parent.setBridgeStatus(false) // library marker RMoRobert.CoCoHue_Common_Lib, line 33
-      } // library marker RMoRobert.CoCoHue_Common_Lib, line 34
-      else if (resp.json) { // library marker RMoRobert.CoCoHue_Common_Lib, line 35
-         if (resp.json instanceof List && resp.json[0]?.error) { // library marker RMoRobert.CoCoHue_Common_Lib, line 36
-            // Bridge (not HTTP) error (bad username, bad command formatting, etc.): // library marker RMoRobert.CoCoHue_Common_Lib, line 37
-            isOK = false // library marker RMoRobert.CoCoHue_Common_Lib, line 38
-            log.warn "Error from Hue Bridge: ${resp.json[0].error}" // library marker RMoRobert.CoCoHue_Common_Lib, line 39
-            // Not setting Bridge to offline when light/scene/group devices end up here because could // library marker RMoRobert.CoCoHue_Common_Lib, line 40
-            // be old/bad ID and don't want to consider Bridge offline just for that (but also won't set // library marker RMoRobert.CoCoHue_Common_Lib, line 41
-            // to online because wasn't successful attempt) // library marker RMoRobert.CoCoHue_Common_Lib, line 42
-         } // library marker RMoRobert.CoCoHue_Common_Lib, line 43
-         // Otherwise: probably OK (not changing anything because isOK = true already) // library marker RMoRobert.CoCoHue_Common_Lib, line 44
-      } // library marker RMoRobert.CoCoHue_Common_Lib, line 45
-      else { // library marker RMoRobert.CoCoHue_Common_Lib, line 46
-         isOK = false // library marker RMoRobert.CoCoHue_Common_Lib, line 47
-         log.warn("HTTP status code ${resp.status} from Bridge") // library marker RMoRobert.CoCoHue_Common_Lib, line 48
-         if (resp?.status >= 400) parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery  // library marker RMoRobert.CoCoHue_Common_Lib, line 49
-         parent.setBridgeStatus(false) // library marker RMoRobert.CoCoHue_Common_Lib, line 50
-      } // library marker RMoRobert.CoCoHue_Common_Lib, line 51
-      if (isOK == true) parent.setBridgeStatus(true) // library marker RMoRobert.CoCoHue_Common_Lib, line 52
-   } // library marker RMoRobert.CoCoHue_Common_Lib, line 53
-   else { // library marker RMoRobert.CoCoHue_Common_Lib, line 54
-      log.warn "Error communiating with Hue Bridge: HTTP ${resp?.status}" // library marker RMoRobert.CoCoHue_Common_Lib, line 55
-      isOK = false // library marker RMoRobert.CoCoHue_Common_Lib, line 56
-   } // library marker RMoRobert.CoCoHue_Common_Lib, line 57
-   return isOK // library marker RMoRobert.CoCoHue_Common_Lib, line 58
-} // library marker RMoRobert.CoCoHue_Common_Lib, line 59
+/** Performs basic check on data returned from HTTP response to determine if should be
+  * parsed as likely Hue Bridge data or not; returns true (if OK) or logs errors/warnings and
+  * returns false if not
+  * @param resp The async HTTP response object to examine
+  */
+private Boolean checkIfValidResponse(hubitat.scheduling.AsyncResponse resp) {
+   if (logEnable == true) log.debug "Checking if valid HTTP response/data from Bridge..."
+   Boolean isOK = true
+   if (resp.status < 400) {
+      if (resp.json == null) {
+         isOK = false
+         if (resp.headers == null) log.error "Error: HTTP ${resp.status} when attempting to communicate with Bridge"
+         else log.error "No JSON data found in response. ${resp.headers.'Content-Type'} (HTTP ${resp.status})"
+         parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery 
+         parent.setBridgeOnlineStatus(false)
+      }
+      else if (resp.json) {
+         if ((resp.json instanceof List) && resp.json.getAt(0).error) {
+            // Bridge (not HTTP) error (bad username, bad command formatting, etc.):
+            isOK = false
+            log.warn "Error from Hue Bridge: ${resp.json[0].error}"
+            // Not setting Bridge to offline when light/scene/group devices end up here because could
+            // be old/bad ID and don't want to consider Bridge offline just for that (but also won't set
+            // to online because wasn't successful attempt)
+         }
+         // Otherwise: probably OK (not changing anything because isOK = true already)
+      }
+      else {
+         isOK = false
+         log.warn("HTTP status code ${resp.status} from Bridge")
+         // TODO: Update for mDNS if/when switch:
+         if (resp?.status >= 400) parent.sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery 
+         parent.setBridgeOnlineStatus(false)
+      }
+      if (isOK == true) parent.setBridgeOnlineStatus(true)
+   }
+   else {
+      log.warn "Error communicating with Hue Bridge: HTTP ${resp?.status}"
+      isOK = false
+   }
+   return isOK
+}
 
-void doSendEvent(String eventName, eventValue, String eventUnit=null, Boolean forceStateChange=false) { // library marker RMoRobert.CoCoHue_Common_Lib, line 61
-   //if (enableDebug == true) log.debug "doSendEvent($eventName, $eventValue, $eventUnit)" // library marker RMoRobert.CoCoHue_Common_Lib, line 62
-   String descriptionText = "${device.displayName} ${eventName} is ${eventValue}${eventUnit ?: ''}" // library marker RMoRobert.CoCoHue_Common_Lib, line 63
-   if (settings.enableDesc == true) log.info(descriptionText) // library marker RMoRobert.CoCoHue_Common_Lib, line 64
-   if (eventUnit) { // library marker RMoRobert.CoCoHue_Common_Lib, line 65
-      if (forceStateChange == true) sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, unit: eventUnit, isStateChange: true)  // library marker RMoRobert.CoCoHue_Common_Lib, line 66
-      else sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, unit: eventUnit)  // library marker RMoRobert.CoCoHue_Common_Lib, line 67
-   } else { // library marker RMoRobert.CoCoHue_Common_Lib, line 68
-      if (forceStateChange == true) sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, isStateChange: true)  // library marker RMoRobert.CoCoHue_Common_Lib, line 69
-      else sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText)  // library marker RMoRobert.CoCoHue_Common_Lib, line 70
-   } // library marker RMoRobert.CoCoHue_Common_Lib, line 71
-} // library marker RMoRobert.CoCoHue_Common_Lib, line 72
+void doSendEvent(String eventName, eventValue, String eventUnit=null, Boolean forceStateChange=false) {
+   //if (logEnable == true) log.debug "doSendEvent($eventName, $eventValue, $eventUnit)"
+   String descriptionText = "${device.displayName} ${eventName} is ${eventValue}${eventUnit ?: ''}"
+   if (settings.txtEnable == true) log.info(descriptionText)
+   if (eventUnit) {
+      if (forceStateChange == true) sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, unit: eventUnit, isStateChange: true) 
+      else sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, unit: eventUnit) 
+   } else {
+      if (forceStateChange == true) sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText, isStateChange: true) 
+      else sendEvent(name: eventName, value: eventValue, descriptionText: descriptionText) 
+   }
+}
 
-// ~~~~~ end include (8) RMoRobert.CoCoHue_Common_Lib ~~~~~
+// HTTP methods (might be better to split into separate library if not needed for some?)
+
+/** Performs asynchttpGet() to Bridge using data retrieved from parent app or as passed in
+  * @param callbackMethod Callback method
+  * @param clipV2Path The Hue V2 API path (without '/clip/v2', automatically prepended), e.g. '/resource' or '/resource/light'
+  * @param bridgeData Bridge data from parent getBridgeData() call, or will call this method on parent if null
+  * @param data Extra data to pass as optional third (data) parameter to asynchtttpGet() method
+  */
+void bridgeAsyncGetV2(String callbackMethod, String clipV2Path, Map<String,String> bridgeData = null, Map data = null) {
+   if (bridgeData == null) {
+      bridgeData = parent.getBridgeData()
+   }
+   Map params = [
+      uri: "https://${bridgeData.ip}",
+      path: "/clip/v2${clipV2Path}",
+      headers: ["hue-application-key": bridgeData.username],
+      contentType: "application/json",
+      timeout: 15,
+      ignoreSSLIssues: true
+   ]
+   asynchttpGet(callbackMethod, params, data)
+}
+
+
+
+// ~~~ IMPORTED FROM RMoRobert.CoCoHue_Constants_Lib ~~~
+// Version 1.0.0
+
+// --------------------------------------
+// APP AND DRIVER NAMESPACE AND NAMES:
+// --------------------------------------
+@Field static final String NAMESPACE                  = "RMoRobert"
+@Field static final String DRIVER_NAME_BRIDGE         = "CoCoHue Bridge"
+@Field static final String DRIVER_NAME_BUTTON         = "CoCoHue Button"
+@Field static final String DRIVER_NAME_CT_BULB        = "CoCoHue CT Bulb"
+@Field static final String DRIVER_NAME_DIMMABLE_BULB  = "CoCoHue Dimmable Bulb"
+@Field static final String DRIVER_NAME_GROUP          = "CoCoHue Group"
+@Field static final String DRIVER_NAME_MOTION         = "CoCoHue Motion Sensor"
+@Field static final String DRIVER_NAME_PLUG           = "CoCoHue Plug"
+@Field static final String DRIVER_NAME_RGBW_BULB      = "CoCoHue RGBW Bulb"
+@Field static final String DRIVER_NAME_RGB_BULB       = "CoCoHue RGB Bulb"
+@Field static final String DRIVER_NAME_SCENE          = "CoCoHue Scene"
+
+// --------------------------------------
+// DNI PREFIX for child devices:
+// --------------------------------------
+@Field static final String DNI_PREFIX = "CCH"
+
+// --------------------------------------
+// OTHER:
+// --------------------------------------
+// Used in app and Bridge driver, may eventually find use in more:
+@Field static final String APIV1 = "V1"
+@Field static final String APIV2 = "V2"

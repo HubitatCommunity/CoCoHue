@@ -1,5 +1,5 @@
 /*
- * =============================  CoCoHue CT Bulb (Driver) ===============================
+ * =============================  CoCoHue RGB Bulb (Driver) ===============================
  *
  *  Copyright 2019-2024 Robert Morris
  * 
@@ -13,30 +13,11 @@
  *  for the specific language governing permissions and limitations under the License.
  *
  * =======================================================================================
-
+ *
  *  Last modified: 2024-09-14
  *
  *  Changelog:
- *  v5.0    - Use API v2 by default, remove deprecated features
- *  v4.2    - Library updates, prep for more v2 API
- *  v4.1.8  - Fix for division by zero for unexpected colorTemperature values
- *  v4.1.7  - Fix for unexpected Hubitat event creation when v2 API reports level of 0
- *  v4.1.5  - Improved v2 brightness parsing
- *  v4.1.4  - Improved error handling, fix missing battery for motion sensors
- *  v4.0.2  - Fix to avoid unepected "off" transition time
- *  v4.0    - Add SSE support for push 
- *  v3.5.1  - Refactor some code into libraries (code still precompiled before upload; should not have any visible changes)
- *  v3.5    - Add LevelPreset capability (replaces old level prestaging option); added "reachable" attribte
-              from Bridge to bulb and group drivers (thanks to @jtp10181 for original implementation)
- *  v3.1.3  - Adjust setLevel(0) to honor rate
- *  v3.1.1  - Fix for setColorTempeature() not turning bulb on in some cases
- *  v3.1    - Improved error handling and debug logging; added optional setColorTemperature parameters
- *  v3.0    - Fix so events no created until Bridge response received (as was done for other drivers in 2.0); improved HTTP error handling
- *  v2.1.1  - Improved rounding for level (brightness) to/from Bridge
- *  v2.1    - More static typing
- *  v2.0    - Added startLevelChange rate option; improved HTTP error handling; attribute events now generated
- *            only after hearing back from Bridge; Bridge online/offline status improvements
- *  v1.9    - Initial release (based on RGBW bulb driver)
+ *  v5.0    - Initial release, based on RGBW driver
  */ 
 
 
@@ -49,38 +30,57 @@ import hubitat.scheduling.AsyncResponse
 @Field static final minMireds = 153
 @Field static final maxMireds = 500
 
-// Default preference values
-@Field static final BigDecimal defaultLevelTransitionTime = 1000
+@Field static final Map<Integer,String> lightEffects = [0: "None", 1:"Color Loop"]
+@Field static final Integer maxEffectNumber = 1
+
+// These defaults are specified in Hue (decisecond) durations, used if not specified in preference or command:
+@Field static final Integer defaultLevelTransitionTime = 4
+@Field static final Integer defaultOnTransitionTime = 4
 
 // Default list of command Map keys to ignore if SSE enabled and command is sent from hub (not polled from Bridge), used to
 // ignore duplicates that are expected to be processed from SSE momentarily:
-// (for CT devices, should cover most things)
-@Field static final List<String> listKeysToIgnoreIfSSEEnabledAndNotFromBridge = ["on", "ct", "bri"]
+@Field static final List<String> listKeysToIgnoreIfSSEEnabledAndNotFromBridge = ["on", "bri"]
+
+// "ct" or "hs" for now -- to be finalized later:
+@Field static final String xyParsingMode = "hs"
 
 metadata {
-   definition(name: "CoCoHue CT Bulb", namespace: "RMoRobert", author: "Robert Morris", importUrl: "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-ct-bulb-driver.groovy") {
+   definition(name: "CoCoHue RGB Bulb", namespace: "RMoRobert", author: "Robert Morris", importUrl: "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-rgb-bulb-driver.groovy") {
       capability "Actuator"
-      capability "ColorTemperature"
+      capability "ColorControl"
       capability "Refresh"
       capability "Switch"
       capability "SwitchLevel"
       capability "ChangeLevel"
       capability "Light"
+      capability "ColorMode"
+      capability "LightEffects"
 
       command "flash"
       command "flashOnce"
       command "flashOff"
 
+      attribute "effect", "string"
       attribute "reachable", "string"
    }
 
    preferences {
-      input name: "transitionTime", type: "enum", description: "", title: "Transition time", options:
-         [[0:"ASAP"],[400:"400ms"],[500:"500ms"],[1000:"1s"],[1500:"1.5s"],[2000:"2s"],[5000:"5s"]], defaultValue: 400
+      input name: "transitionTime", type: "enum", description: "", title: "Level transition time", options:
+         [[0:"ASAP"],[200:"200ms"],[400:"400ms (default)"],[500:"500ms"],[1000:"1s"],[1500:"1.5s"],[2000:"2s"],[5000:"5s"]], defaultValue: 400
       input name: "levelChangeRate", type: "enum", description: "", title: '"Start level change" rate', options:
-         [["slow":"Slow"],["medium":"Medium"],["fast":"Fast (default)"]], defaultValue: "fast"      
-      input name: "ctTransitionTime", type: "enum", description: "", title: "Color temperature transition time", options:
+         [["slow":"Slow"],["medium":"Medium"],["fast":"Fast (default)"]], defaultValue: "fast"
+      /*
+      // Sending "bri" with "on:true" alone seems to have no effect, so might as well not implement this for now...
+      input name: "onTransitionTime", type: "enum", description: "", title: "On transition time", options:
+         [[(-2): "Hue default/do not specify (recommended; default; Hue may ignore other values)"],[0:"ASAP"],[200:"200ms"],[400:"400ms (default)"],[500:"500ms"],[1000:"1s"],[1500:"1.5s"],[2000:"2s"],[5000:"5s"]], defaultValue: -2
+      // Not recommended because of problem described here:  https://developers.meethue.com/forum/t/using-transitiontime-with-on-false-resets-bri-to-1/4585
+      input name: "offTransitionTime", type: "enum", description: "", title: "Off transition time", options:
+         [[(-2): "Hue default/do not specify (recommended; default)"],[(-1): "Use on transition time"],[0:"ASAP"],[200:"200ms"],[400:"400ms (default)"],[500:"500ms"],[1000:"1s"],[1500:"1.5s"],[2000:"2s"],[5000:"5s"]], defaultValue: -1
+      */
+      input name: "rgbTransitionTime", type: "enum", description: "", title: "RGB transition time", options:
          [[(-2): "Hue default/do not specify"],[(-1): "Use level transition time (default)"],[0:"ASAP"],[200:"200ms"],[400:"400ms (default)"],[500:"500ms"],[1000:"1s"],[1500:"1.5s"],[2000:"2s"],[5000:"5s"]], defaultValue: -1
+      input name: "hiRezHue", type: "bool", title: "Enable hue in degrees (0-360 instead of 0-100)", defaultValue: false
+      // Note: the following setting does not apply to SSE, which should update the group state immediately regardless:
       input name: "updateGroups", type: "bool", description: "", title: "Update state of groups immediately when bulb state changes (applicable only if not using V2 API/eventstream)",
          defaultValue: false
       input name: "logEnable", type: "bool", title: "Enable debug logging", defaultValue: true
@@ -90,6 +90,8 @@ metadata {
 
 void installed() {
    log.debug "installed()"
+   groovy.json.JsonBuilder le = new groovy.json.JsonBuilder(lightEffects)
+   sendEvent(name: "lightEffects", value: le)
    initialize()
 }
 
@@ -108,7 +110,7 @@ void initialize() {
 
 // Probably won't happen but...
 void parse(String description) {
-   log.warn("Running unimplemented parse for: '${description}'")
+   log.warn "Running unimplemented parse for: '${description}'"
 }
 
 /**
@@ -139,10 +141,13 @@ String getHueDeviceIdV2() {
 
 void on(Number transitionTime = null) {
    if (logEnable == true) log.debug "on()"
-   Map bridgeCmd = ["on": true]
-   if (transitionTime != null) {
-      scaledRate = (transitionTime * 10) as Integer
-      bridgeCmd << ["transitiontime": scaledRate]
+   Map bridgeCmd
+   Integer scaledRate = transitionTime != null ? Math.round(transitionTime * 10).toInteger() : getScaledOnTransitionTime()
+   if (scaledRate == null) {
+      bridgeCmd = ["on": true]
+   }
+   else {
+      bridgeCmd = ["on": true, "transitiontime": scaledRate]
    }
    sendBridgeCommandV1(bridgeCmd)
 }
@@ -165,13 +170,14 @@ void refresh() {
 }
 
 /**
- * Iterates over Hue light state commands/states in Hue format (e.g., ["on": true]) and does
- * a sendEvent for each relevant attribute; intended to be called when commands are sent
+ * (for "classic"/v1 HTTP API)
+ * Iterates over Hue light state commands/states in Hue API v1 format (e.g., ["on": true]) and does
+ * a sendEvent for each relevant attribute; intended to be called either when commands are sent
  * to Bridge or to parse/update light states based on data received from Bridge
  * @param bridgeMap Map of light states that are or would be sent to bridge OR state as received from
  *  Bridge
  * @param isFromBridge Set to true if this is data read from Hue Bridge rather than intended to be sent
- *  to Bridge; TODO: check if this is still needed now that pseudo-prestaging removed
+ *  to Bridge; TODO: see if still needed after removal of pseudo-prestaging features
  */
 void createEventsFromMapV1(Map bridgeCommandMap, Boolean isFromBridge = false, Set<String> keysToIgnoreIfSSEEnabledAndNotFromBridge=listKeysToIgnoreIfSSEEnabledAndNotFromBridge) {
    if (!bridgeCommandMap) {
@@ -186,6 +192,16 @@ void createEventsFromMapV1(Map bridgeCommandMap, Boolean isFromBridge = false, S
    }
    String eventName, eventUnit, descriptionText
    def eventValue // could be String or number
+   String colorMode = bridgeMap["colormode"]
+   if (isFromBridge && colorMode == "xy") {
+      if (xyParsingMode == "ct") {
+         colorMode = "ct"
+      }
+      else {
+         colorMode = "hs"
+      }
+      if (logEnable == true) log.debug "In XY mode but parsing as CT (colorMode = $colorMode)"
+   }
    Boolean isOn = bridgeMap["on"]
    bridgeMap.each {
       switch (it.key) {
@@ -197,20 +213,58 @@ void createEventsFromMapV1(Map bridgeCommandMap, Boolean isFromBridge = false, S
             break
          case "bri":
             eventName = "level"
-            eventValue = scaleBriFromBridge(it.value)
+            eventValue = scaleBriFromBridge(it.value, "1")
             eventUnit = "%"
             if (device.currentValue(eventName) != eventValue) {
                doSendEvent(eventName, eventValue, eventUnit)
             }
             break
-         case "ct":
-            eventName = "colorTemperature"
-            eventValue = it.value == 0 ? 0 : scaleCTFromBridge(it.value)
-            eventUnit = "K"
-            if (device.currentValue(eventName) != eventValue && eventValue != 0) {
+         case "colormode":
+            eventName = "colorMode"
+            eventValue = (colorMode == "ct" ? "CT" : "RGB")
+            // Doing this above instead of reading from Bridge like used to...
+            //eventValue = (it.value == "hs" ? "RGB" : "CT")
+            eventUnit = null
+            if (device.currentValue(eventName) != eventValue) {
                doSendEvent(eventName, eventValue, eventUnit)
             }
-            setGenericTempName(eventValue)
+            break
+         case "hue":
+            eventName = "hue"
+            eventValue = scaleHueFromBridge(it.value)
+            eventUnit = null
+            if (device.currentValue(eventName) != eventValue) {
+               doSendEvent(eventName, eventValue, eventUnit)
+            }
+            if (isFromBridge && colorMode != "hs") {
+                  if (logEnable == true) log.debug "Skipping colorMode and color name event creation because light not in hs mode"
+                  break
+            }
+            setGenericName(eventValue)
+            if (isFromBridge) break
+            eventName = "colorMode"
+            eventValue = "RGB"
+            eventUnit = null
+            if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue, eventUnit)
+            break
+         case "sat":
+            eventName = "saturation"
+            eventValue = scaleSatFromBridge(it.value)
+            eventUnit = null
+            if (device.currentValue(eventName) != eventValue) {
+               doSendEvent(eventName, eventValue, eventUnit)
+            }
+            if (isFromBridge) break
+            eventName = "colorMode"
+            eventValue = "RGB"
+            eventUnit = null
+            if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue, eventUnit)
+            break
+         case "effect":
+            eventName = "effect"
+            eventValue = (it.value == "colorloop" ? "colorloop" : "none")
+            eventUnit = null
+            if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue, eventUnit)
             break
          case "reachable":
             eventName = "reachable"
@@ -232,7 +286,7 @@ void createEventsFromMapV1(Map bridgeCommandMap, Boolean isFromBridge = false, S
 }
 
 /**
- * (for V2 API)
+ * (for "new"/V2 API, including eventstream data)
  * Iterates over Hue light state states in Hue API v2 format (e.g., "on={on=true}") and does
  * a sendEvent for each relevant attribute; intended to be called when EventSocket data
  * received for device (as an alternative to polling)
@@ -258,17 +312,17 @@ void createEventsFromMapV2(Map data) {
                doSendEvent(eventName, eventValue, eventUnit)
             }
             break
-         case "color_temperature":
+         case "color": 
             if (!hasCT) {
-               if (logEnable == true) "ignoring color_temperature because mirek null"
-               return
+               if (logEnable == true) log.debug "color received (presuming xy, no CT)"
+               // no point in doing this yet--but maybe if can convert XY/HS some day:
+               //parent.refreshBridgeWithDealay()
             }
-            eventName = "colorTemperature"
-            eventValue = scaleCTFromBridge(value.mirek)
-            eventUnit = "K"
-            if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue, eventUnit)
-            setGenericTempName(eventValue)
+            else {
+               if (logEnable == true) log.debug "color received but also have CT, so assume CT parsing"
+            }
             break
+         // TODO: Figure out equivalent of "reachable" in V2 (zigbee_connectivity on owner?)
          case "id_v1":
             if (state.id_v1 != value) state.id_v1 = value
             break
@@ -279,8 +333,8 @@ void createEventsFromMapV2(Map data) {
 }
 
 /**
- * Sends HTTP PUT to Bridge using the either command map provided
- * @param commandMap Groovy Map (will be converted to JSON) of Hue API commands to send, e.g., [on: true]
+ * Sends HTTP PUT to Bridge using the V1-format map data provided
+ * @param commandMap Groovy Map (will be converted to JSON) of Hue V1 API commands to send, e.g., [on: true]
  * @param createHubEvents Will iterate over Bridge command map and do sendEvent for all
  *        affected device attributes (e.g., will send an "on" event for "switch" if ["on": true] in map)
  */
@@ -573,71 +627,104 @@ Integer scaleBriFromBridge(Number bridgeLevel, String apiVersion="1") {
    return scaledLevel
 }
 
-// ~~~ IMPORTED FROM RMoRobert.CoCoHue_CT_Lib ~~~
-// Version 1.0.1
+// ~~~ IMPORTED FROM RMoRobert.CoCoHue_HueSat_Lib ~~~
+// Version 1.0.2
 
-void setColorTemperature(Number colorTemperature, Number level = null, Number transitionTime = null) {
-   if (logEnable == true) log.debug "setColorTemperature($colorTemperature, $level, $transitionTime)"
-   state.lastKnownColorMode = "CT"
-   Integer newCT = scaleCTToBridge(colorTemperature)
-   Integer scaledRate = defaultLevelTransitionTime/100
-   if (transitionTime != null) {
-      scaledRate = (transitionTime * 10) as Integer
+void setColor(Map value) {
+   if (logEnable == true) log.debug "setColor($value)"
+   state.lastKnownColorMode = "RGB"
+   if (value.hue == null || value.hue == "NaN" || value.saturation == null || value.saturation == "NaN") {
+      if (logEnable == true) log.debug "Exiting setColor because no hue and/or saturation set"
+      return
    }
-   else if (settings["transitionTime"] != null) {
-      scaledRate = ((settings["transitionTime"] as Integer) / 100) as Integer
+   Map bridgeCmd 
+   Integer newHue = scaleHueToBridge(value.hue)
+   Integer newSat = scaleSatToBridge(value.saturation)
+   Integer newBri = (value.level != null && value.level != "NaN") ? scaleBriToBridge(value.level) : null
+   Integer scaledRate = value.rate != null ? Math.round(value.rate * 10).toInteger() : getScaledRGBTransitionTime()
+   if (scaledRate == null) {
+      bridgeCmd = ["on": true, "hue": newHue, "sat": newSat]
    }
-   Map bridgeCmd = ["on": true, "ct": newCT, "transitiontime": scaledRate]
-   if (level) {
-      bridgeCmd << ["bri": scaleBriToBridge(level)]
+   else {
+      bridgeCmd = ["on": true, "hue": newHue, "sat": newSat, "transitiontime": scaledRate]
    }
+   if (newBri) bridgeCmd << ["bri": newBri]
    sendBridgeCommandV1(bridgeCmd)
 }
 
-/**
- * Scales CT from Kelvin (Hubitat units) to mireds (Hue units)
- */
-private Integer scaleCTToBridge(Number kelvinCT, Boolean checkIfInRange=true) {
-   Integer mireds = Math.round(1000000/kelvinCT) as Integer
-   if (checkIfInRange == true) {
-      if (mireds < minMireds) mireds = minMireds
-      else if (mireds > maxMireds) mireds = maxMireds
-   }
-   return mireds
+void setHue(value) {
+   if (logEnable == true) log.debug "setHue($value)"
+   state.lastKnownColorMode = "RGB"
+   Integer newHue = scaleHueToBridge(value)
+   Integer scaledRate = ((transitionTime != null ? transitionTime.toBigDecimal() : defaultLevelTransitionTime) / 100).toInteger()
+   Map bridgeCmd = ["on": true, "hue": newHue, "transitiontime": scaledRate]
+   sendBridgeCommandV1(bridgeCmd)
 }
 
-/**
- * Scales CT from mireds (Hue units) to Kelvin (Hubitat units)
- */
-private Integer scaleCTFromBridge(Number mireds) {
-   Integer kelvin = Math.round(1000000/mireds) as Integer
-   return kelvin
+void setSaturation(value) {
+   if (logEnable == true) log.debug "setSaturation($value)"
+   state.lastKnownColorMode = "RGB"
+   Integer newSat = scaleSatToBridge(value)
+   Integer scaledRate = ((transitionTime != null ? transitionTime.toBigDecimal() : 1000) / 100).toInteger()
+   Map bridgeCmd = ["on": true, "sat": newSat, "transitiontime": scaledRate]
+   sendBridgeCommandV1(bridgeCmd)
 }
 
+Integer scaleHueToBridge(hubitatHue) {
+   Integer scaledHue = Math.round(hubitatHue.toBigDecimal() / (hiRezHue ? 360 : 100) * 65535)
+   if (scaledHue < 0) scaledHue = 0
+   else if (scaledHue > 65535) scaledHue = 65535
+   return scaledHue
+}
+
+Integer scaleHueFromBridge(bridgeLevel) {
+   Integer scaledHue = Math.round(bridgeLevel.toBigDecimal() / 65535 * (hiRezHue ? 360 : 100))
+   if (scaledHue < 0) scaledHue = 0
+   else if (scaledHue > 360) scaledHue = 360
+   else if (scaledHue > 100 && !hiRezHue) scaledHue = 100
+   return scaledHue
+}
+
+Integer scaleSatToBridge(hubitatSat) {
+   Integer scaledSat = Math.round(hubitatSat.toBigDecimal() / 100 * 254)
+   if (scaledSat < 0) scaledSat = 0
+   else if (scaledSat > 254) scaledSat = 254
+   return scaledSat
+}
+
+Integer scaleSatFromBridge(bridgeSat) {
+   Integer scaledSat = Math.round(bridgeSat.toBigDecimal() / 254 * 100)
+   if (scaledSat < 0) scaledSat = 0
+   else if (scaledSat > 100) scaledSat = 100
+   return scaledSat
+}
+
+
 /**
- * Reads device preference for CT transition time, or provides default if not available; device
- * can use input(name: ctTransitionTime, ...) to provide this
+ * Reads device preference for setColor/RGB transition time, or provides default if not available; device
+ * can use input(name: rgbTransitionTime, ...) to provide this
  */
-Integer getScaledCTTransitionTime() {
+Integer getScaledRGBTransitionTime() {
    Integer scaledRate = null
-   if (settings.ctTransitionTime == null || settings.ctTransitionTime == "-2" || settings.ctTransitionTime == -2) {
-      // keep null; will result in not specifiying with command
+   if (settings.rgbTransitionTime == null || settings.rgbTransitionTime == "-2" || settings.rgbTransitionTime == -2) {
+      // keep null; will result in not specifying with command
    }
-   else if (settings.ctTransitionTime == "-1" || settings.ctTransitionTime == -1) {
-      scaledRate = (settings.transitionTime != null) ? Math.round(settings.transitionTime.toFloat() / 100) : (defaultTransitionTime != null ? defaultTransitionTime : 250)
+   else if (settings.rgbTransitionTime == "-1" || settings.rgbTransitionTime == -1) {
+      scaledRate = (settings.transitionTime != null) ? Math.round(settings.transitionTime.toFloat() / 100) : defaultTransitionTime
    }
    else {
-      scaledRate = Math.round(settings.ctTransitionTime.toFloat() / 100)
+      scaledRate = Math.round(settings.rgbTransitionTime.toFloat() / 100)
    }
-   return scaledRate
 }
 
-void setGenericTempName(temp) {
-   if (!temp) return
-   String genericName = convertTemperatureToGenericColorName(temp)
-   if (device.currentValue("colorName") != genericName) doSendEvent("colorName", genericName)
+// Hubiat-provided color/name mappings
+void setGenericName(hue) {
+   String colorName
+   hue = hue.toInteger()
+   if (hiRezHue) hue = (hue / 3.6)
+   colorName = convertHueToGenericColorName(hue, device.currentSaturation ?: 100)
+   if (device.currentValue("colorName") != colorName) doSendEvent("colorName", colorName)
 }
-
 
 // ~~~ IMPORTED FROM RMoRobert.CoCoHue_Flash_Lib ~~~
 // Version 1.0.0
@@ -662,3 +749,35 @@ void flashOff() {
    Map<String,String> cmd = ["alert": "none"]
    sendBridgeCommandV1(cmd, false) 
 }
+
+// ~~~ IMPORTED FROM RMoRobert.CoCoHue_Effect_Lib ~~~
+// Version 1.0.1
+
+void setEffect(String effect) {
+   if (logEnable == true) log.debug "setEffect($effect)"
+   def id = lightEffects.find { it.value == effect }
+   if (id != null) setEffect(id.key)
+}
+
+void setEffect(Number id) {
+   if (logEnable == true) log.debug "setEffect($id)"
+   // Looks like should be possible with prism effect in V2 when get here, too:
+   sendBridgeCommandV1(["effect": (id == 1 ? "colorloop" : "none"), "on": true])
+}
+
+void setNextEffect() {
+   if (logEnable == true) log.debug"setNextEffect()"
+   Integer currentEffect = state.crntEffectId ?: 0
+   currentEffect++
+   if (currentEffect > maxEffectNumber) currentEffect = 0
+   setEffect(currentEffect)
+}
+
+void setPreviousEffect() {
+   if (logEnable == true) log.debug "setPreviousEffect()"
+   Integer currentEffect = state.crntEffectId ?: 0
+   currentEffect--
+   if (currentEffect < 0) currentEffect = 1
+   setEffect(currentEffect)
+}
+
