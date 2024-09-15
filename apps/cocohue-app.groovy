@@ -18,8 +18,9 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2024-09-14
+ *  Last modified: 2024-09-15
  *  Changelog:
+ *  v5.0.1 - Fix for missing V1 IDs after device creation or upgrade
  *  v5.0   - Use API v2 by default for device info, remove deprecated features, add RGB-only driver
  *  v4.1.9 - Add note that Hue Labs features are now deprecated
  *  v4.1.2 - Additional button enhancements (relative_rotary -- Hue Tap Dial, etc.)
@@ -200,6 +201,7 @@ void upgradeCCHv1DNIsToV2ResponseHandler(AsyncResponse resp, data=null) {
                String newDNI = dev.deviceNetworkId.replace("/Light/${id_v1}", "/Light/${id}")
                if (logEnable == true) log.debug "Found Hubitat device ${dev.displayName} for Hue light with V1 ID ${id_v1}. Changing DNI from ${dev.deviceNetworkId} to ${newDNI}..."
                dev.setDeviceNetworkId(newDNI)
+               dev.createEventsFromMapV2([id_v1: "/lights/${id_v1}"])
             }
             else {
                if (logEnable == true) log.debug "No Hubitat device found for Hue light ${hueData.metadata?.name} with ID V1 ${id_v1} and ID V2 ${id}; skipping."
@@ -219,6 +221,7 @@ void upgradeCCHv1DNIsToV2ResponseHandler(AsyncResponse resp, data=null) {
                String newDNI = dev.deviceNetworkId.replace("/Group/${id_v1}", "/Group/${id}")
                if (logEnable == true) log.debug "Found Hubitat device ${dev.displayName} for Hue group with V1 ID ${id_v1}. Changing DNI from ${dev.deviceNetworkId} to ${newDNI}..."
                dev.setDeviceNetworkId(newDNI)
+               dev.createEventsFromMapV2([id_v1: "/groups/${id_v1}"])
             }
             else {
                if (logEnable == true) log.debug "No Hubitat device found for Hue group ${hueData.metadata?.name ?: ''} with ID V1 ${id_v1} and ID V2 ${id}; skipping."
@@ -238,6 +241,7 @@ void upgradeCCHv1DNIsToV2ResponseHandler(AsyncResponse resp, data=null) {
                String newDNI = dev.deviceNetworkId.replace("/Scene/${id_v1}", "/Scene/${id}")
                if (logEnable == true) log.debug "Found Hubitat device ${dev.displayName} for Hue scene with V1 ID ${id_v1}. Changing DNI from ${dev.deviceNetworkId} to ${newDNI}..."
                dev.setDeviceNetworkId(newDNI)
+               dev.createEventsFromMapV2([id_v1: "/scenes/${id_v1}"])
             }
             else {
                if (logEnable == true) log.debug "No Hubitat device found for Hue scene ${hueData.metadata?.name} with ID V1 ${id_v1} and ID V2 ${id}; skipping."
@@ -615,10 +619,10 @@ def pageLinkBridge() {
 
 def pageSupportOptions() {
    dynamicPage(name: "pageSupportOptions", uninstall: true, install: false, nextPage: "pageManageBridge") {
-      section("Temporary Fixes") {
-         paragraph "Fix V2 group (room/zone) device DNIs from older beta of new app version (this option will be removed in next release):"
-         input name: "btnFixGroupDNIsTEMP", type: "button", title: "Fix Group DNIs from Old Beta"
-      }
+      // section("Temporary Fixes") {
+      //    paragraph "Fix V2 group (room/zone) device DNIs from older beta of new app version (this option will be removed in next release):"
+      //    input name: "btnFixGroupDNIsTEMP", type: "button", title: "Fix Group DNIs from Old Beta"
+      // }
       section("Debugging Information") {
          paragraph "Enable debug logging on Bridge child device (will remain enabled until disabled on device):"
          input name: "btnEnableBridgeLogging", type: "button", title: "Enable Debug Logging on Bridge"
@@ -904,8 +908,9 @@ def pageSelectGroups() {
                }
          }
          section("Rediscover Groups") {
-            paragraph("If you added new groups to the Hue Bridge and do not see them above, select the button " +
-                     "below to retrieve new information from the Bridge.")
+            paragraph("If you added new groups (rooms or zones) to the Hue Bridge and do not see them above or see groups on " +
+               "your hub that were not found on Hue (but you believe should be), select the button " +
+               "below to retrieve new information from the Bridge.")
             input name: "btnGroupRefresh", type: "button", title: "Refresh Group List", submitOnChange: true
          }
       }
@@ -926,7 +931,7 @@ def pageSelectScenes() {
    }
    List<DeviceWrapper> unclaimedScenes = getChildDevices().findAll { it.deviceNetworkId.startsWith("${DNI_PREFIX}/${app.id}/Scene/") }
    Map grps = [:]
-   groupCache?.each { grps << [(it.key) : (it.value.name)] }
+   groupCache?.each { grps << [(it.value.roomId ?: it.value.zoneId ?: it.key) : (it.value.name)] }
    dynamicPage(name: "pageSelectScenes", refreshInterval: sceneCache ? 0 : 7, uninstall: true, install: false, nextPage: "pageManageBridge") {
       Map addedScenes = [:]  // To be populated with scenes user has added, matched by Hue ID
       if (!bridge) {
@@ -1189,7 +1194,8 @@ void createNewSelectedBulbDevices() {
             String devDriver = getDriverNameForDeviceType(b.type.toLowerCase())
             String devDNI = "${DNI_PREFIX}/${app.id}/Light/${it}"
             Map devProps = [name: (settings["boolAppendBulb"] ? b.name + " (Hue Bulb)" : b.name)]
-            addChildDevice(NAMESPACE, devDriver, devDNI, devProps)
+            DeviceWrapper bulbDev = addChildDevice(NAMESPACE, devDriver, devDNI, devProps)
+            if (bulbDev != null && state.useV2) bulbDev.createEventsFromMapV2([id_v1: b.id_v1])
 
          } catch (Exception ex) {
             log.error("Unable to create new device for $it: $ex")
@@ -1219,8 +1225,9 @@ void createNewSelectedGroupDevices() {
             String devDNI = "${DNI_PREFIX}/${app.id}/Group/${it}"
             Map devProps = [name: (settings["boolAppendGroup"] ? g.name + " (Hue Group)" : g.name)]
             DeviceWrapper grpDev = addChildDevice(NAMESPACE, DRIVER_NAME_GROUP, devDNI, devProps)
-            if (grpDev != null && state.useV2 && g.groupedLightId != null) {
-               grpDev.setGroupedLightId(g.groupedLightId)
+            if (grpDev != null && state.useV2) {
+               if (g.groupedLightId != null) grpDev.setGroupedLightId(g.groupedLightId)
+               grpDev.createEventsFromMapV2([id_v1: g.id_v1])
             }
          }
          catch (Exception ex) {
@@ -1251,7 +1258,10 @@ void createNewSelectedSceneDevices() {
                if (logEnable == true) log.debug "Creating new device for Hue group ${it} (state.sceneFullNames?.get(it) ?: sc.name)"
                String devDNI = "${DNI_PREFIX}/${app.id}/Scene/${it}"
                Map devProps = [name: (state.sceneFullNames?.get(it) ?: sc.name)]
-               addChildDevice(NAMESPACE, DRIVER_NAME_SCENE, devDNI, devProps)
+               DeviceWrapper scDev = addChildDevice(NAMESPACE, DRIVER_NAME_SCENE, devDNI, devProps)
+               if (scDev != null) {
+                  scDev.createEventsFromMapV2([id_v1: sc.id_v1])
+               }
          } catch (Exception ex) {
                log.error "Unable to create new scene device for $it: $ex"
          }
@@ -1743,28 +1753,29 @@ void appButtonHandler(btn) {
       case "btnDiscoBridgeRefresh":
          sendBridgeDiscoveryCommand()
          break
+      // Temporary option on Advanced Debugging Options/support page--remove eventually:
+      // case "btnFixGroupDNIsTEMP":
+      //    DeviceWrapper bridgeDevice = getChildDevice("${DNI_PREFIX}/${app.id}")
+      //    if (state.useV2 == true) {
+      //       bridgeDevice.getAllGroupsV2()
+      //       pauseExecution(5000)
+      //       bridgeDevice.getAllRoomsCache()?.each { grpId, roomData ->
+      //          DeviceWrapper d = getChildDevice("${DNI_PREFIX}/${app.id}/Group/${roomData.roomId}")
+      //          if (d != null) {
+      //             d.setDeviceNetworkId("${DNI_PREFIX}/${app.id}/Group/${grpId}")
+      //          }
+      //       }
+      //       bridgeDevice.getAllZonesCache()?.each { grpId, zoneData ->
+      //          DeviceWrapper d = getChildDevice("${DNI_PREFIX}/${app.id}/Group/${zoneData.zoneId}")
+      //          if (d != null) {
+      //             d.setDeviceNetworkId("${DNI_PREFIX}/${app.id}/Group/${grpId}")
+      //          }
+      //       }
+      //    }
+      //    else {
+      //       log.warn "Not using V2 API; exiting"
+      //    }
       // Options on Advanced Debugging Options/support page:
-      case "btnFixGroupDNIsTEMP":
-         DeviceWrapper bridgeDevice = getChildDevice("${DNI_PREFIX}/${app.id}")
-         if (state.useV2 == true) {
-            bridgeDevice.getAllGroupsV2()
-            pauseExecution(5000)
-            bridgeDevice.getAllRoomsCache()?.each { grpId, roomData ->
-               DeviceWrapper d = getChildDevice("${DNI_PREFIX}/${app.id}/Group/${roomData.roomId}")
-               if (d != null) {
-                  d.setDeviceNetworkId("${DNI_PREFIX}/${app.id}/Group/${grpId}")
-               }
-            }
-            bridgeDevice.getAllZonesCache()?.each { grpId, zoneData ->
-               DeviceWrapper d = getChildDevice("${DNI_PREFIX}/${app.id}/Group/${zoneData.zoneId}")
-               if (d != null) {
-                  d.setDeviceNetworkId("${DNI_PREFIX}/${app.id}/Group/${grpId}")
-               }
-            }
-         }
-         else {
-            log.warn "Not using V2 API; exiting"
-         }
       case "btnEnableBridgeLogging":
          DeviceWrapper bridgeDevice = getChildDevice("${DNI_PREFIX}/${app.id}")
          bridgeDevice.updateSetting("logEnable", [type: "bool", value: true])

@@ -17,7 +17,8 @@
  *  Last modified: 2024-09-14
  *
  *  Changelog:
- *  v5.0   - Use API v2 by default, remove deprecated features
+ *  v5.0.1  - Use V2 for activation to avoid missing V1 IDs
+ *  v5.0    - Use API v2 by default, remove deprecated features
  *  v4.2    - Add support for parsing on/off events from v2 API state; library improvements; prep for mre v2 API use
  *  v4.1.5  - Fix typos
  *  v4.1.4  - Improved error handling, fix missing battery for motion sensors
@@ -87,7 +88,7 @@ void initialize() {
       log.debug "Debug logging will be automatically disabled in ${debugAutoDisableMinutes} minutes"
       runIn(debugAutoDisableMinutes*60, "debugOff")
    }
-   refresh() // Get scene data
+   if (!hasV2DNI) refresh() // Get scene data for V1 devices
 }
 
 void configure() {
@@ -103,13 +104,13 @@ void parse(String description) {
 /**
  * Parses V1 Hue Bridge scene ID number out of Hubitat DNI for use with Hue V1 API calls
  * Hubitat DNI is created in format "CCH/BridgeMACAbbrev/Scene/HueDeviceID", so just
- * looks for number after third "/" character; or try state if DNI is V2 format (avoid if posssible,
+ * looks for number after last "/" character; or try state if DNI is V2 format (avoid if posssible,
  *  as Hue is likely to deprecate V1 ID data in future)
  */
 String getHueDeviceIdV1() {
-   String id = device.deviceNetworkId.split("/")[3]
-   if (id.length() > 32) { // max length of last part of V1 IDs per V2 API regex spec
-      id = state.id_v1?.split("/")[-1]
+   String id = device.deviceNetworkId.split("/").last()
+   if (hasV2DNI == true) {
+      id = state.id_v1?.split("/")?.last()
       if (state.id_v1 == null) {
          log.warn "Attempting to retrieve V1 ID but not in DNI or state."
       }
@@ -120,10 +121,20 @@ String getHueDeviceIdV1() {
 /**
  * Parses V2 Hue Bridge device ID out of Hubitat DNI for use with Hue V2 API calls
  * Hubitat DNI is created in format "CCH/BridgeMACAbbrev/Scene/HueDeviceID", so just
- * looks for string after third "/" character
+ * looks for string after last "/" character
  */
 String getHueDeviceIdV2() {
-   return device.deviceNetworkId.split("/")[3]
+   return device.deviceNetworkId.split("/").last()
+}
+
+Boolean getHasV2DNI() {
+   String id = device.deviceNetworkId.split("/").last()
+   if (id.length() > 32) {  // max length of Hue V1 ID per regex in V2 API docs
+      return true
+   }
+   else {
+      return false
+   }
 }
 
 void on() {
@@ -279,14 +290,14 @@ void refresh() {
       contentType: 'application/json',
       timeout: 15
       ]
-   asynchttpGet("parseSceneAttributeResponse", sceneParams)  
+   asynchttpGet("parseSceneAttributeResponseV1", sceneParams)
 }
 
 /**
  * Parses data returned when getting scene data from Bridge
  */
-void parseSceneAttributeResponse(resp, data) {
-   if (logEnable) log.debug "parseSceneAttributeResponse response from Bridge: $resp.status"
+void parseSceneAttributeResponseV1(resp, data) {
+   if (logEnable) log.debug "parseSceneAttributeResponseV1 response from Bridge: $resp.status"
    Map sceneAttributes
    try {
       sceneAttributes = resp.json

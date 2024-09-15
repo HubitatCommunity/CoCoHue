@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2024-09-14
+ *  Last modified: 2024-09-15
  *
  *  Changelog:
+ *  v5.0.1 - Fix for missing V1 IDs after device creation or upgrade
  *  v5.0   - Use API v2 by default, remove deprecated features
  *  v4.2    - Library updates, prep for more v2 API
  *  v4.1.7  - Fix for unexpected Hubitat event creation when v2 API reports level of 0
@@ -148,9 +149,9 @@ void parse(String description) {
  *  as Hue is likely to deprecate V1 ID data in future)
  */
 String getHueDeviceIdV1() {
-   String id = device.deviceNetworkId.split("/")[-1]
+   String id = device.deviceNetworkId.split("/").last()
    if (id.length() > 32) { // max length of last part of V1 IDs per V2 API regex spec, though never seen anything non-numeric longer than 2 (or 3?) for non-scenes
-      id = state.id_v1?.split("/")[-1]
+      id = state.id_v1?.split("/")?.last()
       if (state.id_v1 == null) {
          log.warn "Attempting to retrieve V1 ID but not in DNI or state."
       }
@@ -164,7 +165,7 @@ String getHueDeviceIdV1() {
  * looks for string after last "/" character
  */
 String getHueDeviceIdV2() {
-   return device.deviceNetworkId.split("/")[-1]
+   return device.deviceNetworkId.split("/").last()
 }
 
 void on(Number transitionTime = null) {

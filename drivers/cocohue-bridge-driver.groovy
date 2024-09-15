@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2024-09-14
+ *  Last modified: 2024-09-15
  *
  *  Changelog:
+ *  v5.0.1 - Fix for missing V1 IDs after device creation or upgrade
  *  v5.0    - Use API v2 by default for device info, remove deprecated features
  *  v4.2.1  - Add scene on/off state reporting with v2 API
  *  v4.2    - Improved eventstream reconnection logic
@@ -605,7 +606,7 @@ void parseGetAllBulbsResponseV2(resp, Map data=null) {
       try {
          Map bulbs = [:]
          resp.json.data.each { Map bulbData ->
-            bulbs[bulbData.id] = [name: bulbData.metadata.name, type: determineLightType(bulbData)]
+            bulbs[bulbData.id] = [name: bulbData.metadata.name, type: determineLightType(bulbData), id_v1: bulbData.id_v1]
          }
          state.allBulbs = bulbs
          if (logEnable) log.debug "  All bulbs received from Bridge: $bulbs"
@@ -694,7 +695,8 @@ void parseGetAllGroupsOrRoomsOrZonesResponseV2(resp, Map<String,String> data) {
             resp.json.data.each { Map roomOrZoneData ->
                String groupedLightId = roomOrZoneData.services.find({ svc -> svc.rtype == "grouped_light" })?.rid
                if (groupedLightId != null) {
-                  roomsOrZones[groupedLightId] = [name: roomOrZoneData.metadata.name, type: data.type, "${data.type}Id": roomOrZoneData.id]
+                  roomsOrZones[groupedLightId] = [name: roomOrZoneData.metadata.name, type: data.type, 
+                     "${data.type}Id": roomOrZoneData.id, id_v1: roomOrZoneData.id_v1]
                }
                else {
                   if (logEnable) log.debug "No grouped_light service found for room ID ${roomOrZoneData.id}"
@@ -818,7 +820,7 @@ void parseGetAllScenesResponseV2(resp, Map data=null) {
       try {
          Map scenes = [:]
          resp.json.data.each { Map sceneData ->
-            scenes[sceneData.id] = [name: sceneData.metadata.name, group: sceneData.group?.rid]
+            scenes[sceneData.id] = [name: sceneData.metadata.name, group: sceneData.group?.rid, id_v1: sceneData.id_v1]
          }
          state.allScenes = scenes
          if (logEnable) log.debug "  All scenes received from Bridge: $scenes"
