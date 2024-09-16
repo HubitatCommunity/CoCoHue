@@ -20,6 +20,7 @@
  *
  *  Last modified: 2024-09-15
  *  Changelog:
+ *  v5.0.2  - Fetch V2 grouped_light ID owner for room/zone owners of V2 scenes
  *  v5.0.1 - Fix for missing V1 IDs after device creation or upgrade
  *  v5.0   - Use API v2 by default for device info, remove deprecated features, add RGB-only driver
  *  v4.1.9 - Add note that Hue Labs features are now deprecated
@@ -178,8 +179,8 @@ void upgradeCCHv1DNIsToV2ResponseHandler(AsyncResponse resp, data=null) {
       
       // -- Get all relevant device data from API response: --
       List<Map> lightsData = resp.json.data.findAll { it.type == "light" } ?: [[:]] // lights
-      //List<Map> roomsData = resp.json.data.findAll { it.type == "room" } ?: [[:]]  // rooms (groups)
-      //List<Map> zonesData = resp.json.data.findAll { it.type == "zone" } ?: [[:]]    // zones (groups)
+      List<Map> roomsData = resp.json.data.findAll { it.type == "room" } ?: [[:]]  // rooms (groups)
+      List<Map> zonesData = resp.json.data.findAll { it.type == "zone" } ?: [[:]]    // zones (groups)
       List<Map> groupsData = resp.json.data.findAll { it.type == "grouped_light" } ?: [[:]]  // "pure" groups (groups)
       List<Map> scenesData = resp.json.data.findAll { it.type == "scene" } ?: [[:]]  // scenes
       List<Map> motionData = resp.json.data.findAll { it.type == "motion" } ?: [[:]]  // motion for motion sensorsor motion sensors
@@ -242,6 +243,13 @@ void upgradeCCHv1DNIsToV2ResponseHandler(AsyncResponse resp, data=null) {
                if (logEnable == true) log.debug "Found Hubitat device ${dev.displayName} for Hue scene with V1 ID ${id_v1}. Changing DNI from ${dev.deviceNetworkId} to ${newDNI}..."
                dev.setDeviceNetworkId(newDNI)
                dev.createEventsFromMapV2([id_v1: "/scenes/${id_v1}"])
+               String groupedLightId
+               Map infoMap = roomsData.find { rd -> rd.id == hueData.group?.rid }
+               if (infoMap == null) infoMap = zonesData.find { zd -> zd.id == hueData.group?.rid }
+               if (infoMap != null) {
+                  groupedLightId = infoMap.services?.find { svc -> svc.rtype == "grouped_light" }?.rid
+               }
+               if (groupedLightId) dev.setOwnerGroupIDV2(groupedLightId)
             }
             else {
                if (logEnable == true) log.debug "No Hubitat device found for Hue scene ${hueData.metadata?.name} with ID V1 ${id_v1} and ID V2 ${id}; skipping."
@@ -1251,6 +1259,10 @@ void createNewSelectedSceneDevices() {
    DeviceWrapper bridge = getChildDevice("${DNI_PREFIX}/${app.id}")
    if (!bridge) log.error("Unable to find Bridge device")
    Map sceneCache = bridge?.getAllScenesCache()
+   Map groupCache
+   if (state.useV2) {  // get rooms and zones (which own scenes and are owned by a grouped_light service whose ID we need)
+      groupCache = (bridge.getAllRoomsCache() ?: [:]) + (bridge.getAllZonesCache() ?: [:])
+   }
    settings["newScenes"].each {
       Map sc = sceneCache.get(it)
       if (sc) {
@@ -1259,8 +1271,11 @@ void createNewSelectedSceneDevices() {
                String devDNI = "${DNI_PREFIX}/${app.id}/Scene/${it}"
                Map devProps = [name: (state.sceneFullNames?.get(it) ?: sc.name)]
                DeviceWrapper scDev = addChildDevice(NAMESPACE, DRIVER_NAME_SCENE, devDNI, devProps)
-               if (scDev != null) {
+               if (scDev != null && state.useV2) {
                   scDev.createEventsFromMapV2([id_v1: sc.id_v1])
+                  String groupedLightId = groupCache.find { it.value.roomId == sc.group || it.value.zoneId == sc.group}?.key
+                  //log.trace "groupedLightId = $groupedLightId"
+                  if (groupedLightId) scDev.setOwnerGroupIDV2(groupedLightId)
                }
          } catch (Exception ex) {
                log.error "Unable to create new scene device for $it: $ex"

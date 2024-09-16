@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2024-09-14
+ *  Last modified: 2024-09-15
  *
  *  Changelog:
+ *  v5.0.2  - Fetch V2 grouped_light ID owner for room/zone owners of V2 scenes
  *  v5.0.1  - Use V2 for activation to avoid missing V1 IDs
  *  v5.0    - Use API v2 by default, remove deprecated features
  *  v4.2    - Add support for parsing on/off events from v2 API state; library improvements; prep for mre v2 API use
@@ -47,10 +48,11 @@ import groovy.transform.Field
 metadata {
    definition(name: "CoCoHue Scene", namespace: "RMoRobert", author: "Robert Morris", importUrl: "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-scene-driver.groovy") {
       capability "Actuator"
-      capability "Refresh"
       capability "Switch"
       capability "PushableButton"
       capability "Configuration"
+
+      command "fetchSceneData"
    }
 
    preferences {
@@ -88,7 +90,7 @@ void initialize() {
       log.debug "Debug logging will be automatically disabled in ${debugAutoDisableMinutes} minutes"
       runIn(debugAutoDisableMinutes*60, "debugOff")
    }
-   if (!hasV2DNI) refresh() // Get scene data for V1 devices
+   if (!hasV2DNI) fetchSceneData() // Get scene data for V1 devices
 }
 
 void configure() {
@@ -274,35 +276,40 @@ void parseSendCommandResponseV1(AsyncResponse resp, Map data) {
    }
 }
 
-void push(Number btnNum) {
+void push(btnNum) {
    if (logEnable) log.debug "push($btnNum)"
    on()
-   doSendEvent("pushed", 1, null, true)
+   doSendEvent("pushed", btnNum.toInteger(), null, true)
 }
 
 /** Gets data about scene from Bridge; does not update bulb/group status */
-void refresh() {
+void fetchSceneData() {
    if (logEnable) log.debug "refresh()"
    Map<String,String> data = parent.getBridgeData()
-   Map sceneParams = [
-      uri: data.fullHost,
-      path: "/api/${data.username}/scenes/${getHueDeviceIdV1()}",
-      contentType: 'application/json',
-      timeout: 15
-      ]
-   asynchttpGet("parseSceneAttributeResponseV1", sceneParams)
+   if (data.apiVersion == APIV1 || data.apiVersion == null) {
+      Map sceneParams = [
+         uri: data.fullHost,
+         path: "/api/${data.username}/scenes/${getHueDeviceIdV1()}",
+         contentType: 'application/json',
+         timeout: 15
+         ]
+      asynchttpGet("fetchSceneDataResponseV1", sceneParams)
+   }
+   else {
+      bridgeAsyncGetV2("fetchSceneDataResponseV2", "/resource/scene/${getHueDeviceIdV2()}", data)
+   }
 }
 
 /**
- * Parses data returned when getting scene data from Bridge
+ * Parses data returned when getting scene data from Bridge for V1 API
  */
-void parseSceneAttributeResponseV1(resp, data) {
-   if (logEnable) log.debug "parseSceneAttributeResponseV1 response from Bridge: $resp.status"
+void fetchSceneDataResponseV1(resp, data) {
+   if (logEnable) log.debug "fetchSceneDataResponseV1 response from Bridge: $resp.status"
    Map sceneAttributes
    try {
       sceneAttributes = resp.json
    } catch (ex) {
-      log.error("Could not parse scene data: ${resp.errorMessage ?: ex}")
+      log.error("Could not parse scene data: ${ex}")
       return
    }
    if (sceneAttributes["type"] == "GroupScene") {
@@ -324,6 +331,32 @@ void parseSceneAttributeResponseV1(resp, data) {
 }
 
 /**
+ * Parses data returned when getting scene data from Bridge for V2 API
+ */
+void fetchSceneDataResponseV2(resp, data) {
+   if (logEnable) log.debug "fetchSceneDataResponseV2 response from Bridge: $resp.status"
+   Map scData = resp.json.data.first()
+   def ownerId = scData.group.rid
+   def ownerType = scData.group.rtype
+   if (ownerType == "room" || ownerType == "zone") {
+      bridgeAsyncGetV2("fetchRoomOrZoneGroupIdResponseV2", "/resource/${ownerType}/${ownerId}")
+   }
+   else if (ownerType == "grouped_light") {
+      setOwnerGroupIDV2(ownerId)
+   }
+}
+
+/**
+ * Parses grouped_light ID out of room or zone data when fetched after fetching scene owner data (above)
+ */
+void fetchRoomOrZoneGroupIdResponseV2(resp, data) {
+   if (logEnable) log.debug "fetchRoomOrZoneGroupIdResponseV2 response from Bridge: $resp.status"
+   Map groupedLightSvc = resp.json.data.first().services.find { it.rtype == "grouped_light" }
+   if (groupedLightSvc) setOwnerGroupIDV2(groupedLightSvc.rid)
+   else if (logEnable) log.debug "Unable to fetch ID for owner"
+}
+
+/**
  * Sets all group attribute values to something, intended to be called when device initially created to avoid
  * missing attribute values (may cause problems with GH integration, etc. otherwise). Default values are
  * approximately warm white and off.
@@ -340,10 +373,17 @@ void autoOffHandler() {
 
 /**
  * Returns Hue group ID (as String, since it is likely to be used in DNI check or API call).
- * May return null (if is not GroupScene)
+ * May return null (if is not GroupScene). Used by parent app.
  */
 String getGroupID() {
    return state.group
+}
+
+/**
+ * Sets state.owner to specified ID (ID of grouped_light service from owner room or zone); used only for V2 API
+ */
+String setOwnerGroupIDV2(String id) {
+   state.ownerGroupId = id
 }
 
 // ~~~ IMPORTED FROM RMoRobert.CoCoHue_Common_Lib ~~~

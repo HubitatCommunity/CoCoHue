@@ -17,6 +17,7 @@
  *  Last modified: 2024-09-15
  *
  *  Changelog:
+ *  v5.0.2  - Fetch V2 grouped_light ID owner for room/zone owners of V2 scenes
  *  v5.0.1 - Fix for missing V1 IDs after device creation or upgrade
  *  v5.0    - Use API v2 by default for device info, remove deprecated features
  *  v4.2.1  - Add scene on/off state reporting with v2 API
@@ -220,7 +221,7 @@ void parse(String description) {
                dataEntryMap.data?.each { updateEntryMap ->
                   //log.trace "--> map = ${updateEntryMap}"
                   String idV1
-                  if (updateEntryMap.id_v1 != null) idV1 = updateEntryMap.id_v1.split("/")[-1]
+                  if (updateEntryMap.id_v1 != null) idV1 = updateEntryMap.id_v1.split("/").last()
                   String idV2 = updateEntryMap.id
                   String idV1Num
                   DeviceWrapper dev
@@ -249,7 +250,7 @@ void parse(String description) {
                            if (dev == null && idV1 != null) {
                               // or for now also check V1 sensor ID
                               dev = parent.getChildDevices().find { DeviceWrapper d ->
-                                 idV1 in d.deviceNetworkId.tokenize('/')[-1].tokenize('|') &&
+                                 idV1 in d.deviceNetworkId.tokenize('/').last().tokenize('|') &&
                                  d.deviceNetworkId.startsWith("${device.deviceNetworkId}/Sensor/")  // shouldn't be necessary but gave me a Light ID once in testing for a sensor, so?!
                               }
                            }
@@ -820,6 +821,7 @@ void parseGetAllScenesResponseV2(resp, Map data=null) {
       try {
          Map scenes = [:]
          resp.json.data.each { Map sceneData ->
+            // TODO: get grouped_light service ID, not room/zone ID!
             scenes[sceneData.id] = [name: sceneData.metadata.name, group: sceneData.group?.rid, id_v1: sceneData.id_v1]
          }
          state.allScenes = scenes
