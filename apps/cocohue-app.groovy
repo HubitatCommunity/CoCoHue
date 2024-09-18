@@ -18,9 +18,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2024-09-15
+ *  Last modified: 2024-09-17
  *  Changelog:
- *  v5.0.2  - Fetch V2 grouped_light ID owner for room/zone owners of V2 scenes
+ *  v5.0.3 - Upgrade old log settings; use V2 for scene activation when possible
+ *  v5.0.2 - Fetch V2 grouped_light ID owner for room/zone owners of V2 scenes
  *  v5.0.1 - Fix for missing V1 IDs after device creation or upgrade
  *  v5.0   - Use API v2 by default for device info, remove deprecated features, add RGB-only driver
  *  v4.1.9 - Add note that Hue Labs features are now deprecated
@@ -133,6 +134,23 @@ void updated() {
    initialize()
    // Upgrade pre-CoCoHue-5.0 DNIs to match new DNI format (will only change if using V2 and hasn't been done yet)
    runIn(3, "upgradeCCHv1DNIsToV2")
+   if (settings.enableDebug != null) { // name in 4.x and earlier, using as proxy to determine if log settings updated to 5.x standard for all
+      Boolean currentAppDebugSetting = settings.enableDebug == true ? true : false
+      app.removeSetting("enableDebug")
+      app.updateSetting("enableDebug", [type: "bool", value: currentAppDebugSetting])
+      getChildDevices.each() { DeviceWrapper cd ->
+         Boolean dbgLog = cd.getSetting("enableDebug")
+         if (dbgLog != null) {
+            cd.removeSetting("enableDebug")
+            cd.updateSetting("logEnable", [type: "bool", value: dbgLog])
+         }
+         Boolean infoLog = cd.getSetting("enableDesc")
+         if (infoLog != null) {
+            cd.removeSetting("enableDesc")
+            cd.updateSetting("txtEnable", [type: "bool", value: infoLog])
+         }
+      }
+   }
 }
 
 /** Upgrades pre-CoCoHue-5.0 DNIs from V1 API to match 5.x/V2 API format (changes V1 Hue IDs to V2)
@@ -1274,7 +1292,6 @@ void createNewSelectedSceneDevices() {
                if (scDev != null && state.useV2) {
                   scDev.createEventsFromMapV2([id_v1: sc.id_v1])
                   String groupedLightId = groupCache.find { it.value.roomId == sc.group || it.value.zoneId == sc.group}?.key
-                  //log.trace "groupedLightId = $groupedLightId"
                   if (groupedLightId) scDev.setOwnerGroupIDV2(groupedLightId)
                }
          } catch (Exception ex) {

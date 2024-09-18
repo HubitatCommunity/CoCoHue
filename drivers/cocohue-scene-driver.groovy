@@ -14,11 +14,12 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2024-09-15
+ *  Last modified: 2024-09-17
  *
  *  Changelog:
+ *  v5.0.3  - Use V2 API for scene activation/recall
  *  v5.0.2  - Fetch V2 grouped_light ID owner for room/zone owners of V2 scenes
- *  v5.0.1  - Use V2 for activation to avoid missing V1 IDs
+ *  v5.0.1  - Fetch additional info to avoid missing V1 IDs
  *  v5.0    - Use API v2 by default, remove deprecated features
  *  v4.2    - Add support for parsing on/off events from v2 API state; library improvements; prep for mre v2 API use
  *  v4.1.5  - Fix typos
@@ -126,7 +127,12 @@ String getHueDeviceIdV1() {
  * looks for string after last "/" character
  */
 String getHueDeviceIdV2() {
-   return device.deviceNetworkId.split("/").last()
+   if (getHasV2DNI() == true) {
+      return device.deviceNetworkId.split("/").last()
+   }
+   else {
+      log.error "DNI not in V2 format but attempeting to fetch API V2 ID. Cannot continue."
+   }
 }
 
 Boolean getHasV2DNI() {
@@ -140,6 +146,18 @@ Boolean getHasV2DNI() {
 }
 
 void on() {
+   if (logEnable) log.debug "on()"
+   if (hasV2DNI == true) {
+      if (logEnable) log.debug "on() will use V2 API"
+      Map cmd = [recall: [action: "active"]]
+      bridgeAsyncPutV2("parseSendCommandResponseV2", "/resource/scene/${getHueDeviceIdV2()}", cmd)
+   }
+   else {
+      onV1()
+   }
+}
+
+void onV1() {
    Map<String,String> data = parent.getBridgeData()
    Map cmd = ["scene": getHueDeviceIdV1()]
    Map params = [
@@ -158,6 +176,37 @@ void on() {
 
 void off() {
    if (logEnable) log.debug "off()"
+   if (hasV2DNI == true) {
+      if (logEnable) log.debug "off() will use V2 API"
+      if (state.ownerGroupId != null) {
+         List<String> dniParts = device.deviceNetworkId.split("/")
+         String dni = "${dniParts[0]}/${dniParts[1]}/Group/${state.ownerGroupId}"
+         com.hubitat.app.DeviceWrapper dev = parent.getChildDevice(dni)
+         if (dev != null) {
+            if (logEnable) log.debug "Hubitat device for group ${state.group} found; turning off"
+            dev.off()
+            doSendEvent("switch", "off", null) // may not need with V2 API but can't hurt?
+         }
+         else {
+            Map cmd = [on: [on: false]]
+            bridgeAsyncPutV2("parseSendCommandResponseV2", "/resource/grouped_light/${state.ownerGroupId}", cmd, null, [attribute: "switch", value: "off"])
+         }
+      }
+      else if (state.group != null) {
+         if (logEnable) log.debug "Cannot find V2 group ID to perform off() action; attepmting V1..."
+         offV1()
+      }
+      else {
+         if (logEnable) log.debug "No group information available to perform off() action. Try running Fetch Scene Data command to fix, or turn off group or lights directly instead of scene device."
+      }
+   }
+   else {
+      offV1()
+   }
+}
+
+void offV1() {
+   if (logEnable) log.debug "offV1()"
    if (state.type == "GroupScene") {
       if (logEnable) log.debug "Scene is GroupScene; turning off group $state.group"
       List<String> dniParts = device.deviceNetworkId.split("/")
@@ -169,7 +218,7 @@ void off() {
          doSendEvent("switch", "off", null) // optimistic here; group device will catch if problem
       }
       else {
-         if (logEnable) log.debug "Device not found; sending command directly to turn off Hue group"
+         if (logEnable) log.debug "Device not found; sending V1 command directly to turn off Hue group"
          Map<String,String> data = parent.getBridgeData()
          Map cmd = ["on": false]
          Map params = [
@@ -246,13 +295,13 @@ void createEventsFromMapV2(Map data) {
 }
 
 /** 
-  * Parses response from Bridge (or not) after sendBridgeCommandV1. Updates device state if
-  * appears to have been successful.
+  * Parses response from Bridge (or not) after sendBridgeCommandV1 or similar command. Updates device
+  * device state if appears to have been successful.
   * @param resp Async HTTP response object
   * @param data Map with keys 'attribute' and 'value' containing event data to send if successful (e.g., [attribute: 'switch', value: 'off'])
   */
 void parseSendCommandResponseV1(AsyncResponse resp, Map data) {
-   if (logEnable) log.debug "Response from Bridge: ${resp.status}; data from app = $data"
+   if (logEnable) log.debug "Response from Bridge: ${resp.status}; custom data = $data"
    if (checkIfValidResponse(resp) && data?.attribute != null && data?.value != null) {
       if (logEnable) log.debug "  Bridge response valid; running creating events"
       if (device.currentValue(data.attribute) != data.value) doSendEvent(data.attribute, data.value)   
@@ -270,6 +319,23 @@ void parseSendCommandResponseV1(AsyncResponse resp, Map data) {
             if (logEnable) log.debug "No scene onPropagation configured; leaving other scene states as-is"
          }
       }
+   }
+   else {
+      if (logEnable) log.debug "  Not creating events from map because not specified to do or Bridge response invalid"
+   }
+}
+
+/** 
+  * Parses response from Bridge (or not) after bridgeAsyncPutV2().
+  * @param resp Async HTTP response object
+  * @param data Map with keys 'attribute' and 'value' containing event data to send if successful (e.g., [attribute: 'switch', value: 'off'] -- generally
+  *             only useful as last-ditch effort when using V2 API to get scene device state correct if needed).
+  */
+void parseSendCommandResponseV2(AsyncResponse resp, Map data) {
+   if (logEnable) log.debug "Response from Bridge: ${resp.status}; custom data = $data"
+   if (checkIfValidResponse(resp) && data?.attribute != null && data?.value != null) {
+      if (logEnable) log.debug "  Bridge response valid; running creating events"
+      if (device.currentValue(data.attribute) != data.value) doSendEvent(data.attribute, data.value)
    }
    else {
       if (logEnable) log.debug "  Not creating events from map because not specified to do or Bridge response invalid"
@@ -387,11 +453,12 @@ String setOwnerGroupIDV2(String id) {
 }
 
 // ~~~ IMPORTED FROM RMoRobert.CoCoHue_Common_Lib ~~~
-// Version 1.0.3
+// Version 1.0.5
 // For use with CoCoHue drivers (not app)
 
 /**
- * 1.0.4 - Add common bridgeAsyncGetV2() method (goal to reduce individual driver code)
+ * 1.0.5 - Add common bridgeAsyncPutV2() method for asyncHttpPut (goal to reduce individual driver code)
+ * 1.0.4 - Add common bridgeAsyncGetV2() method asyncHttpGet (goal to reduce individual driver code)
  * 1.0.3 - Add APIV1 and APIV2 "constants"
  * 1.0.2  - HTTP error handling tweaks
  */
@@ -461,7 +528,7 @@ void doSendEvent(String eventName, eventValue, String eventUnit=null, Boolean fo
 
 /** Performs asynchttpGet() to Bridge using data retrieved from parent app or as passed in
   * @param callbackMethod Callback method
-  * @param clipV2Path The Hue V2 API path (without '/clip/v2', automatically prepended), e.g. '/resource' or '/resource/light'
+  * @param clipV2Path The Hue V2 API path ('/clip/v2' is automatically prepended), e.g. '/resource' or '/resource/light'
   * @param bridgeData Bridge data from parent getBridgeData() call, or will call this method on parent if null
   * @param data Extra data to pass as optional third (data) parameter to asynchtttpGet() method
   */
@@ -480,6 +547,29 @@ void bridgeAsyncGetV2(String callbackMethod, String clipV2Path, Map<String,Strin
    asynchttpGet(callbackMethod, params, data)
 }
 
+/** Performs asynchttpPut() to Bridge using data retrieved from parent app or as passed in
+  * @param callbackMethod Callback method
+  * @param clipV2Path The Hue V2 API path ('/clip/v2' is automatically prepended), e.g. '/resource' or '/resource/light'
+  * @param body Body data, a Groovy Map representing JSON for the Hue V2 API command, e.g., [on: [on: true]]
+  * @param bridgeData Bridge data from parent getBridgeData() call, or will call this method on parent if null
+  * @param data Extra data to pass as optional third (data) parameter to asynchtttpPut() method
+  */
+void bridgeAsyncPutV2(String callbackMethod, String clipV2Path, Map body, Map<String,String> bridgeData = null, Map data = null) {
+   if (bridgeData == null) {
+      bridgeData = parent.getBridgeData()
+   }
+   Map params = [
+      uri: "https://${bridgeData.ip}",
+      path: "/clip/v2${clipV2Path}",
+      headers: ["hue-application-key": bridgeData.username],
+      contentType: "application/json",
+      body: body,
+      timeout: 15,
+      ignoreSSLIssues: true
+   ]
+   asynchttpPut(callbackMethod, params, data)
+   if (logEnable == true) log.debug "Command sent to Bridge: $body at ${clipV2Path}"
+}
 
 
 // ~~~ IMPORTED FROM RMoRobert.CoCoHue_Constants_Lib ~~~
