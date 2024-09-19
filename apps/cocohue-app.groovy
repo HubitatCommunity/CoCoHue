@@ -18,8 +18,9 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2024-09-17
+ *  Last modified: 2024-09-18
  *  Changelog:
+ *  v5.1   - Remove scene Switch capability and related commands, preferences, and scene/group driver and app code
  *  v5.0.3 - Upgrade old log settings; use V2 for scene activation when possible
  *  v5.0.2 - Fetch V2 grouped_light ID owner for room/zone owners of V2 scenes
  *  v5.0.1 - Fix for missing V1 IDs after device creation or upgrade
@@ -1701,30 +1702,31 @@ void setBridgeOnlineStatus(setToOnline=true) {
    }
  }
 
-/**
- *  Intended to be called by scene child device if GroupScene so other scenes belonging to same
- *  group can be set to "off" if user has this preference configured for scene.
- *  For Hue v1 API only
- *  @param groupID Hue group ID (will search for GroupScenes belonging to this group), or use 0 for all CoCoHue scenes
-  * @param excludeDNI Intended to be DNI of the calling scene; will exclude this from search since should remain on
- */
-void updateSceneStateToOffForGroup(String groupID, String excludeDNI=null) {
-   if (logEnable == true) log.debug "Searching for scene devices matching group $groupID and excluding DNI $excludeDNI"
-   List<DeviceWrapper> sceneDevs = []
-   if (groupID == "0") {
-      sceneDevs = getChildDevices()?.findAll({it.getDeviceNetworkId()?.startsWith("${DNI_PREFIX}/${app.id}/Scene/") &&
-                                 it.getDeviceNetworkId() != excludeDNI})
-   }
-   else {
-      sceneDevs = getChildDevices()?.findAll({it.getDeviceNetworkId()?.startsWith("${DNI_PREFIX}/${app.id}/Scene/") &&
-                                 it.getDeviceNetworkId() != excludeDNI &&
-                                 it.getGroupID() == groupID})
-   }
-   if (logEnable == true) log.debug "updateSceneStateToOffForGroup matching scenes: $sceneDevs"
-   sceneDevs.each { sc ->
-		   if (sc.currentValue("switch") != "off") sc.doSendEvent("switch", "off")
-   }
-}
+// Removed with removal of Switch capability form scene drivers
+// /**
+//  *  Intended to be called by scene child device if GroupScene so other scenes belonging to same
+//  *  group can be set to "off" if user has this preference configured for scene.
+//  *  For Hue v1 API only
+//  *  @param groupID Hue group ID (will search for GroupScenes belonging to this group), or use 0 for all CoCoHue scenes
+//   * @param excludeDNI Intended to be DNI of the calling scene; will exclude this from search since should remain on
+//  */
+// void updateSceneStateToOffForGroup(String groupID, String excludeDNI=null) {
+//    if (logEnable == true) log.debug "Searching for scene devices matching group $groupID and excluding DNI $excludeDNI"
+//    List<DeviceWrapper> sceneDevs = []
+//    if (groupID == "0") {
+//       sceneDevs = getChildDevices()?.findAll({it.getDeviceNetworkId()?.startsWith("${DNI_PREFIX}/${app.id}/Scene/") &&
+//                                  it.getDeviceNetworkId() != excludeDNI})
+//    }
+//    else {
+//       sceneDevs = getChildDevices()?.findAll({it.getDeviceNetworkId()?.startsWith("${DNI_PREFIX}/${app.id}/Scene/") &&
+//                                  it.getDeviceNetworkId() != excludeDNI &&
+//                                  it.getGroupID() == groupID})
+//    }
+//    if (logEnable == true) log.debug "updateSceneStateToOffForGroup matching scenes: $sceneDevs"
+//    sceneDevs.each { sc ->
+// 		   if (sc.currentValue("switch") != "off") sc.doSendEvent("switch", "off")
+//    }
+// }
 
  /**
  * Finds Hubitat devices for member bulbs of group and returns true if any (that are found) are on; returns false

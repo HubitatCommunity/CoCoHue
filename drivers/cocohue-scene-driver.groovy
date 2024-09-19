@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2024-09-17
+ *  Last modified: 2024-09-18
  *
  *  Changelog:
+ *  v5.1    - Remove Switch capability and associated preferences for groups and scenes
  *  v5.0.3  - Use V2 API for scene activation/recall
  *  v5.0.2  - Fetch V2 grouped_light ID owner for room/zone owners of V2 scenes
  *  v5.0.1  - Fetch additional info to avoid missing V1 IDs
@@ -49,7 +50,6 @@ import groovy.transform.Field
 metadata {
    definition(name: "CoCoHue Scene", namespace: "RMoRobert", author: "Robert Morris", importUrl: "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-scene-driver.groovy") {
       capability "Actuator"
-      capability "Switch"
       capability "PushableButton"
       capability "Configuration"
 
@@ -57,13 +57,7 @@ metadata {
    }
 
    preferences {
-      input name: "onPropagation", type: "enum", title: "Scene \"on\"/\"off\" behavior: when this scene is activated... (applicable only if not using V2 API/eventstream)",
-         options: [["none": "Do not manipulate other scene device states"],
-                   ["groupScenesOff": "Mark other scenes for this group as off (if GroupScene)"],
-                   ["allScenesOff": "Mark all other scenes on hub from Bridge as off"],
-                   ["autoOff": "Automatically mark as off in 5 seconds"]],
-         defaultValue: "groupScenesOff"
-      input name: "onRefresh", type: "enum", title: "Bridge refresh on activation/deactivation: when this scene is activated or deactivated by a Hubitat command...  (suggested only if not using V2 API/eventstream and depend on status)",
+      input name: "onRefresh", type: "enum", title: "Bridge refresh on activation/deactivation: when this scene is activated or deactivated by a Hubitat command...  (suggested only if depend on status of these devices and not using Hue V2 API)",
          options: [["none": "Do not refresh Bridge"],
                    ["1000": "Refresh Bridge device in 1s"],
                    ["5000": "Refresh Bridge device in 5s"]],
@@ -145,19 +139,20 @@ Boolean getHasV2DNI() {
    }
 }
 
-void on() {
-   if (logEnable) log.debug "on()"
+// these were called on() and onV1() previously:
+void activate() {
+   if (logEnable) log.debug "activate()"
    if (hasV2DNI == true) {
-      if (logEnable) log.debug "on() will use V2 API"
+      if (logEnable) log.debug "activation will use V2 API"
       Map cmd = [recall: [action: "active"]]
       bridgeAsyncPutV2("parseSendCommandResponseV2", "/resource/scene/${getHueDeviceIdV2()}", cmd)
    }
    else {
-      onV1()
+      activateV1()
    }
 }
 
-void onV1() {
+void activateV1() {
    Map<String,String> data = parent.getBridgeData()
    Map cmd = ["scene": getHueDeviceIdV1()]
    Map params = [
@@ -174,97 +169,99 @@ void onV1() {
    if (logEnable) log.debug "Command sent to Bridge: $cmd"
 }
 
-void off() {
-   if (logEnable) log.debug "off()"
-   if (hasV2DNI == true) {
-      if (logEnable) log.debug "off() will use V2 API"
-      if (state.ownerGroupId != null) {
-         List<String> dniParts = device.deviceNetworkId.split("/")
-         String dni = "${dniParts[0]}/${dniParts[1]}/Group/${state.ownerGroupId}"
-         com.hubitat.app.DeviceWrapper dev = parent.getChildDevice(dni)
-         if (dev != null) {
-            if (logEnable) log.debug "Hubitat device for group ${state.group} found; turning off"
-            dev.off()
-            doSendEvent("switch", "off", null) // may not need with V2 API but can't hurt?
-         }
-         else {
-            Map cmd = [on: [on: false]]
-            bridgeAsyncPutV2("parseSendCommandResponseV2", "/resource/grouped_light/${state.ownerGroupId}", cmd, null, [attribute: "switch", value: "off"])
-         }
-      }
-      else if (state.group != null) {
-         if (logEnable) log.debug "Cannot find V2 group ID to perform off() action; attepmting V1..."
-         offV1()
-      }
-      else {
-         if (logEnable) log.debug "No group information available to perform off() action. Try running Fetch Scene Data command to fix, or turn off group or lights directly instead of scene device."
-      }
-   }
-   else {
-      offV1()
-   }
-}
+// remove if do not re-add Switch capability
 
-void offV1() {
-   if (logEnable) log.debug "offV1()"
-   if (state.type == "GroupScene") {
-      if (logEnable) log.debug "Scene is GroupScene; turning off group $state.group"
-      List<String> dniParts = device.deviceNetworkId.split("/")
-      String dni = "${dniParts[0]}/${dniParts[1]}/Group/${state.group}"
-      com.hubitat.app.DeviceWrapper dev = parent.getChildDevice(dni)
-      if (dev) {
-         if (logEnable) log.debug "Hubitat device for group ${state.group} found; turning off"
-         dev.off()
-         doSendEvent("switch", "off", null) // optimistic here; group device will catch if problem
-      }
-      else {
-         if (logEnable) log.debug "Device not found; sending V1 command directly to turn off Hue group"
-         Map<String,String> data = parent.getBridgeData()
-         Map cmd = ["on": false]
-         Map params = [
-               uri: data.fullHost,
-               path: "/api/${data.username}/groups/${state.group}/action",
-               contentType: 'application/json',
-               body: cmd,
-               timeout: 15
-         ]
-         asynchttpPut("parseSendCommandResponseV1", params, [attribute: 'switch', value: 'off'])
-         if (logEnable) log.debug "Command sent to Bridge: $cmd"
-      }
-   } else if (state.type == "LightScene") {
-      doSendEvent("switch", "off", null) // optimistic here (would be difficult to determine and aggregate individual light responses and should be rare anyway)
-      if (logEnable) log.debug "Scene is LightScene; turning off lights $state.lights"
-      state.lights.each {
-         List<String> dniParts = device.deviceNetworkId.split("/")
-         String dni = "${dniParts[0]}/${dniParts[1]}/Light/${it}"
-         com.hubitat.app.DeviceWrapper dev = parent.getChildDevice(dni)
-         if (dev) {
-            if (logEnable) log.debug "Hubitat device for light ${it} found; turning off"
-            dev.off()
-         }
-         else {
-            if (logEnable) log.debug "Device not found; sending command directly to turn off Hue light"
-            Map<String,String> data = parent.getBridgeData()
-            Map cmd = ["on": false]
-            Map params = [
-               uri: data.fullHost,
-               path: "/api/${data.username}/lights/${it}/state",
-               contentType: 'application/json',
-               body: cmd,
-               timeout: 15
-            ]
-            asynchttpPut("parseSendCommandResponseV1", params)
-            if (logEnable) log.debug "Command sent to Bridge: $cmd"
-         }
-      }
-      if (settings["onRefresh"] == "1000" || settings["onRefresh"] == "5000") {
-         parent.runInMillis(settings["onRefresh"] as Integer, "refreshBridge")
-      }
-   }
-   else {
-      log.warn "No off() action available for scene $device.displayName"
-   }
-}
+// void off() {
+//    if (logEnable) log.debug "off()"
+//    if (hasV2DNI == true) {
+//       if (logEnable) log.debug "off() will use V2 API"
+//       if (state.ownerGroupId != null) {
+//          List<String> dniParts = device.deviceNetworkId.split("/")
+//          String dni = "${dniParts[0]}/${dniParts[1]}/Group/${state.ownerGroupId}"
+//          com.hubitat.app.DeviceWrapper dev = parent.getChildDevice(dni)
+//          if (dev != null) {
+//             if (logEnable) log.debug "Hubitat device for group ${state.group} found; turning off"
+//             dev.off()
+//             doSendEvent("switch", "off", null) // may not need with V2 API but can't hurt?
+//          }
+//          else {
+//             Map cmd = [on: [on: false]]
+//             bridgeAsyncPutV2("parseSendCommandResponseV2", "/resource/grouped_light/${state.ownerGroupId}", cmd, null, [attribute: "switch", value: "off"])
+//          }
+//       }
+//       else if (state.group != null) {
+//          if (logEnable) log.debug "Cannot find V2 group ID to perform off() action; attepmting V1..."
+//          offV1()
+//       }
+//       else {
+//          if (logEnable) log.debug "No group information available to perform off() action. Try running Fetch Scene Data command to fix, or turn off group or lights directly instead of scene device."
+//       }
+//    }
+//    else {
+//       offV1()
+//    }
+// }
+
+// void offV1() {
+//    if (logEnable) log.debug "offV1()"
+//    if (state.type == "GroupScene") {
+//       if (logEnable) log.debug "Scene is GroupScene; turning off group $state.group"
+//       List<String> dniParts = device.deviceNetworkId.split("/")
+//       String dni = "${dniParts[0]}/${dniParts[1]}/Group/${state.group}"
+//       com.hubitat.app.DeviceWrapper dev = parent.getChildDevice(dni)
+//       if (dev) {
+//          if (logEnable) log.debug "Hubitat device for group ${state.group} found; turning off"
+//          dev.off()
+//          doSendEvent("switch", "off", null) // optimistic here; group device will catch if problem
+//       }
+//       else {
+//          if (logEnable) log.debug "Device not found; sending V1 command directly to turn off Hue group"
+//          Map<String,String> data = parent.getBridgeData()
+//          Map cmd = ["on": false]
+//          Map params = [
+//                uri: data.fullHost,
+//                path: "/api/${data.username}/groups/${state.group}/action",
+//                contentType: 'application/json',
+//                body: cmd,
+//                timeout: 15
+//          ]
+//          asynchttpPut("parseSendCommandResponseV1", params, [attribute: 'switch', value: 'off'])
+//          if (logEnable) log.debug "Command sent to Bridge: $cmd"
+//       }
+//    } else if (state.type == "LightScene") {
+//       doSendEvent("switch", "off", null) // optimistic here (would be difficult to determine and aggregate individual light responses and should be rare anyway)
+//       if (logEnable) log.debug "Scene is LightScene; turning off lights $state.lights"
+//       state.lights.each {
+//          List<String> dniParts = device.deviceNetworkId.split("/")
+//          String dni = "${dniParts[0]}/${dniParts[1]}/Light/${it}"
+//          com.hubitat.app.DeviceWrapper dev = parent.getChildDevice(dni)
+//          if (dev) {
+//             if (logEnable) log.debug "Hubitat device for light ${it} found; turning off"
+//             dev.off()
+//          }
+//          else {
+//             if (logEnable) log.debug "Device not found; sending command directly to turn off Hue light"
+//             Map<String,String> data = parent.getBridgeData()
+//             Map cmd = ["on": false]
+//             Map params = [
+//                uri: data.fullHost,
+//                path: "/api/${data.username}/lights/${it}/state",
+//                contentType: 'application/json',
+//                body: cmd,
+//                timeout: 15
+//             ]
+//             asynchttpPut("parseSendCommandResponseV1", params)
+//             if (logEnable) log.debug "Command sent to Bridge: $cmd"
+//          }
+//       }
+//       if (settings["onRefresh"] == "1000" || settings["onRefresh"] == "5000") {
+//          parent.runInMillis(settings["onRefresh"] as Integer, "refreshBridge")
+//       }
+//    }
+//    else {
+//       log.warn "No off() action available for scene $device.displayName"
+//    }
+// }
 
 /**
  * Iterates over Hue scene state state data in Hue API v2 (SSE) format and does
@@ -275,16 +272,15 @@ void createEventsFromMapV2(Map data) {
    if (logEnable == true) log.debug "createEventsFromMapV2($data)"
    String eventName, eventUnit, descriptionText
    def eventValue // could be String or number
-   Boolean hasCT = data.color_temperature?.mirek != null
    data.each { String key, value ->
       //log.trace "$key = $value"
       switch (key) {
-         case "status":
-            eventName = "switch"
-            eventValue = (value.active == "inactive" || value.active == null) ? "off" : "on"
-            eventUnit = null
-            if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue, eventUnit)
-            break
+         // case "status":
+         //    eventName = "switch"
+         //    eventValue = (value.active == "inactive" || value.active == null) ? "off" : "on"
+         //    eventUnit = null
+         //    if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue, eventUnit)
+         //    break
          case "id_v1":
             if (state.id_v1 != value) state.id_v1 = value
             break
@@ -305,20 +301,6 @@ void parseSendCommandResponseV1(AsyncResponse resp, Map data) {
    if (checkIfValidResponse(resp) && data?.attribute != null && data?.value != null) {
       if (logEnable) log.debug "  Bridge response valid; running creating events"
       if (device.currentValue(data.attribute) != data.value) doSendEvent(data.attribute, data.value)   
-      if (data.attribute == "switch" && data.value == "on") {
-         if (settings["onPropagation"] == "groupScenesOff") {
-            parent.updateSceneStateToOffForGroup(state.group ?: "0", device.deviceNetworkId)
-         }
-         else if (settings["onPropagation"] == "allScenesOff") {
-            parent.updateSceneStateToOffForGroup("0", device.deviceNetworkId)
-         }
-         else if (settings["onPropagation"] == "autoOff") {
-            runIn(5, autoOffHandler)
-         }
-         else {
-            if (logEnable) log.debug "No scene onPropagation configured; leaving other scene states as-is"
-         }
-      }
    }
    else {
       if (logEnable) log.debug "  Not creating events from map because not specified to do or Bridge response invalid"
@@ -344,7 +326,7 @@ void parseSendCommandResponseV2(AsyncResponse resp, Map data) {
 
 void push(btnNum) {
    if (logEnable) log.debug "push($btnNum)"
-   on()
+   activate()
    doSendEvent("pushed", btnNum.toInteger(), null, true)
 }
 
@@ -429,13 +411,13 @@ void fetchRoomOrZoneGroupIdResponseV2(resp, data) {
  */
 private void setDefaultAttributeValues() {
    if (logEnable) log.debug "Setting scene device states to sensibile default values..."
-   event = sendEvent(name: "switch", value: "off", isStateChange: false)
+   //event = sendEvent(name: "switch", value: "off", isStateChange: false)
    event = sendEvent(name: "pushed", value: 1, isStateChange: false)
 }
 
-void autoOffHandler() {
-   doSendEvent("switch", "off") 
-}
+// void autoOffHandler() {
+//    doSendEvent("switch", "off") 
+// }
 
 /**
  * Returns Hue group ID (as String, since it is likely to be used in DNI check or API call).

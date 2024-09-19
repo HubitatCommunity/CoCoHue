@@ -14,11 +14,12 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2024-09-15
+ *  Last modified: 2024-09-18
  *
  *  Changelog:
- *  v5.0.1 - Fix for missing V1 IDs after device creation or upgrade
- *  v5.0   - Use API v2 by default, remove deprecated features
+ *  v5.1    - Remove scene switch preferences
+ *  v5.0.1  - Fix for missing V1 IDs after device creation or upgrade
+ *  v5.0    - Use API v2 by default, remove deprecated features
  *  v4.2    - Library updates, prep for more v2 API
  *  v4.1.7  - Fix for unexpected Hubitat event creation when v2 API reports level of 0
  *  v4.1.5  - Improved v2 brightness parsing
@@ -109,8 +110,6 @@ metadata {
       input name: "hiRezHue", type: "bool", title: "Enable hue in degrees (0-360 instead of 0-100)", defaultValue: false
       // Note: the following setting does not apply to SSE, which should update the group state immediately regardless:
       input name: "updateBulbs", type: "bool", description: "", title: "Update member bulb states immediately when group state changes (applicable only if not using V2 API/eventstream)",
-         defaultValue: true
-      input name: "updateScenes", type: "bool", description: "", title: "Mark all GroupScenes for this group as off when group device turns off (applicable only if not using V2 API/eventstream)",
          defaultValue: true
       input name: "logEnable", type: "bool", title: "Enable debug logging", defaultValue: true
       input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true
@@ -236,9 +235,6 @@ void createEventsFromMapV1(Map bridgeCommandMap, Boolean isFromBridge = false, S
             eventUnit = null
             if (device.currentValue(eventName) != eventValue) {
                doSendEvent(eventName, eventValue, eventUnit)
-               if (eventValue == "off" && settings["updateScenes"] != false) {
-                  parent.updateSceneStateToOffForGroup(getHueDeviceIdV1())
-               }
             }
             break
          case "bri":
@@ -429,9 +425,6 @@ void parseSendCommandResponseV1(AsyncResponse resp, Map data) {
       createEventsFromMapV1(data)
       if ((data.containsKey("on") || data.containsKey("bri")) && settings["updateBulbs"]) {
          parent.updateMemberBulbStatesFromGroup(data, state.memberBulbs, device.getDeviceNetworkId().endsWith('/0'))
-      }
-      if (data["on"] == false && settings["updateScenes"] != false) {
-         parent.updateSceneStateToOffForGroup(getHueDeviceIdV1())
       }
    }
    else {
