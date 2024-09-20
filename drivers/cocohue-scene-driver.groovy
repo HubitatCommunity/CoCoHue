@@ -50,6 +50,7 @@ import groovy.transform.Field
 metadata {
    definition(name: "CoCoHue Scene", namespace: "RMoRobert", author: "Robert Morris", importUrl: "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-scene-driver.groovy") {
       capability "Actuator"
+      capability "Momentary"
       capability "PushableButton"
       capability "Configuration"
 
@@ -162,7 +163,7 @@ void activateV1() {
       body: cmd,
       timeout: 15
       ]
-   asynchttpPut("parseSendCommandResponseV1", params, [attribute: 'switch', value: 'on'])
+   asynchttpPut("parseSendCommandResponseV1", param /*, [attribute: 'switch', value: 'on']*/)
    if (settings["onRefresh"] == "1000" || settings["onRefresh"] == "5000") {
       parent.runInMillis(settings["onRefresh"] as Integer, "refreshBridge")
    }

@@ -18,9 +18,9 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2024-09-18
+ *  Last modified: 2024-09-20
  *  Changelog:
- *  v5.1   - Remove scene Switch capability and related commands, preferences, and scene/group driver and app code
+ *  v5.1.1 - Fix motion sensor IDs for new migrations
  *  v5.0.3 - Upgrade old log settings; use V2 for scene activation when possible
  *  v5.0.2 - Fetch V2 grouped_light ID owner for room/zone owners of V2 scenes
  *  v5.0.1 - Fix for missing V1 IDs after device creation or upgrade
@@ -202,7 +202,8 @@ void upgradeCCHv1DNIsToV2ResponseHandler(AsyncResponse resp, data=null) {
       List<Map> zonesData = resp.json.data.findAll { it.type == "zone" } ?: [[:]]    // zones (groups)
       List<Map> groupsData = resp.json.data.findAll { it.type == "grouped_light" } ?: [[:]]  // "pure" groups (groups)
       List<Map> scenesData = resp.json.data.findAll { it.type == "scene" } ?: [[:]]  // scenes
-      List<Map> motionData = resp.json.data.findAll { it.type == "motion" } ?: [[:]]  // motion for motion sensorsor motion sensors
+      //List<Map> motionData = resp.json.data.findAll { it.type == "motion" } ?: [[:]]  // motion for motion sensorsor motion sensors
+      List<Map> motionData = resp.json?.data?.findAll { Map devData -> devData.services.any { svc -> svc.rtype == "motion"} } ?: []
       List<Map> temperatureData = resp.json.data.findAll { it.type == "temperature" } ?: [[:]]  // temperature for motion sensors
       List<Map> illuminanceData = resp.json.data.findAll { it.type == "light_level" } ?: [[:]]  // lux for motion sensors (all three of above have separate V1 IDs)
       // Don't need this for motion or button since was coupled with other data in V1:
