@@ -17,7 +17,7 @@
  *  Last modified: 2024-09-22
  *
  *  Changelog:
- *  v5.1.1  - Re-added "momentary"-only Switch capability (on does push(1), off does nothing, auto-off after few seconds by default)
+ *  v5.1.2  - Re-added "momentary"-only Switch capability (on does push(1), off does nothing, auto-off after few seconds by default)
  *  v5.1    - Remove Switch capability and associated preferences for groups and scenes
  *  v5.0.3  - Use V2 API for scene activation/recall
  *  v5.0.2  - Fetch V2 grouped_light ID owner for room/zone owners of V2 scenes
