@@ -51,7 +51,6 @@ import groovy.transform.Field
 metadata {
    definition(name: "CoCoHue Scene", namespace: "RMoRobert", author: "Robert Morris", importUrl: "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-scene-driver.groovy") {
       capability "Actuator"
-      capability "Momentary"
       capability "PushableButton"
       capability "Switch"
       capability "Configuration"
