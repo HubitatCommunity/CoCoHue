@@ -197,7 +197,7 @@ void activateV1() {
       body: cmd,
       timeout: 15
       ]
-   asynchttpPut("parseSendCommandResponseV1", param /*, [attribute: 'switch', value: 'on']*/)
+   asynchttpPut("parseSendCommandResponseV1", params /*, [attribute: 'switch', value: 'on']*/)
    if (settings["onRefresh"] == "1000" || settings["onRefresh"] == "5000") {
       parent.runInMillis(settings["onRefresh"] as Integer, "refreshBridge")
    }
