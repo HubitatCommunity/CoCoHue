@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2024-09-18
+ *  Last modified: 2024-09-22
  *
  *  Changelog:
+ *  v5.1.1  - Re-added "momentary"-only Switch capability (on does push(1), off does nothing, auto-off after few seconds by default)
  *  v5.1    - Remove Switch capability and associated preferences for groups and scenes
  *  v5.0.3  - Use V2 API for scene activation/recall
  *  v5.0.2  - Fetch V2 grouped_light ID owner for room/zone owners of V2 scenes
@@ -52,6 +53,7 @@ metadata {
       capability "Actuator"
       capability "Momentary"
       capability "PushableButton"
+      capability "Switch"
       capability "Configuration"
 
       command "fetchSceneData"
@@ -63,6 +65,8 @@ metadata {
                    ["1000": "Refresh Bridge device in 1s"],
                    ["5000": "Refresh Bridge device in 5s"]],
          defaultValue: "none"
+      input name: "autoOff", type: "enum", title: "Automatically set switch state to off after activating scene with \"on\" command",
+         options: ["no": "Disabled (not recommended)", "2": "After 2 seconds (default)", "5": "After 5 seconds"], defaultValue: "2"
       input name: "logEnable", type: "bool", title: "Enable debug logging", defaultValue: true
       input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true
    }
@@ -92,6 +96,36 @@ void initialize() {
 void configure() {
    log.debug "configure()"
    setDefaultAttributeValues()
+}
+
+void push(btnNum) {
+   if (logEnable) log.debug "push($btnNum)"
+   activate()
+   doSendEvent("pushed", btnNum.toInteger(), null, true)
+}
+
+void on() {
+   if (logEnable) log.debug "on()"
+   push(1)
+   doSendEvent("switch", "on", null)
+   if (settings.autoOff != "0") {
+      String sec = settings.autoOff ?: "2"
+      runIn(sec.toInteger(), "autoOffHandler")
+   }
+}
+
+void off() {
+   log.warn "command off() not implemented; turn off desired group or light devices instead"
+   if (device.currentValue("switch") != "off") {
+      doSendEvent("switch", "off", null)
+   }
+}
+
+void autoOffHandler(Map data=null) {
+   if (logEnable) log.debug "autoOffHandler()"
+   if (device.currentValue("switch") != "off") {
+      doSendEvent("switch", "off", null)
+   }
 }
 
 // Probably won't happen but...
@@ -325,12 +359,6 @@ void parseSendCommandResponseV2(AsyncResponse resp, Map data) {
    }
 }
 
-void push(btnNum) {
-   if (logEnable) log.debug "push($btnNum)"
-   activate()
-   doSendEvent("pushed", btnNum.toInteger(), null, true)
-}
-
 /** Gets data about scene from Bridge; does not update bulb/group status */
 void fetchSceneData() {
    if (logEnable) log.debug "refresh()"
@@ -412,8 +440,8 @@ void fetchRoomOrZoneGroupIdResponseV2(resp, data) {
  */
 private void setDefaultAttributeValues() {
    if (logEnable) log.debug "Setting scene device states to sensibile default values..."
-   //event = sendEvent(name: "switch", value: "off", isStateChange: false)
-   event = sendEvent(name: "pushed", value: 1, isStateChange: false)
+   sendEvent(name: "switch", value: "off", isStateChange: false)
+   sendEvent(name: "pushed", value: 1, isStateChange: false)
 }
 
 // void autoOffHandler() {
