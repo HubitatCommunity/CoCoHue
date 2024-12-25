@@ -18,8 +18,11 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2024-09-20
+ *  Last modified: 2024-12-24
  *  Changelog:
+ *  v5.2.3 - Improve logic for choosing V2 API by default on new installs
+ *  v5.2.1 - Add support option for Bridge cache logging
+ *  v5.1.2 - Add option to downgrade to V1 API (to facilitate just this or this plus app downgrade)
  *  v5.1.1 - Fix motion sensor IDs for new migrations
  *  v5.0.3 - Upgrade old log settings; use V2 for scene activation when possible
  *  v5.0.2 - Fetch V2 grouped_light ID owner for room/zone owners of V2 scenes
@@ -346,6 +349,10 @@ void initialize() {
    else {
       unsubscribe("ssdpHandler")
       unschedule("periodicSendDiscovery")
+      if (state.useV2) {
+         // still do this if no SSDP but using V2 because will fetch cache
+         subscribe(location, "systemStart", "hubRestartHandler")
+      }
    }
 
    if (logEnable) {
@@ -445,7 +452,22 @@ void sendBridgeDiscoveryCommandIfSSDPEnabled(Boolean checkIfRecent=true) {
 }
 
 void hubRestartHandler(evt) {
-   runIn(20, "sendBridgeDiscoveryCommandIfSSDPEnabled")
+   runIn(Math.round(Math.random() * 10) + 15, "sendBridgeDiscoveryCommandIfSSDPEnabled") // do in about 15-25 seconds
+   if (state.useV2) {
+      runIn(Math.round(Math.random() * 20) + 35, "sendUpdateBridgeCacheRequest") // do in about 35-55 seconds
+   }
+}
+
+/** Calls method on Bridge child device to get new cache (of /resources endpoint if V2 API enabled)
+*/
+void sendUpdateBridgeCacheRequest() {
+   DeviceWrapper bridge = getChildDevice("${DNI_PREFIX}/${app.id}")
+   bridge?.updateBridgeCacheV2()
+}
+
+Map getBridgeCacheV2() {
+   DeviceWrapper bridge = getChildDevice("${DNI_PREFIX}/${app.id}")
+   bridge?.getBridgeCacheV2()
 }
 
 // Scheduled job handler; if using SSDP, schedules to run once a day just in case
@@ -543,6 +565,13 @@ def pageAddBridge() {
             paragraph "<script>\$('button[name=\"_action_next\"]').hide()</script>"
          }
       }
+      section("Advanced", hideable: true, hidden: true || !(settings.useEventStream == false || settings.useSSDP == false)) {
+         // TODO: Switch to mDNS, leave SSDP as legacy option for v1 bridges if needed; consider making separate setting?
+         input name: "useSSDP", type: "bool", title: "Discover Hue Bridges automatically (recommended)", defaultValue: true, submitOnChange: true
+         paragraph "<small>Disabling the above option will disable automatic discovery of Hue Bridges on your LAN; recommended only if using static or reserved DHCP IP address on Bridge.</small>"
+         // Setting name (useEventStream) must match one used on manage bridge page! Presenting here so can be turned off before adding if desired since cannot be disabled after:
+         input name: "useEventStream", type: "bool", title: "Use Hue V2 API if available (recommended)", defaultValue: true, submitOnChange: true
+      }     
    }
 }
 
@@ -625,6 +654,7 @@ def pageLinkBridge() {
                   if (state.bridgeLinked && state.bridgeAuthorized) {
                      state.remove('discoveredBridges')
                      state.remove('authRefreshInterval')
+                     state.bridgeJustAdded = true
                      //app.clearSetting('selectedDiscoveredBridge')
                      paragraph "<b>Your Hue Bridge has been linked!</b> Select \"Next\" to begin adding lights " +
                                  "and other devices from the Hue Bridge to your hub."
@@ -647,10 +677,6 @@ def pageLinkBridge() {
 
 def pageSupportOptions() {
    dynamicPage(name: "pageSupportOptions", uninstall: true, install: false, nextPage: "pageManageBridge") {
-      // section("Temporary Fixes") {
-      //    paragraph "Fix V2 group (room/zone) device DNIs from older beta of new app version (this option will be removed in next release):"
-      //    input name: "btnFixGroupDNIsTEMP", type: "button", title: "Fix Group DNIs from Old Beta"
-      // }
       section("Debugging Information") {
          paragraph "Enable debug logging on Bridge child device (will remain enabled until disabled on device):"
          input name: "btnEnableBridgeLogging", type: "button", title: "Enable Debug Logging on Bridge"
@@ -677,11 +703,14 @@ def pageSupportOptions() {
             paragraph "Buttons:", width: 3
             input name: "btnFetchButtonsInfo", type: "button", title: "Fetch Buttons Info", width: 4
             input name: "btnLogButtonsInfo", type: "button", title: "Log Buttons Cache", width: 5
+            paragraph "Bridge Cache (V2):", width: 3
+            input name: "btnFetchBridgeCache", type: "button", title: "Fetch Bridge Cache", width: 4
+            input name: "btnLogBridgeCache", type: "button", title: "Log Bridge Cache", width: 5
          }
       }
 
       section("Advanced Tools") {
-         String introText = "Use these options only with guidance from the developer or community.hubitat.com. See: https://docs2.hubitat.com/en/apps/hue-bridge-integration"         
+         String introText = "Use these options only with guidance from the developer or community.hubitat.com."
          paragraph introText
 
          paragraph "Retry enabling V2 API (server-sent events/SSE/eventstream) option:"
@@ -703,9 +732,9 @@ def pageManageBridge() {
       if (logEnable == true) log.debug "New scenes selected. Creating..."
       createNewSelectedSceneDevices()
    }
-   if (settings["newSensors"]) {
-      if (logEnable == true) log.debug "New sensors selected. Creating..."
-      createNewSelectedSensorDevices()
+   if (settings["newMotionSensors"]) {
+      if (logEnable == true) log.debug "New motion sensors selected. Creating..."
+      createNewSelectedMotionSensorDevices()
    }
    if (settings["newButtons"]) {
       if (logEnable == true) log.debug "New button devices selected. Creating..."
@@ -722,8 +751,13 @@ def pageManageBridge() {
       bridge.clearRoomsCache()
       bridge.clearZonesCache()
       bridge.clearScenesCache()
-      bridge.clearSensorsCache()
+      bridge.clearMotionSensorsCache()
       bridge.clearButtonsCache()
+      // Avoid needing to click "Done" to finish new Bridge setup:
+      if (state.bridgeJustAdded) {
+         state.remove("bridgeJustAdded")
+         bridge.initialize()
+      }
    }
    else {
       log.warn "Bridge device not found!"
@@ -734,7 +768,7 @@ def pageManageBridge() {
    state.remove("addedScenes")
    state.remove("addedSensors")
    state.remove("addedButtons")
-
+   state.remove("bridgeJustAdded")
    dynamicPage(name: "pageManageBridge", uninstall: true, install: true) {  
       section("Manage Hue Bridge Devices:") {
          href(name: "hrefSelectLights", title: "Select Lights",
@@ -751,22 +785,25 @@ def pageManageBridge() {
          }
       }       
       section("Other Options:") {
+         String v2SettingText = "Prefer V2 Hue API (EventStream/Server-Sent Events) if available"
          if (!(state.useV2)) {
-            input name: "useEventStream", type: "bool", title: "Prefer V2 Hue API (EventStream/Server-Sent Events) if available. NOTE: Cannot be disabled once enabled.", defaultValue: true
-            paragraph "<small>The V2 Hue API allows instant status updates from devices with no polling required. It is available on V2 bridges with firmware starting around late 2021 (though current firmware is recommended) and " +
-               "is necessary to use for sensor and button devices. This setting cannot be disabled once enabled (without restoring a hub backup or if you have not yet selected a Hue Bridge to link with).</small>"
+            input name: "useEventStream", type: "bool", title: "$v2SettingText. NOTE: Cannot be disabled once enabled.", defaultValue: true
+            paragraph "<small>The V2 Hue API allows instant status updates from devices instead of relying on polling to retrieve new states. It is available on V2 bridges with firmware starting around late 2021 (though current firmware is recommended) and " +
+               "is necessary to use for sensor and button devices. Enabling is recommended for most users. This setting cannot be disabled once enabled (without restoring a hub backup or if you have not yet selected a Hue Bridge to link with).</small>"
          }
          else {
-            paragraph "NOTE: Hue API V2 use is enabled. (This setting cannot be reverted once enabled.)"
-            input name: "useV1Polling", type: "bool", title: "Use V1 API for polling on Bridge (if polling enabled), even if V2 API is enabled (recommended)", defaultValue: true
+            paragraph "The \"$v2SettingText\" setting is enabled.<br><small>(This setting cannot be disabled in setups where it is enabled and is presented for information only.)</small>"
          }
          input name: "pollInterval", type: "enum", title: "Poll bridge every...",
             options: [0:"Disabled", 15:"15 seconds", 20:"20 seconds", 30:"30 seconds", 45:"45 seconds", 60:"1 minute (default)", 120:"2 minutes",
                       180:"3 minutes", 300:"5 minutes", 420:"7 minutes", 6000:"10 minutes", 1800:"30 minutes", 3600:"1 hour", 7200:"2 hours", 18000:"5 hours"],
                       defaultValue: 60
-         paragraph "<small>NOTE: Polling is recommended if using the V1 Hue API, as changes made outside Hubitat will not be reflected without this feature enabled. " +
-            "Polling is still recommmended if using the V2 API, but you may consider increasing the polling interval if the instant status updates for most device attributes " +
-            "meet your needs. Consult the documentation (help icon in top right) for additional details."
+         paragraph "<small>NOTE: Polling is recommended if not using the V2 Hue API, as changes made outside Hubitat will not be reflected on Hubitat without this feature enabled. " +
+            "Polling is still suggested if using the V2 API, but you may consider a longer polling interval, as most device attributes should instantly update on their own most of the " +
+            "time if using the V2 API. Consult the documentation for additional information."
+         if (state.useV2) {
+            input name: "useV1Polling", type: "bool", title: "Use V1 API for polling (if polling enabled above) (recommended)", defaultValue: true
+         }
          input name: "boolCustomLabel", type: "bool", title: "Customize the name of this app", defaultValue: false, submitOnChange: true
          if (settings.boolCustomLabel) label title: "Custom name for this app", required: false
          input name: "logEnable", type: "bool", title: "Enable debug logging", defaultValue: true
@@ -1050,10 +1087,10 @@ def pageSelectScenes() {
 
 def pageSelectMotionSensors() {
    DeviceWrapper bridge = getChildDevice("${DNI_PREFIX}/${app.id}")
-   if (!state.useV2) log.warn "Attempting to retrieve sensor list, but app not configured to use V2 API. Verify this setting."
-   bridge.getAllSensorsV2()
+   if (!state.useV2) log.warn "Attempting to retrieve motion sensor list, but app not configured to use V2 API. Verify this setting."
+   bridge.getAllMotionSensorsV2()
    List arrNewSensors = []
-   Map sensorCache = bridge.getAllSensorsCache()
+   Map sensorCache = bridge.getAllMotionSensorsCache()
    List<DeviceWrapper> unclaimedSensors = getChildDevices().findAll { it.deviceNetworkId.startsWith("${DNI_PREFIX}/${app.id}/Sensor/") }
    dynamicPage(name: "pageSelectMotionSensors", refreshInterval: sensorCache ? null : 6, uninstall: true, install: false, nextPage: "pageManageBridge") {
       Map addedSensors = [:]  // To be populated with sensors user has added, matched by Hue ID
@@ -1082,17 +1119,17 @@ def pageSelectMotionSensors() {
          addedSensors = addedSensors.sort { it.value.hubitatName }
       }
       if (!sensorCache) {
-         section("Discovering sensors. Please wait...") {
+         section("Discovering motion sensors. Please wait...") {
             paragraph "Select \"Refresh\" if you see this message for an extended period of time and do not see devices you have added to Hue."
             input name: "btnSensorRefresh", type: "button", title: "Refresh", submitOnChange: true
          }
       }
       else {
-         section("Manage Sensors") {
-            input name: "newSensors", type: "enum", title: "Select Hue motion sensors to add:",
+         section("Manage Motion Sensors") {
+            input name: "newMotionSensors", type: "enum", title: "Select Hue motion sensors to add:",
                   multiple: true, options: arrNewSensors
             paragraph ""
-            paragraph "Previously added sensors${addedSensors ? ' <span style=\"font-style: italic\">(Hue Bridge device name in parentheses)</span>' : ''}:"
+            paragraph "Previously added motion sensors${addedSensors ? ' <span style=\"font-style: italic\">(Hue Bridge device name in parentheses)</span>' : ''}:"
             if (addedSensors) {
                StringBuilder sensorText = new StringBuilder()
                sensorText << "<ul>"
@@ -1105,10 +1142,10 @@ def pageSelectMotionSensors() {
                paragraph(sensorText.toString())
             }
             else {
-               paragraph "<span style=\"font-style: italic\">No added sensors found</span>"
+               paragraph "<span style=\"font-style: italic\">No added motion sensors found</span>"
             }
             if (unclaimedSensors) {
-               paragraph "Hubitat sensor devices not found on Hue:"
+               paragraph "Hubitat motion sensor devices not found on Hue:"
                StringBuilder sensorText = new StringBuilder()
                sensorText << "<ul>"
                unclaimedSensors.each {
@@ -1119,7 +1156,7 @@ def pageSelectMotionSensors() {
             }
          }
          section("Rediscover Sensors") {
-               paragraph("If you added new sensors to the Hue Bridge and do not see them above, select the button " +
+               paragraph("If you added new motion sensors to the Hue Bridge and do not see them above, select the button " +
                         "below to retrieve new information from the Bridge.")
                input name: "btnSensorRefresh", type: "button", title: "Refresh Sensor List", submitOnChange: true
          }
@@ -1309,21 +1346,21 @@ void createNewSelectedSceneDevices() {
    state.remove("sceneFullNames")
 }
 
-/** Creates new Hubitat devices for new user-selected sensors on sensor-selection
+/** Creates new Hubitat devices for new user-selected motion sensors on sensor-selection
  * page (intended to be called after navigating away/using "Done" from that page)
  */
-void createNewSelectedSensorDevices() {
+void createNewSelectedMotionSensorDevices() {
    DeviceWrapper bridge = getChildDevice("${DNI_PREFIX}/${app.id}")
    if (bridge == null) log.error("Unable to find Bridge device")
-   Map<String,String> sensorCache = bridge?.getAllSensorsCache()
+   Map<String,String> sensorCache = bridge?.getAllMotionSensorsCache()
    //log.trace "sensorCache = $sensorCache"
-   settings.newSensors.each { String id ->
+   settings.newMotionSensors.each { String id ->
       String name = sensorCache.get(id)
       if (name) {
          //log.trace "name = $name"
          try {
             //log.trace "id = $id"
-            if (logEnable == true) log.debug "Creating new device for Hue sensor ${id}: (${name})"
+            if (logEnable == true) log.debug "Creating new device for Hue motion sensor ${id}: (${name})"
             String devDNI = "${DNI_PREFIX}/${app.id}/Sensor/${id}"
             Map devProps = [name: name]
             addChildDevice(NAMESPACE, DRIVER_NAME_MOTION, devDNI, devProps)
@@ -1335,11 +1372,11 @@ void createNewSelectedSensorDevices() {
          log.error "Unable to create new device for sensor $id: ID not found in Hue Bridge cache"
       }
    }
-   bridge.clearSensorsCache()
+   bridge.clearMotionSensorsCache()
    // do we need to do this?
-   //bridge.getAllSensorsV2()
+   //bridge.getAllMotionSensorsV2()
    //bridge.refresh()
-   app.removeSetting("newSensors")
+   app.removeSetting("newMotionSensors")
 }
 
 /** Creates new Hubitat devices for new user-selected buttons on button-device-selection
@@ -1461,7 +1498,7 @@ void sendBridgeInfoRequest(Map options) {
 */
 /** Parses response from GET of /api/0/config endpoint on the Bridge;
  *  verifies that device is a Hue Bridge (modelName contains "Philips Hue Bridge")
- * and obtains MAC address for use in creating Bridge DNI and device name
+ * and obtains MAC address for use in creating device name
  */
 void parseBridgeInfoResponse(resp, Map data) {
    //resp?.properties.each { log.trace it }
@@ -1788,28 +1825,6 @@ void appButtonHandler(btn) {
       case "btnDiscoBridgeRefresh":
          sendBridgeDiscoveryCommand()
          break
-      // Temporary option on Advanced Debugging Options/support page--remove eventually:
-      // case "btnFixGroupDNIsTEMP":
-      //    DeviceWrapper bridgeDevice = getChildDevice("${DNI_PREFIX}/${app.id}")
-      //    if (state.useV2 == true) {
-      //       bridgeDevice.getAllGroupsV2()
-      //       pauseExecution(5000)
-      //       bridgeDevice.getAllRoomsCache()?.each { grpId, roomData ->
-      //          DeviceWrapper d = getChildDevice("${DNI_PREFIX}/${app.id}/Group/${roomData.roomId}")
-      //          if (d != null) {
-      //             d.setDeviceNetworkId("${DNI_PREFIX}/${app.id}/Group/${grpId}")
-      //          }
-      //       }
-      //       bridgeDevice.getAllZonesCache()?.each { grpId, zoneData ->
-      //          DeviceWrapper d = getChildDevice("${DNI_PREFIX}/${app.id}/Group/${zoneData.zoneId}")
-      //          if (d != null) {
-      //             d.setDeviceNetworkId("${DNI_PREFIX}/${app.id}/Group/${grpId}")
-      //          }
-      //       }
-      //    }
-      //    else {
-      //       log.warn "Not using V2 API; exiting"
-      //    }
       // Options on Advanced Debugging Options/support page:
       case "btnEnableBridgeLogging":
          DeviceWrapper bridgeDevice = getChildDevice("${DNI_PREFIX}/${app.id}")
@@ -1850,11 +1865,11 @@ void appButtonHandler(btn) {
          break
       case "btnFetchSensorsInfo":
          DeviceWrapper bridgeDevice = getChildDevice("${DNI_PREFIX}/${app.id}")
-         bridgeDevice.getAllSensorsV2()
+         bridgeDevice.getAllMotionSensorsV2()
          break
       case "btnLogSensorsInfo":
          DeviceWrapper bridgeDevice = getChildDevice("${DNI_PREFIX}/${app.id}")
-         log.debug bridgeDevice.getAllSensorsCache() ?: "EMPTY SENSORS CACHE ON BRIDGE"
+         log.debug bridgeDevice.getAllMotionSensorsCache() ?: "EMPTY SENSORS CACHE ON BRIDGE"
          break
       case "btnFetchButtonsInfo":
          DeviceWrapper bridgeDevice = getChildDevice("${DNI_PREFIX}/${app.id}")
@@ -1863,6 +1878,28 @@ void appButtonHandler(btn) {
       case "btnLogButtonsInfo":
          DeviceWrapper bridgeDevice = getChildDevice("${DNI_PREFIX}/${app.id}")
          log.debug bridgeDevice.getAllButtonsCache() ?: "EMPTY BUTTONS CACHE ON BRIDGE"
+         break
+      case "btnFetchBridgeCache":
+         DeviceWrapper bridgeDevice = getChildDevice("${DNI_PREFIX}/${app.id}")
+         bridgeDevice.updateBridgeCacheV2()
+         break
+      case "btnLogBridgeCache":
+         DeviceWrapper bridgeDevice = getChildDevice("${DNI_PREFIX}/${app.id}")
+         Map cache = bridgeDevice.getBridgeCacheV2()
+         if (cache) {
+            log.debug "Preparing to log Bridge cache data. This may take a while."
+            if (cache.data != null) {
+               cache.data.each {
+                  log.debug it
+               }
+            }
+            else {
+               log.debug cache
+            }
+         }
+         else {
+            log.debug "EMPTY BRIDGE CACHE ON BRIDGE"
+         }
          break
       case "btnRetryV2APIEnable":
          app.updateSetting("logEnable", true)

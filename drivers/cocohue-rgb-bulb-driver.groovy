@@ -14,10 +14,12 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2024-09-15
+ *  Last modified: 2024-12-08
  *
  *  Changelog:
- *  v5.0.1 - Fix for missing V1 IDs after device creation or upgrade
+ *  v5.2.2  - Populate initial states (if data available)
+ *  v5.2    - Add status (online/offline) parsing for V2
+ *  v5.0.1  - Fix for missing V1 IDs after device creation or upgrade
  *  v5.0    - Initial release, based on RGBW driver
  */ 
 
@@ -93,6 +95,16 @@ void installed() {
    log.debug "installed()"
    groovy.json.JsonBuilder le = new groovy.json.JsonBuilder(lightEffects)
    sendEvent(name: "lightEffects", value: le)
+   if (device.currentValue("switch") == null) {
+      // Populate initial device data (if V2 available; V1 users would need manual refresh)
+      List bridgeCacheData = parent.getBridgeCacheV2()?.data ?: []
+      Map devCache = bridgeCacheData.find { it.type == "light" && it.id == device.deviceNetworkId.split("/").last() }
+      if (devCache == null) devCache == bridgeCacheData.find { it.type == "light" && it.id_v1 == device.deviceNetworkId.split("/").last() }
+      if (devCache != null) {
+         log.warn devCache.id
+         createEventsFromMapV2(devCache)
+      }
+   }
    initialize()
 }
 
@@ -186,7 +198,7 @@ void createEventsFromMapV1(Map bridgeCommandMap, Boolean isFromBridge = false, S
       return
    }
    Map bridgeMap = bridgeCommandMap
-   if (logEnable == true) log.debug "Preparing to create events from map${isFromBridge ? ' from Bridge' : ''}: ${bridgeMap}"
+   if (logEnable == true) log.debug "createEventsFromMapV1(): Preparing to create events from map${isFromBridge ? ' from Bridge' : ''}: ${bridgeMap}"
    if (!isFromBridge && keysToIgnoreIfSSEEnabledAndNotFromBridge && parent.getEventStreamOpenStatus() == true) {
       bridgeMap.keySet().removeAll(keysToIgnoreIfSSEEnabledAndNotFromBridge)
       if (logEnable == true) log.debug "Map after ignored keys removed: ${bridgeMap}"
@@ -323,7 +335,21 @@ void createEventsFromMapV2(Map data) {
                if (logEnable == true) log.debug "color received but also have CT, so assume CT parsing"
             }
             break
-         // TODO: Figure out equivalent of "reachable" in V2 (zigbee_connectivity on owner?)
+         // TODO: Figure out if this works as equivalent of "reachable" in V2:
+         case "status":
+            if (data.type == "zigbee_connectivity") { // not sure if any other types use this key, but just in case
+               eventName = "reachable"
+               if (value == "disconnected" || value == "connectivity_issue") {
+                  eventValue = "true"
+               }
+               else {
+                  eventValue = false
+               }
+               eventUnit = null
+               if (device.currentValue(eventName) != eventValue) {
+                  doSendEvent(eventName, eventValue, eventUnit)
+               }
+            }
          case "id_v1":
             if (state.id_v1 != value) state.id_v1 = value
             break
@@ -510,6 +536,7 @@ void bridgeAsyncPutV2(String callbackMethod, String clipV2Path, Map body, Map<St
 @Field static final String DRIVER_NAME_DIMMABLE_BULB  = "CoCoHue Dimmable Bulb"
 @Field static final String DRIVER_NAME_GROUP          = "CoCoHue Group"
 @Field static final String DRIVER_NAME_MOTION         = "CoCoHue Motion Sensor"
+@Field static final String DRIVER_NAME_CONTACT        = "CoCoHue Contact Sensor"
 @Field static final String DRIVER_NAME_PLUG           = "CoCoHue Plug"
 @Field static final String DRIVER_NAME_RGBW_BULB      = "CoCoHue RGBW Bulb"
 @Field static final String DRIVER_NAME_RGB_BULB       = "CoCoHue RGB Bulb"

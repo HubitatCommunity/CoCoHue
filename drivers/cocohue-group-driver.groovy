@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2024-09-18
+ *  Last modified: 2024-12-08
  *
  *  Changelog:
+ *  v5.2.2  - Populate initial states from V2 cache if available
  *  v5.1    - Remove scene switch preferences
  *  v5.0.1  - Fix for missing V1 IDs after device creation or upgrade
  *  v5.0    - Use API v2 by default, remove deprecated features
@@ -120,6 +121,16 @@ void installed() {
    log.debug "installed()"
    groovy.json.JsonBuilder le = new groovy.json.JsonBuilder(lightEffects)
    sendEvent(name: "lightEffects", value: le)
+   if (device.currentValue("switch") == null) {
+      // Populate initial device data (if V2 available; V1 users would need manual refresh)
+      List bridgeCacheData = parent.getBridgeCacheV2()?.data ?: []
+      Map devCache = bridgeCacheData.find { it.type == "grouped_light" && it.id == device.deviceNetworkId.split("/").last() }
+      if (devCache == null) devCache == bridgeCacheData.find { it.type == "grouped_light" && it.id_v1 == device.deviceNetworkId.split("/").last() }
+      if (devCache != null) {
+         log.warn devCache.id
+         createEventsFromMapV2(devCache)
+      }
+   }
    initialize()
 }
 
@@ -207,7 +218,7 @@ void createEventsFromMapV1(Map bridgeCommandMap, Boolean isFromBridge = false, S
       return
    }
    Map bridgeMap = bridgeCommandMap
-   if (logEnable == true) log.debug "Preparing to create events from map${isFromBridge ? ' from Bridge' : ''}: ${bridgeMap}"
+   if (logEnable == true) log.debug "createEventsFromMapV1(): Preparing to create events from map${isFromBridge ? ' from Bridge' : ''}: ${bridgeMap}"
    if (!isFromBridge && keysToIgnoreIfSSEEnabledAndNotFromBridge && parent.getEventStreamOpenStatus() == true) {
       bridgeMap.keySet().removeAll(keysToIgnoreIfSSEEnabledAndNotFromBridge)
       if (logEnable == true) log.debug "Map after ignored keys removed: ${bridgeMap}"
@@ -599,6 +610,7 @@ void bridgeAsyncPutV2(String callbackMethod, String clipV2Path, Map body, Map<St
 @Field static final String DRIVER_NAME_DIMMABLE_BULB  = "CoCoHue Dimmable Bulb"
 @Field static final String DRIVER_NAME_GROUP          = "CoCoHue Group"
 @Field static final String DRIVER_NAME_MOTION         = "CoCoHue Motion Sensor"
+@Field static final String DRIVER_NAME_CONTACT        = "CoCoHue Contact Sensor"
 @Field static final String DRIVER_NAME_PLUG           = "CoCoHue Plug"
 @Field static final String DRIVER_NAME_RGBW_BULB      = "CoCoHue RGBW Bulb"
 @Field static final String DRIVER_NAME_RGB_BULB       = "CoCoHue RGB Bulb"

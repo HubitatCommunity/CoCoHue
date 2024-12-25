@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2024-09-14
+ *  Last modified: 2024-12-08
  *
  *  Changelog:
+ *  v5.2.2  - Populate initial states from V2 cache if available
  *  v5.0    - Use API v2 by default, remove deprecated features
  *  v4.2    - Library updates, prep for more v2 API
  *  v4.1.4  - Improved error handling, fix missing battery for motion sensors
@@ -53,6 +54,15 @@ metadata {
 
 void installed() {
    log.debug "installed()"
+   if (device.currentValue("motion") == null) {
+      // Populate initial device data (if V2 available; V1 users would need manual refresh)
+      List bridgeCacheData = parent.getBridgeCacheV2()?.data ?: []
+      Map devCache = bridgeCacheData.find { it.type == "sensor" && it.id == device.deviceNetworkId.split("/").last() }
+      if (devCache != null) {
+         log.warn devCache.id
+         createEventsFromMapV2(devCache)
+      }
+   }
    initialize()
 }
 
@@ -99,7 +109,7 @@ void createEventsFromMapV1(Map bridgeCmd) {
       if (logEnable) log.debug "createEventsFromMapV1 called but map empty; exiting"
       return
    }
-   if (logEnable) log.debug "Preparing to create events from map: ${bridgeCmd}"
+   if (logEnable) log.debug "createEventsFromMapV1(): Preparing to create events from map: ${bridgeCmd}"
    String eventName, eventUnit, descriptionText
    def eventValue // could be numeric (lux, temp) or boolean (motion)
    bridgeCmd.each {
@@ -318,6 +328,7 @@ void bridgeAsyncPutV2(String callbackMethod, String clipV2Path, Map body, Map<St
 @Field static final String DRIVER_NAME_DIMMABLE_BULB  = "CoCoHue Dimmable Bulb"
 @Field static final String DRIVER_NAME_GROUP          = "CoCoHue Group"
 @Field static final String DRIVER_NAME_MOTION         = "CoCoHue Motion Sensor"
+@Field static final String DRIVER_NAME_CONTACT        = "CoCoHue Contact Sensor"
 @Field static final String DRIVER_NAME_PLUG           = "CoCoHue Plug"
 @Field static final String DRIVER_NAME_RGBW_BULB      = "CoCoHue RGBW Bulb"
 @Field static final String DRIVER_NAME_RGB_BULB       = "CoCoHue RGB Bulb"

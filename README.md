@@ -4,26 +4,35 @@ CoCoHue: <b>Co</b>mmunity <b>Co</b>llection of <b>Hue</b> Bridge Apps and Driver
 (Hue Bridge Integration App for Hubitat)
 
 This is a Hue Bridge integration designed to replace (or supplement) Hubitat's buit-in Hue Bridge
-integration. It provides several additional features compared to the built-in integration, including:
+integration. It provides several additional features compared to older versions of the built-in integration, including:
 1. Scene support: create switch/button devices that can be used to activate Hue Bridge scenes
 2. Access to Hue bulb "effects" (color loop, select/alert, etc.)
 3. Improved group support ("Change Level" capability--`startLevelChange` and stopLevelChange` commands implemented)
 4. It's open source! Customize the code to suit your requirements if so desired
 
-For discussion and more information, visit the <a href="https://community.hubitat.com/t/release-cocohue-hue-bridge-integration-including-scenes/27978">Hubitat Community forum thread</a>.
+As of platform version 2.4.0, most of these features are now also available in the built-in integration. However,
+some users may prefer CoCoHue for other reasons (e.g., existing user of this integration, prefer open-source code, 
+etc.)
+
+For discussion and more information, visit the <a href="https://community.hubitat.com/t/release-cocohue-hue-bridge-integration-including-scenes/27978">Hubitat Community forum thread</a>. (GitHub is used primarily for sharing the code. Releases, discussion, and other issues will be noted in the Hubitat Community forum.)
 
 **NOTE:** Users upgrading to 5.x from 4.x will need to open the CoCoHue app and select **Done** once after upgrading. Users upgrading from older versions will need to upgrade to the latest CoCoHue 4.x release before upgrading to 5.x, select **Done**, then upgrade by following these instructions again. It is recommended to download a hub backup before upgrading (restoring this backup is the only way to downgrade, as 5.x contains breaking changes).
 
 Three installation methods are available:
 - Hubitat Package Manager (recommended if you have Hubitat Package Manager installed)
 - As a bundle (recommended for other users)
-- Manually with each app and driver file  (the most complicated option, not recommended)
+- Manually with each app and driver file (the most complicated option, not recommended for most users)
 
 ## To Install (Hubitat Package Manager/Automatic Method)
 
 CoCoHue is available via <a href="https://community.hubitat.com/t/beta-hubitat-package-manager/38016">Hubitat Package
 Manager</a>, a community app designed to make installing and updating community apps and drivers easier. Search for
 "CoCoHue" or browse under the "Integrations" category for "Lights & Switches" or "LAN" tags.
+
+Upgrading: HPM should offer new versions if available when checked. It is recommended to *read the release notes before
+any upgrades* (especially from one major version to another, e.g., 4.x to 5.x) and to *not* enable automatic
+updates. While such changes are rare, important changes that affect functionality compared to previous versions have
+happened and are always noted in the release notes and Community thread.
 
 ## To Install (as Bundle)
 
@@ -55,7 +64,7 @@ for more details.
       * https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-scene-driver.groovy
       * https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-button-driver.groovy
     * NOTE: Users upgrading from v4.x or earlier may remove the CoCoHue Generic Status driver if installed, as it is now depcrecated (and any devices creating using it will no longer function and can be removed after being removed from any automations; these are/were Hue Labs activators that should be replaced with supported features).
-      
+
 4. Install an instance of app: go to **Apps > Add User App**, choose **CoCoHue**, and follow the prompts.
 
 **NOTE**: Direct upgrades to version 5.x are possible from version 4.x only. Users of version 3.x or older must first
@@ -97,17 +106,6 @@ the standard Hubitat capability as it is currently documented. Setting a color, 
 (this is consistent with the behavior of other bulbs I tested). Setting a level or saturation will *not* because Hue allows adjustment
 of these while the effect (which does not manipulate these values) is in progress.
 
-6. Prestaging: the `presetLevel()` command is implemented in all bulb/group
-drivers. Analagous custom commands are implemented to preset color and color temperature. (Previously, this
-integration used color and level prestaging *options*, rather than commands, to mimic those found in some native drivers before
-these commands were introduced; in that case, if a `setLevel` [for level prestaging] or a `setColorTemperature`, `setColor`, `setHue`, or `setSaturation` command
-are received when the bulb is off, it will not turn on; instead, the next time the bulb is turned on, it will be turned on with those settings. These
-options are still available if you have already enabled them, but they are not available for new installs, and it is recommended that you transition
-away from them, as it is possible they will be removoed.) Regarding prestaging in general,
-this works well if your bulbs are manipulated entirely from Hubitat. Unfortunately, Hue itself does not support prestaging on the Bridge (these prestaged settings are "remembered"
-entirely on the Hubitat device), so this will *not* work if you prestage in Hubitat and then turn the bulbs on outside of Hubitat. For
-this reason, the drivers label these options "pseudo-prestaging." (Recommendation: manipulate bulbs only from Hubitat if prestaging is enabled.)
-
-7. "Select" and "LSelect" Hue alerts: these are basically a one-time flash and a 15-time flash. These are implemented as the
+6. "Select" and "LSelect" Hue alerts: these are basically a one-time flash and a 15-time flash. These are implemented as the
 `flashOnce()` command and the now-standard `flash()` command, respectively. An in-progress flash can be stopped
 with `flashOff()` (or you can wait until it stops on own, approximately 30 seconds on official bulbs).

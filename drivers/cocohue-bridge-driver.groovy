@@ -14,11 +14,15 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2024-09-15
+ *  Last modified: 2024-12-08
  *
  *  Changelog:
+ *  v5.2.2  - Minor typo fix for SSE reconnection debug log
+ *  v5.2.1  - Keep cache of /resources data in V2 API to reduce HTTP calls and facilite service and owner ID matching
+ *  v5.2.0  - (possible) fix for battery events on sensors
+ *  v5.0.3  - Add zigbee_connectivity parsing for lights
  *  v5.0.2  - Fetch V2 grouped_light ID owner for room/zone owners of V2 scenes
- *  v5.0.1 - Fix for missing V1 IDs after device creation or upgrade
+ *  v5.0.1  - Fix for missing V1 IDs after device creation or upgrade
  *  v5.0    - Use API v2 by default for device info, remove deprecated features
  *  v4.2.1  - Add scene on/off state reporting with v2 API
  *  v4.2    - Improved eventstream reconnection logic
@@ -58,6 +62,12 @@ import groovy.transform.Field
 
 @Field static final Object eventStreamStatusLock = new Object()
 @Field static Map<Long,Boolean> eventStreamOpenStatus = [:]  // key = bridge device idAsLong, value = true if connected
+
+@Field static final Object bridgeCacheLock = new Object()
+@Field static Map<Long, Map> bridgeCache = [:] // key = bridge device idAsLong, value = `/resources` JSON/map from V2 API
+@Field static final Integer CACHE_STALE_THRESHOLD = 8_000  // 8 seconds; default time before which will not be fetched again if try; passing does not *cause* fetch
+
+// TODO: Make bulb, sensor, etc. caches similar fields instead of state? (But they are cleared when main app page is loaded, so impact should normally be low...)
 
 metadata {
    definition(
@@ -182,7 +192,7 @@ void setEventStreamStatusToDisconnected() {
    else {
       state.connectionRetryTime = 5
    }
-   if (logEnable) log.debug "Will attempt eventstream reconnection in ${state.connectionRetryTime}"
+   if (logEnable) log.debug "Will attempt eventstream reconnection in ${state.connectionRetryTime} seconds"
    runIn(state.connectionRetryTime, "reconnectEventStream")
 }
 
@@ -243,12 +253,14 @@ void parse(String description) {
                            if (dev == null)  dev = parent.getChildDevice("${device.deviceNetworkId}/Scene/${idV1}")
                            break
                         case "motion":
+                        case "contact":
                         case "temperature":
                         case "light_level": //todo: test or check is correct?
                            String ownerId = updateEntryMap.owner?.rid
-                           dev = parent.getChildDevice("${device.deviceNetworkId}/Sensor/${ownerId}")
+                           dev = parent.getChildDevice("${device.deviceNetworkId}/Sensor/${ownerId}") // motion
+                           if (dev == null) dev = parent.getChildDevice("${device.deviceNetworkId}/Contact/${ownerId}") // contact
                            if (dev == null && idV1 != null) {
-                              // or for now also check V1 sensor ID
+                              // or for now also check V1 motion sensor ID
                               dev = parent.getChildDevices().find { DeviceWrapper d ->
                                  idV1 in d.deviceNetworkId.tokenize('/').last().tokenize('|') &&
                                  d.deviceNetworkId.startsWith("${device.deviceNetworkId}/Sensor/")  // shouldn't be necessary but gave me a Light ID once in testing for a sensor, so?!
@@ -261,9 +273,18 @@ void parse(String description) {
                            dev = parent.getChildDevice("${device.deviceNetworkId}/Button/${ownerId}")
                            break
                         case "device_power": // could be motion sensor or button
+                           String ownerId = updateEntryMap.owner?.rid
                            dev = parent.getChildDevice("${device.deviceNetworkId}/Sensor/${ownerId}")
                            if (dev == null) parent.getChildDevice("${device.deviceNetworkId}/Button/${ownerId}")
                            break
+                        case "zigbee_connectivity":
+                           String ownerId = updateEntryMap.owner?.rid // find owner for zigbee_connectivity service, then...
+                           String lightId = getBridgeCacheV2().find { Map devData -> // use it to match up with the light ID
+                              devData.type == "light" &&
+                              devData.owner?.rid == ownerId
+                           }
+                           if (lightId != null) dev = parent.getChildDevice("${device.deviceNetworkId}/Light/${lightId}")
+                           // not doing for sensors or buttons but could if wanted to with minor adjustments above
                         default:
                            if (logEnable) log.debug "skipping Hue v1 ID: $idV1"
                      }
@@ -338,6 +359,8 @@ String determineLightType(Map data) {
  */
 void parseStatesV2(AsyncResponse resp, Map data) { 
    if (logEnable) log.debug "parseStatesV2: States from Bridge received. Now parsing..."
+   // Might as well update cache since have the same data now anyway:
+   handleUpdateBridgeCacheResponseV2(resp, data)
    if (checkIfValidResponse(resp)) {
       //TODO: Check that all are updated for v2 (in progress!)
       // Lights:
@@ -348,6 +371,8 @@ void parseStatesV2(AsyncResponse resp, Map data) {
       List<Map> groupsData = resp.json.data.findAll { it.type == "grouped_light" }
       // Scenes:
       List<Map> scenesData = resp.json.data.findAll { it.type == "scene" }
+      // Contact sensors:
+      List<Map> contactData = resp.json.data.findAll { it.type == "contact_report" }
       // Motion sensors (motion, temperature, lux, battery):
       List<Map> motionData = resp.json.data.findAll { it.type == "motion" }
       //log.trace "motion = $motionData"
@@ -368,6 +393,9 @@ void parseStatesV2(AsyncResponse resp, Map data) {
       parseMotionSensorStatesV2(temperatureData)
       parseMotionSensorStatesV2(illuminanceData)
       parseMotionSensorStatesV2(batteryData)
+      // TODO: see if can combine this data into one instead of calling 2x, similar to above:
+      parseContactSensorStatesV2(contactData)
+      parseContactSensorStatesV2(batteryData)
    }
 }
 
@@ -504,6 +532,26 @@ void parseSceneStatesV2(List scenesJson) {
    }
 }
 
+void parseContactSensorStatesV2(List sensorJson) {
+   if (logEnable) log.debug "parseContactSensorStatesV2()"
+   // Uncomment this line if asked to for debugging (or you're curious):
+   //log.debug "sensorJson = $sensorJson"
+   try {
+      sensorJson.each { Map data ->
+         String id = data.owner.rid // use owner ID for sensor to keep same physical devices together more easily 
+         //String id_v1 = data.id_v1 - "/sensors/"
+         DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Contact/${id}")
+         if (dev != null) {
+            dev.createEventsFromMapV2(data)
+         }
+      }
+      //if (device.currentValue("status") != "Online") doSendEvent("status", "Online")
+   }
+   catch (Exception ex) {
+      log.error "Error parsing contact sensor states: ${ex}"
+   }
+}
+
 void parseMotionSensorStatesV2(List sensorJson) {
    if (logEnable) log.debug "parseMotionSensorStatesV2()"
    // Uncomment this line if asked to for debugging (or you're curious):
@@ -524,10 +572,10 @@ void parseMotionSensorStatesV2(List sensorJson) {
             dev.createEventsFromMapV2(data)
          }
       }
-      if (device.currentValue("status") != "Online") doSendEvent("status", "Online")
+      //if (device.currentValue("status") != "Online") doSendEvent("status", "Online")
    }
    catch (Exception ex) {
-      log.error "Error parsing group states: ${ex}"
+      log.error "Error parsing motion sensor states: ${ex}"
    }
 }
 
@@ -566,7 +614,7 @@ void parseMotionSensorStatesV1(Map sensorsJson) {
  *  during bulb discovery in app.
  */
 void getAllBulbsV1() {
-   if (logEnable) log.debug "Getting bulb list from Bridge..."
+   if (logEnable) log.debug "getAllBulbsV1()"
    //clearBulbsCache()
    Map<String,String> data = parent.getBridgeData()
    Map params = [
@@ -596,17 +644,16 @@ void parseGetAllBulbsResponseV1(resp, data) {
 }
 
 void getAllBulbsV2() {
-   if (logEnable) log.debug "Getting bulb list from Bridge..."
-   //clearBulbsCache()
-   bridgeAsyncGetV2("parseGetAllBulbsResponseV2", "/resource/light")
+   if (logEnable) log.debug "getAllBulbsV2()"
+   updateBridgeCacheV2(additionalCallback: "parseGetAllBulbsResponseV2")
 }
 
 void parseGetAllBulbsResponseV2(resp, Map data=null) {
    if (logEnable) log.debug "parseGetAllBulbsResponseV2()"
    if (checkIfValidResponse(resp)) {
-      try {
+    try {
          Map bulbs = [:]
-         resp.json.data.each { Map bulbData ->
+         resp.json.data.findAll { it.type == "light" }?.each { Map bulbData ->
             bulbs[bulbData.id] = [name: bulbData.metadata.name, type: determineLightType(bulbData), id_v1: bulbData.id_v1]
          }
          state.allBulbs = bulbs
@@ -641,7 +688,7 @@ void clearBulbsCache() {
  *  during bulb discovery in app.
  */
 void getAllGroupsV1() {
-   if (logEnable) log.debug "Getting group list from Bridge..."
+   if (logEnable) log.debug "getAllGroupsV1()"
    //clearGroupsCache()
    Map<String,String> data = parent.getBridgeData()
    Map params = [
@@ -654,7 +701,7 @@ void getAllGroupsV1() {
 }
 
 void parseGetAllGroupsResponseV1(resp, data) {
-   if (logEnable) log.debug "Parsing in parseGetAllGroupsResponseV1"
+   if (logEnable) log.debug "parseGetAllGroupsResponseV1()"
    if (checkIfValidResponse(resp)) {
       try {
          Map groups = [:]
@@ -666,61 +713,46 @@ void parseGetAllGroupsResponseV1(resp, data) {
          if (logEnable) log.debug "  All groups received from Bridge: $groups"
       }
       catch (Exception ex) {
-         log.error "Error parsing all groups response: $ex"
+         log.error "Error in parseGetAllGroupsResponseV1(): $ex"
       }
    }
 }
 
 void getAllGroupsV2() {
-   // sends two calls, one to /rooms and one to /zones
-   // uses /grouped_light moslty to get "All Hue Lights" equivalent, as the /room and /zone
-   // endpoints should cover all practical cases and also get the name and other needed info for display
-   // To use results in parent app: look at state.allRooms and state.allZones (not state.allGroups like v1)
    if (logEnable) log.debug "getAllGroupsV2()"
-   //clearBulbsCache()
-   // TODO: Maybe just fetch /resource instead of three calls here? For now, spacing out to avoid HTTP 429
-   Map<String,String> bridgeData = parent.getBridgeData()
-   bridgeAsyncGetV2("parseGetAllGroupsOrRoomsOrZonesResponseV2", "/resource/grouped_light", bridgeData, [type: "grouped_light"])
-   pauseExecution(500)
-   bridgeAsyncGetV2("parseGetAllGroupsOrRoomsOrZonesResponseV2", "/resource/room", bridgeData, [type: "room"])
-   pauseExecution(500)
-   bridgeAsyncGetV2("parseGetAllGroupsOrRoomsOrZonesResponseV2", "/resource/zone", bridgeData, [type: "zone"])
+   updateBridgeCacheV2(additionalCallback: "parseGetAllGroupsResponseV2")
 }
 
-void parseGetAllGroupsOrRoomsOrZonesResponseV2(resp, Map<String,String> data) {
-   if (logEnable) log.debug "parseGetAllGroupsOrRoomsOrZonesResponseV2(), type = ${data.type}"
+void parseGetAllGroupsResponseV2(resp, Map data=null) {
+   if (logEnable) log.debug "parseGetAllGroupsResponseV2()"
    if (checkIfValidResponse(resp)) {
       try {
-         if (data.type == "room" || data.type == "zone") {
-            Map roomsOrZones = [:]
-            resp.json.data.each { Map roomOrZoneData ->
+         Map roomsOrZones = [:]
+         // fetch rooms and zones:
+         ["room", "zone"]. each { String roomOrZone ->
+            resp.json.data.findAll { it.type == roomOrZone }?.each { Map roomOrZoneData ->
                String groupedLightId = roomOrZoneData.services.find({ svc -> svc.rtype == "grouped_light" })?.rid
                if (groupedLightId != null) {
-                  roomsOrZones[groupedLightId] = [name: roomOrZoneData.metadata.name, type: data.type, 
-                     "${data.type}Id": roomOrZoneData.id, id_v1: roomOrZoneData.id_v1]
+                  roomsOrZones[groupedLightId] = [name: roomOrZoneData.metadata.name, type: roomOrZoneData.type, 
+                     "${roomOrZone}Id": roomOrZoneData.id, id_v1: roomOrZoneData.id_v1]
                }
                else {
-                  if (logEnable) log.debug "No grouped_light service found for room ID ${roomOrZoneData.id}"
+                  if (logEnable) log.debug "No grouped_light service found for {roomOrZone} ID ${roomOrZoneData.id}"
                }
             }
-            if (data.type == "room") state.allRooms = roomsOrZones
+            if (roomOrZone== "room") state.allRooms = roomsOrZones
             else state.allZones = roomsOrZones
-            if (logEnable) log.debug "  All ${data.type}s received from Bridge: $roomsOrZones"
+            if (logEnable) log.debug "  All ${roomOrZone}s received from Bridge: $roomsOrZones"
          }
-         else if (data.type == "grouped_light") {
-            // really only use to find equivalent of group 0 in V1 API or "All Hue Lights"
-            Map allHueLightsGroup = resp.json.data?.find { it.owner?.rtype == "bridge_home" }
-            if (allHueLightsGroup != null) {
-               state.allGroups = [:]
-               state.allGroups[allHueLightsGroup.id] = [name: "All Hue Lights", type: "grouped_light"]
-            }
-         }
-         else {
-            log.warn "Unexpected type; should be \"room\", \"zone\", or \"grouped_light\": ${data.type}"
+         // fetched the one grouped_light that should be like groups/0 in V1 API, i.e., "All Hue Lights":
+         Map allHueLightsGroup = resp.json.data.find { it.type == "grouped_light" && it.owner?.rtype == "bridge_home" }
+         if (allHueLightsGroup != null) {
+            state.allGroups = [:]
+            state.allGroups[allHueLightsGroup.id] = [name: "All Hue Lights", type: "grouped_light"]
          }
       }
       catch (Exception ex) {
-         log.error "Error parsing all rooms or zones response: $ex"
+         log.error "Error in parseGetAllGroupsResponseV2(): $ex"
       }
    }
 }
@@ -803,32 +835,33 @@ void parseGetAllScenesResponseV1(resp, Map data=null) {
          if (logEnable) log.debug "  All scenes received from Bridge: $scenes"
       }
       catch (Exception ex) {
-         log.error "Error parsing all scenes response: ${ex}"   
+         log.error "Error in parseGetAllScenesResponseV1(): ${ex}"
       }
    }
 }
 
 void getAllScenesV2() {
    if (logEnable) log.debug "getAllScenesV2()"
-   getAllGroupsV2() // so can get room names, etc.
-   //clearScenesCache()
-   pauseExecution(750)
-   bridgeAsyncGetV2("parseGetAllScenesResponseV2", "/resource/scene")
+   updateBridgeCacheV2(additionalCallback: "parseGetAllScenesResponseV2")
 }
 
 void parseGetAllScenesResponseV2(resp, Map data=null) {
+   if (logEnable) log.debug "parseGetAllScenesResponseV2()"
+   // do group parsing first so can get room/zone names
+   parseGetAllGroupsResponseV2(resp)
+   // now on to the actual scenes...
    if (checkIfValidResponse(resp)) {
       try {
          Map scenes = [:]
-         resp.json.data.each { Map sceneData ->
-            // TODO: get grouped_light service ID, not room/zone ID!
+         resp.json.data.findAll { it.type == "scene"}?.each { Map sceneData ->
+            // TODO: originally wanted grouped_light service ID, not room/zone ID, but using so either should work and can look up f/ cache if need in future?
             scenes[sceneData.id] = [name: sceneData.metadata.name, group: sceneData.group?.rid, id_v1: sceneData.id_v1]
          }
          state.allScenes = scenes
          if (logEnable) log.debug "  All scenes received from Bridge: $scenes"
       }
       catch (Exception ex) {
-         log.error "Error parsing all scenes response: $ex"
+         log.error "Error in parseGetAllScenesResponseV2(): $ex"
       }
    }
 }
@@ -848,35 +881,27 @@ void clearScenesCache() {
    state.remove("allScenes")
 }
 
-// ------------ SENSORS (Motion/etc.) ------------
+// ------------ MOTION SENSORS ------------
 // No V1 for these
 
-void getAllSensorsV2() {
-   if (logEnable) log.debug "getAllSensorsV2()"
-   // Seem to be able to get everything needed for discovery from /devices? Do need this for refresh/polling...
-   // Map motionParams = [
-   //    uri: "https://${data.ip}",
-   //    path: "/clip/v2/resource/motion",
-   //    headers: ["hue-application-key": data.username],
-   //    contentType: "application/json",
-   //    timeout: 15,
-   //    ignoreSSLIssues: true
-   // ]
-   bridgeAsyncGetV2("parseGetAllSensorsResponseV2", "/resource/device")
+void getAllMotionSensorsV2() {
+   if (logEnable) log.debug "getAllMotionSensorsV2()"
+   updateBridgeCacheV2(additionalCallback: "parseGetAllMotionSensorsResponseV2")
 }
 
-void parseGetAllSensorsResponseV2(resp, Map data=null) {
-   if (logEnable) log.debug "parseGetAllSensorsResponseV2()"
+void parseGetAllMotionSensorsResponseV2(resp, Map data=null) {
+   if (logEnable) log.debug "parseGetAllMotionSensorsResponseV2()"
    if (checkIfValidResponse(resp)) {
       try {
          List<Map> motionDevs = resp.json?.data?.findAll { Map devData ->
+            devData.type == "device" &&
             devData.services.any { svc -> svc.rtype == "motion"}
          }
          Map sensors = [:]
          motionDevs.each { Map devData ->
             sensors[devData.id] = devData.metadata.name
          }
-         state.allSensors = sensors
+         state.allMotionSensors = sensors
          if (logEnable) log.debug "  All sensors received from Bridge: $sensors"
       }
       catch (Exception ex) {
@@ -888,16 +913,60 @@ void parseGetAllSensorsResponseV2(resp, Map data=null) {
 /** Intended to be called from parent app to retrive previously
  *  requested list of sensors
  */
-Map<String,Map> getAllSensorsCache() {
-   return state.allSensors
+Map<String,Map> getAllMotionSensorsCache() {
+   return state.allMotionSensors
 }
 
 /** Clears cache of sensor IDs/names; useful for parent app to call if trying to ensure
  * not working with old data
  */
-void clearSensorsCache() {
-   if (logEnable) log.debug "Running clearSensorsCache..."
-   state.remove("allSensors")
+void clearMotionSensorsCache() {
+   if (logEnable) log.debug "Running clearMotionSensorsCache..."
+   state.remove("allMotionSensors")
+}
+
+// ------------ CONTACT SENSORS ------------
+// No V1 for these
+
+void getAllContactSensorsV2() {
+   if (logEnable) log.debug "getAllContactSensorsV2()"
+   updateBridgeCacheV2(additionalCallback: "parseGetAllContactSensorsResponseV2")
+}
+
+void parseGetAllContactSensorsResponseV2(resp, Map data=null) {
+   if (logEnable) log.debug "parseGetAllContactSensorsResponseV2()"
+   if (checkIfValidResponse(resp)) {
+      try {
+         List<Map> contactDevs = resp.json?.data?.findAll { Map devData ->
+            devData.type == "device" &&
+            devData.services.any { svc -> svc.rtype == "contact"}
+         }
+         Map sensors = [:]
+         contactDevs.each { Map devData ->
+            sensors[devData.id] = devData.metadata.name
+         }
+         state.allContactSensors = sensors
+         if (logEnable) log.debug "  All sensors received from Bridge: $sensors"
+      }
+      catch (Exception ex) {
+         log.error "Error parsing all sensors response: $ex"
+      }
+   }
+}
+
+/** Intended to be called from parent app to retrive previously
+ *  requested list of sensors
+ */
+Map<String,Map> getAllContactSensorsCache() {
+   return state.allContactSensors
+}
+
+/** Clears cache of sensor IDs/names; useful for parent app to call if trying to ensure
+ * not working with old data
+ */
+void clearContactSensorsCache() {
+   if (logEnable) log.debug "Running clearContactSensorsCache..."
+   state.remove("allContactSensors")
 }
 
 // ------------ BUTTONS ------------
@@ -910,80 +979,118 @@ void clearSensorsCache() {
 void getAllButtonsV2() {
    if (logEnable) log.debug "getAllButtonsV2()"
    //clearButtonsCache()
-   bridgeAsyncGetV2("parseGetAllButtonsResponseV2", "/resource/device")
+   updateBridgeCacheV2(additionalCallback: "parseGetAllButtonsResponseV2")
 }
 
 void parseGetAllButtonsResponseV2(resp, data) {
    if (logEnable) log.debug "parseGetAllButtonsResponseV2()"
    if (checkIfValidResponse(resp)) {
-      try {
-         Map buttons = [:]
-         // Get specific /button devices first....
-         Map<String,String> bridgeData = parent.getBridgeData()
-         // TODO: Consider making this async, but should be pretty safe considerng we just heard from Bridge...
-         Map params = [
-            uri: "https://${bridgeData.ip}",
-            path: "/clip/v2/resource/button",
-            headers: ["hue-application-key": bridgeData.username],
-            contentType: "application/json",
-            timeout: 10,
-            ignoreSSLIssues: true
-         ]
-         httpGet(params,
-            { response ->
-                  response.data.data.each {
-                     if (buttons[it.owner.rid] == null) buttons[it.owner.rid] = [buttons: [:]]
-                     buttons[it.owner.rid].buttons << [(it.id): it.metadata.control_id]
-                  }
+      Map buttons = [:]
+      // button resources:
+      List<Map> buttonDevs = resp.json?.data?.findAll { Map devData -> devData.type == "button" }
+      buttonDevs?.each { Map devData ->
+         log.warn it
+         if (buttons[devData.owner.rid] == null) buttons[devData.owner.rid] = [buttons: [:]]
+         buttons[devData.owner.rid].buttons << [(devData.id): devData.metadata.control_id]
+      }
+      // relative_rotary resoruces (Hue Tap Dial, Lutron Aurora, etc.):
+      buttonDevs = resp.json?.data?.findAll { Map devData -> devData.type == "relative_rotary" }
+      buttonDevs?.each { Map devData ->
+         if (buttons[devData.owner.rid] != null) {
+            if (buttons[devData.owner.rid].relative_rotary == null) {
+               buttons[devData.owner.rid] << [relative_rotary: []]
             }
-         )
-         pauseExecution(500)
-         // Check for relative_rotary, too (Hue Tap Dial, Lutron Aurora)
-         params = [
-            uri: "https://${bridgeData.ip}",
-            path: "/clip/v2/resource/relative_rotary",
-            headers: ["hue-application-key": bridgeData.username],
-            contentType: "application/json",
-            timeout: 10,
-            ignoreSSLIssues: true
-         ]
-         httpGet(params,
-            { response ->
-                  response.data.data.each {
-                     if (buttons[it.owner.rid] != null) {
-                        if (buttons[it.owner.rid].relative_rotary == null) {
-                           buttons[it.owner.rid] << [relative_rotary: []]
-                        }
-                        buttons[it.owner.rid].relative_rotary << it.id
-                     }
-                     else {
-                        // probably won't happen, but skip if no associated button
-                     }
-                  }
-            }
-         )
-         // But also have to get name from /devices data...
-         if (resp?.json?.data) {
-            List devicesJson = resp.json.data
-            buttons.keySet().each { String id ->
-               Map dev = devicesJson.find { dev -> dev.id == id }
-               buttons[id].name = dev.metadata.name
-               buttons[id].manufacturer_name = dev.product_data.manufacturer_name
-               buttons[id].model_id = dev.product_data.model_id
-            }
+            buttons[devData.owner.rid].relative_rotary << devData.id
          }
          else {
-            log.warn "No data in returned JSON: $data"
+            // probably won't happen, but skip if no associated button
          }
-         state.allButtons = buttons
-         //state.allRelativeRotaries = relativeRotaries
-         if (logEnable) log.debug "  All buttons received from Bridge: $buttons"
       }
-      catch (Exception ex) {
-         log.error "Error parsing all buttons response: $ex"
+      // also get device name:
+      List devicesJson = resp.json?.data?.findAll { Map devData -> devData.type == "device" }
+      buttons.keySet().each { String id ->
+         Map dev = devicesJson.find { dev -> dev.id == id }
+         buttons[id].name = dev.metadata.name
+         buttons[id].manufacturer_name = dev.product_data.manufacturer_name
+         buttons[id].model_id = dev.product_data.model_id
       }
+      state.allButtons = buttons
+      //state.allRelativeRotaries = relativeRotaries
+      if (logEnable) log.debug "  All buttons received from Bridge: $buttons"
    }
 }
+
+// void parseGetAllButtonsResponseV2OLD(resp, data) {
+//    if (logEnable) log.debug "parseGetAllButtonsResponseV2()"
+//    if (checkIfValidResponse(resp)) {
+//       try {
+//          Map buttons = [:]
+//          // Get specific /button devices first....
+//          Map<String,String> bridgeData = parent.getBridgeData()
+//          // TODO: Consider making this async, but should be pretty safe considerng we just heard from Bridge...
+//          Map params = [
+//             uri: "https://${bridgeData.ip}",
+//             path: "/clip/v2/resource/button",
+//             headers: ["hue-application-key": bridgeData.username],
+//             contentType: "application/json",
+//             timeout: 10,
+//             ignoreSSLIssues: true
+//          ]
+//          httpGet(params,
+//             { response ->
+//                   response.data.data.each {
+//                      if (buttons[it.owner.rid] == null) buttons[it.owner.rid] = [buttons: [:]]
+//                      buttons[it.owner.rid].buttons << [(it.id): it.metadata.control_id]
+//                   }
+//             }
+//          )
+//          pauseExecution(500)
+//          // Check for relative_rotary, too (Hue Tap Dial, Lutron Aurora)
+//          params = [
+//             uri: "https://${bridgeData.ip}",
+//             path: "/clip/v2/resource/relative_rotary",
+//             headers: ["hue-application-key": bridgeData.username],
+//             contentType: "application/json",
+//             timeout: 10,
+//             ignoreSSLIssues: true
+//          ]
+//          httpGet(params,
+//             { response ->
+//                   response.data.data.each {
+//                      if (buttons[it.owner.rid] != null) {
+//                         if (buttons[it.owner.rid].relative_rotary == null) {
+//                            buttons[it.owner.rid] << [relative_rotary: []]
+//                         }
+//                         buttons[it.owner.rid].relative_rotary << it.id
+//                      }
+//                      else {
+//                         // probably won't happen, but skip if no associated button
+//                      }
+//                   }
+//             }
+//          )
+//          // But also have to get name from /devices data...
+//          if (resp?.json?.data) {
+//             List devicesJson = resp.json.data
+//             buttons.keySet().each { String id ->
+//                Map dev = devicesJson.find { dev -> dev.id == id }
+//                buttons[id].name = dev.metadata.name
+//                buttons[id].manufacturer_name = dev.product_data.manufacturer_name
+//                buttons[id].model_id = dev.product_data.model_id
+//             }
+//          }
+//          else {
+//             log.warn "No data in returned JSON: $data"
+//          }
+//          state.allButtons = buttons
+//          //state.allRelativeRotaries = relativeRotaries
+//          if (logEnable) log.debug "  All buttons received from Bridge: $buttons"
+//       }
+//       catch (Exception ex) {
+//          log.error "Error parsing all buttons response: $ex"
+//       }
+//    }
+// }
 
 /** Intended to be called from parent app to retrive previously
  *  requested list of bulbs
@@ -999,6 +1106,43 @@ void clearButtonsCache() {
    if (logEnable) log.debug "Running clearButtonsCache..."
    state.remove('allButtons')
 }
+
+
+// --------- BRIDGE/General ---------
+/** Updates V2 API cache of entire /resources endpoint, useful for matching service (e.g., light or motion) and
+ * owner (device) IDs, reducing individual endpoint calls, etc.
+ * @param options Map of additional options:
+ *  - `additionalCallback`: if provided, will run this method when fetch is complete (useful if using as part of bulb, sensor, etc. fetch); handler to update cache object always runs
+ *  - `force`: If true, will reload regardless of last cache time; if false, will refresh only if not refreshed in last CACHE_STALE_THRESHOLD milliseconds
+ */
+void updateBridgeCacheV2(Map options) {
+   if (logEnable) log.debug "updateBridgeCacheV2()"
+   if ((now() - (state.lastBridgeCache ?: 0) > CACHE_STALE_THRESHOLD) || options?.force) {
+      Map<String,String> extraData = options?.additionalCallback ? [additionalCallback: options.additionalCallback] : null
+      bridgeAsyncGetV2("handleUpdateBridgeCacheResponseV2", "/resource", null, extraData)
+   }
+   else {
+      if (logEnable) log.debug "Skipping cache update because newer than ${CACHE_STALE_THRESHOLD} ms"
+   }
+}
+
+void handleUpdateBridgeCacheResponseV2(resp, Map data=null) {
+   if (logEnable) log.debug "handleUpdateBridgeCacheResponseV2()"
+   if (checkIfValidResponse(resp)) {
+      synchronized(bridgeCacheLock) {
+         bridgeCache[device.idAsLong] = resp.json
+      }
+      state.lastBridgeCache = now()
+      if (data?.additionalCallback) {
+         this."${data.additionalCallback}"(resp, data)
+      }
+   }
+}
+
+Map getBridgeCacheV2() {
+   return bridgeCache[device.idAsLong]
+}
+
 
 // ~~~ IMPORTED FROM RMoRobert.CoCoHue_Common_Lib ~~~
 // Version 1.0.5
@@ -1133,6 +1277,7 @@ void bridgeAsyncPutV2(String callbackMethod, String clipV2Path, Map body, Map<St
 @Field static final String DRIVER_NAME_DIMMABLE_BULB  = "CoCoHue Dimmable Bulb"
 @Field static final String DRIVER_NAME_GROUP          = "CoCoHue Group"
 @Field static final String DRIVER_NAME_MOTION         = "CoCoHue Motion Sensor"
+@Field static final String DRIVER_NAME_CONTACT        = "CoCoHue Contact Sensor"
 @Field static final String DRIVER_NAME_PLUG           = "CoCoHue Plug"
 @Field static final String DRIVER_NAME_RGBW_BULB      = "CoCoHue RGBW Bulb"
 @Field static final String DRIVER_NAME_RGB_BULB       = "CoCoHue RGB Bulb"
