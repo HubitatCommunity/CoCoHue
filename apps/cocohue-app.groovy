@@ -18,8 +18,9 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2024-12-24
+ *  Last modified: 2024-12-27
  *  Changelog:
+ *  v5.2.4 - Additional improvements for the below; concurrency fixes
  *  v5.2.3 - Improve logic for choosing V2 API by default on new installs
  *  v5.2.1 - Add support option for Bridge cache logging
  *  v5.1.2 - Add option to downgrade to V1 API (to facilitate just this or this plus app downgrade)
@@ -101,6 +102,7 @@ definition (
    description: "Community-created Philips Hue integration for Hue Bridge lights and other Hue devices and features",
    category: "Convenience",
    installOnOpen: true,
+   //singleThreaded: true,
    documentationLink: "https://community.hubitat.com/t/release-cocohue-hue-bridge-integration-including-scenes/27978",
    iconUrl: "",
    iconX2Url: "",
@@ -370,7 +372,7 @@ void initialize() {
             // TODO: Re-time this and retryUpgradeCCHV1... method or figure out some way to avoid unschedule!
             runIn(15, "initialize") // re-check version after has time to fetch in case upgrading from old version without this value
          }
-         else if (bridgeSwVersion.isInteger() && Integer.parseInt(bridgeSwVersion) >= minV2SwVersion) {
+         else if (!(settings.useEventStream == false) && bridgeSwVersion.isInteger() && Integer.parseInt(bridgeSwVersion) >= minV2SwVersion) {
             state.useV2 = true
          }
       }
@@ -382,6 +384,7 @@ void initialize() {
 
    scheduleRefresh()
 }
+
 
 void scheduleRefresh() {
    if (logEnable == true) log.debug "scheduleRefresh()"
@@ -770,7 +773,7 @@ def pageManageBridge() {
    state.remove("addedButtons")
    state.remove("bridgeJustAdded")
    dynamicPage(name: "pageManageBridge", uninstall: true, install: true) {  
-      section("Manage Hue Bridge Devices:") {
+      section("Add Hue Bridge Devices to Hubitat:") {
          href(name: "hrefSelectLights", title: "Select Lights",
                description: "", page: "pageSelectLights")
          href(name: "hrefSelectGroups", title: "Select Groups",
@@ -783,11 +786,11 @@ def pageManageBridge() {
             href(name: "hrefSelectButtons", title: "Select Button Devices",
                   description: "", page: "pageSelectButtons")
          }
-      }       
-      section("Other Options:") {
+      }
+      section("Polling:") {
          String v2SettingText = "Prefer V2 Hue API (EventStream/Server-Sent Events) if available"
          if (!(state.useV2)) {
-            input name: "useEventStream", type: "bool", title: "$v2SettingText. NOTE: Cannot be disabled once enabled.", defaultValue: true
+            input name: "useEventStream", type: "bool", title: "$v2SettingText. NOTE: Cannot be disabled once enabled."
             paragraph "<small>The V2 Hue API allows instant status updates from devices instead of relying on polling to retrieve new states. It is available on V2 bridges with firmware starting around late 2021 (though current firmware is recommended) and " +
                "is necessary to use for sensor and button devices. Enabling is recommended for most users. This setting cannot be disabled once enabled (without restoring a hub backup or if you have not yet selected a Hue Bridge to link with).</small>"
          }
@@ -804,6 +807,8 @@ def pageManageBridge() {
          if (state.useV2) {
             input name: "useV1Polling", type: "bool", title: "Use V1 API for polling (if polling enabled above) (recommended)", defaultValue: true
          }
+      }
+      section("Other Options:") {
          input name: "boolCustomLabel", type: "bool", title: "Customize the name of this app", defaultValue: false, submitOnChange: true
          if (settings.boolCustomLabel) label title: "Custom name for this app", required: false
          input name: "logEnable", type: "bool", title: "Enable debug logging", defaultValue: true
@@ -1545,7 +1550,7 @@ void parseBridgeInfoResponse(resp, Map data) {
                bridgeDevice.updateDataValue("swversion", swVersion)
                try {
                   Integer intVer = Integer.parseInt(swVersion)
-                  if (settings.useSSDP && intVer >= minV2SwVersion) {
+                  if (!(settings.useEventStream == false) && settings.useSSDP && intVer >= minV2SwVersion) {
                      state.useV2 = true
                   }
                }

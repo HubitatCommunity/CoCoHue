@@ -14,12 +14,13 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2024-12-08
+ *  Last modified: 2024-12-27
  *
  *  Changelog:
+ *  v5.2.3  - Concurrency fixes; other minor fixes for SSE and V2 API
  *  v5.2.2  - Minor typo fix for SSE reconnection debug log
  *  v5.2.1  - Keep cache of /resources data in V2 API to reduce HTTP calls and facilite service and owner ID matching
- *  v5.2.0  - (possible) fix for battery events on sensors
+ *  v5.2.0  - Add contact sensors, (possible) fix for battery events on sensors
  *  v5.0.3  - Add zigbee_connectivity parsing for lights
  *  v5.0.2  - Fetch V2 grouped_light ID owner for room/zone owners of V2 scenes
  *  v5.0.1  - Fix for missing V1 IDs after device creation or upgrade
@@ -74,7 +75,7 @@ metadata {
       name: "CoCoHue Bridge",
       namespace:"RMoRobert",
       author: "Robert Morris",
-      singleThreaded: true,
+      //singleThreaded: true,
       importUrl: "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-bridge-driver.groovy"
    ) {
       capability "Actuator"
@@ -113,8 +114,13 @@ void initialize() {
    }
    disconnectEventStream()
    doSendEvent("eventStreamStatus", "disconnected")
-   if (parent.getEventStreamEnabledSetting()) runIn(3, "connectEventStream")
+   if (parent.getEventStreamEnabledSetting() == true) runIn(3, "connectEventStream")
 
+}
+
+void withParentConvertBuiltInIntegrationStatesToNew() {
+   if (logEnable) log.debug "withParentConvertBuiltInIntegrationStatesToNew()"
+   parent.convertBuiltInIntegrationStatesToNew()
 }
 
 void connectEventStream() {
@@ -385,17 +391,17 @@ void parseStatesV2(AsyncResponse resp, Map data) {
       // TODO: batteryData could also be useful for buttons/remotes?
       // Probably does not make sense to parse other button events now (only in real time)
       // Check if anything else?
-      parseLightStatesV2(lightsData)
-      parseGroupStatesV2(groupsData)
-      parseSceneStatesV2(scenesData)
+      if (lightsData) parseLightStatesV2(lightsData)
+      if (groupsData) parseGroupStatesV2(groupsData)
+      if (scenesData) parseSceneStatesV2(scenesData)
       // TODO: see if can combine this data into one instead of calling 4x total:
-      parseMotionSensorStatesV2(motionData)
-      parseMotionSensorStatesV2(temperatureData)
-      parseMotionSensorStatesV2(illuminanceData)
-      parseMotionSensorStatesV2(batteryData)
+      if (motionData) parseMotionSensorStatesV2(motionData)
+      if (temperatureData) parseMotionSensorStatesV2(temperatureData)
+      if (illuminanceData) parseMotionSensorStatesV2(illuminanceData)
+      if (batteryData) parseMotionSensorStatesV2(batteryData)
       // TODO: see if can combine this data into one instead of calling 2x, similar to above:
-      parseContactSensorStatesV2(contactData)
-      parseContactSensorStatesV2(batteryData)
+      if (contactData) parseContactSensorStatesV2(contactData)
+      if (batteryData) parseContactSensorStatesV2(batteryData)
    }
 }
 
@@ -989,7 +995,6 @@ void parseGetAllButtonsResponseV2(resp, data) {
       // button resources:
       List<Map> buttonDevs = resp.json?.data?.findAll { Map devData -> devData.type == "button" }
       buttonDevs?.each { Map devData ->
-         log.warn it
          if (buttons[devData.owner.rid] == null) buttons[devData.owner.rid] = [buttons: [:]]
          buttons[devData.owner.rid].buttons << [(devData.id): devData.metadata.control_id]
       }
