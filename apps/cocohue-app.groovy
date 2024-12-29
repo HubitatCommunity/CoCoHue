@@ -18,8 +18,9 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2024-12-27
+ *  Last modified: 2024-12-28
  *  Changelog:
+ *  v5.2.5 - Add Smart Scene support
  *  v5.2.4 - Additional improvements for the below; concurrency fixes
  *  v5.2.3 - Improve logic for choosing V2 API by default on new installs
  *  v5.2.1 - Add support option for Bridge cache logging
@@ -731,7 +732,7 @@ def pageManageBridge() {
       if (logEnable == true) log.debug "New groups selected. Creating..."
       createNewSelectedGroupDevices()
    }
-   if (settings["newScenes"]) {
+   if (settings["newScenes"] || settings["newSmartScenes"]) {
       if (logEnable == true) log.debug "New scenes selected. Creating..."
       createNewSelectedSceneDevices()
    }
@@ -991,19 +992,24 @@ def pageSelectScenes() {
    DeviceWrapper bridge = getChildDevice("${DNI_PREFIX}/${app.id}")
    state.useV2 ? bridge.getAllScenesV2() : bridge.getAllScenesV1()
    List arrNewScenes = []
+   List arrNewSmartScenes = []
    Map sceneCache = bridge.getAllScenesCache()
+   Map smartSceneCache
    Map groupCache 
    if (state.useV2 == true) {
+      smartSceneCache = bridge.getAllSmartScenesCache()
       groupCache = (bridge.getAllRoomsCache() ?: [:]) + (bridge.getAllZonesCache() ?: [:])
    }
    else {
       groupCache = bridge.getAllGroupsCache()
    }
    List<DeviceWrapper> unclaimedScenes = getChildDevices().findAll { it.deviceNetworkId.startsWith("${DNI_PREFIX}/${app.id}/Scene/") }
+   List<DeviceWrapper> unclaimedSmartScenes = getChildDevices().findAll { it.deviceNetworkId.startsWith("${DNI_PREFIX}/${app.id}/SmartScene/") }
    Map grps = [:]
    groupCache?.each { grps << [(it.value.roomId ?: it.value.zoneId ?: it.key) : (it.value.name)] }
    dynamicPage(name: "pageSelectScenes", refreshInterval: sceneCache ? 0 : 7, uninstall: true, install: false, nextPage: "pageManageBridge") {
       Map addedScenes = [:]  // To be populated with scenes user has added, matched by Hue ID
+      Map addedSmartScenes = [:] 
       if (!bridge) {
          log.error "No Bridge device found"
          return
@@ -1042,6 +1048,39 @@ def pageSelectScenes() {
          }
          addedScenes = addedScenes.sort { it.value.hubitatName }
       }
+      if (smartSceneCache && sceneCache) {
+         smartSceneCache.each { sc ->
+            DeviceWrapper sceneChild = unclaimedSmartScenes.find { scn -> scn.deviceNetworkId == "${DNI_PREFIX}/${app.id}/SmartScene/${sc.key}" }
+            if (sceneChild) {
+               addedSmartScenes.put(sc.key, [hubitatName: sceneChild.displayName, hubitatId: sceneChild.id, hueName: sc.value?.name])
+               unclaimedSmartScenes.removeElement(sceneChild)
+            }
+            else {
+               Map newScene = [:]
+               String sceneName = sc.value.name
+               if (sc.value.group) {
+                  grps.each { g ->
+                     def k = g.key
+                     if (k && k == sc.value.group) {
+                        def v = g.value
+                        // "Group Name - Scene Name" naming convention:
+                        if (v) sceneName = "$v - $sceneName"
+                     }
+                  }
+               }
+               if (sc.value?.group || settings["showAllScenes"]) {
+                  state.sceneFullNames.put(sc.key, sceneName)
+                  newScene << [(sc.key): (sceneName)]
+                  arrNewSmartScenes << newScene
+               }
+            }
+         }
+         arrNewSmartScenes = arrNewSmartScenes.sort {a, b ->
+            // Sort by group name (default would be Hue ID)
+            a.entrySet().iterator().next()?.value <=> b.entrySet().iterator().next()?.value
+         }
+         addedSmartScenes = addedSmartScenes.sort { it.value.hubitatName }
+      }
 
       if (!sceneCache) {
          section("Discovering scenes. Please wait...") {
@@ -1054,20 +1093,17 @@ def pageSelectScenes() {
             input name: "newScenes", type: "enum", title: "Select Hue scenes to add:",
                   multiple: true, options: arrNewScenes
             paragraph ""
-            paragraph "Previously added groups${addedScenes ? ' <span style=\"font-style: italic\">(Hue scene name [without room/zone] in parentheses)</span>' : ''}:"
+            paragraph "Previously added scenes${addedScenes ? ' <span style=\"font-style: italic\">(Hue scene name [without room/zone] in parentheses)</span>' : ''}:"
             if (addedScenes) {
                StringBuilder scenesText = new StringBuilder()
                scenesText << "<ul>"
                addedScenes.each {
                   scenesText << "<li><a href=\"/device/edit/${it.value.hubitatId}\" target=\"_blank\">${it.value.hubitatName}</a>"
                   scenesText << " <span style=\"font-style: italic\">(${it.value.hueName ?: 'not found on Hue'})</span></li>"
-                  //input(name: "btnRemove_Group_ID", type: "button", title: "Remove", width: 3)
+                  //input(name: "btnRemove_Scene_ID", type: "button", title: "Remove", width: 3)
                }
                scenesText << "</ul>"
                paragraph(scenesText.toString())
-            }
-            else {
-               paragraph "<span style=\"font-style: italic\">No added scenes found</span>"
             }
             if (unclaimedScenes) {
                paragraph "Hubitat scene devices not found on Hue:"
@@ -1078,6 +1114,36 @@ def pageSelectScenes() {
                }
                scenesText << "</ul>"
                paragraph(scenesText.toString())
+            }
+            if (state.useV2) {
+               input name: "newSmartScenes", type: "enum", title: "Select Hue smart scenes to add:",
+                     multiple: true, options: arrNewSmartScenes
+               paragraph ""
+               paragraph "Previously added smart scenes${addedSmartScenes ? ' <span style=\"font-style: italic\">(Hue smart scene name [without room/zone] in parentheses)</span>' : ''}:"
+               if (addedSmartScenes) {
+                  StringBuilder smartScenesText = new StringBuilder()
+                  smartScenesText << "<ul>"
+                  addedScenes.each {
+                     smartScenesText << "<li><a href=\"/device/edit/${it.value.hubitatId}\" target=\"_blank\">${it.value.hubitatName}</a>"
+                     smartScenesText << " <span style=\"font-style: italic\">(${it.value.hueName ?: 'not found on Hue'})</span></li>"
+                     //input(name: "btnRemove_SmartScene_ID", type: "button", title: "Remove", width: 3)
+                  }
+                  scenesText << "</ul>"
+                  paragraph(smartScenesText.toString())
+               }
+               else {
+                  paragraph "<span style=\"font-style: italic\">No added smart scenes found</span>"
+               }
+               if (unclaimedSmartScenes) {
+                  paragraph "Hubitat smart scene devices not found on Hue:"
+                  StringBuilder smartScenesText = new StringBuilder()
+                  smartScenesText << "<ul>"
+                  unclaimedSmartScenes.each {
+                     smartScenesText << "<li><a href=\"/device/edit/${it.id}\" target=\"_blank\">${it.displayName}</a></li>"
+                  }
+                  smartScenesText << "</ul>"
+                  paragraph(smartScenesText.toString())
+               }
             }
          }
          section("Rediscover Scenes") {
@@ -1249,6 +1315,8 @@ def pageSelectButtons() {
    }
 }
 
+
+
 /** Creates new Hubitat devices for new user-selected bulbs on lights-selection
  * page (intended to be called after navigating away/using "Done" from that page)
  */
@@ -1321,33 +1389,38 @@ void createNewSelectedSceneDevices() {
    DeviceWrapper bridge = getChildDevice("${DNI_PREFIX}/${app.id}")
    if (!bridge) log.error("Unable to find Bridge device")
    Map sceneCache = bridge?.getAllScenesCache()
+   if (state.useV2) sceneCache += bridge?.getAllSmartScenesCache()
    Map groupCache
    if (state.useV2) {  // get rooms and zones (which own scenes and are owned by a grouped_light service whose ID we need)
       groupCache = (bridge.getAllRoomsCache() ?: [:]) + (bridge.getAllZonesCache() ?: [:])
    }
-   settings["newScenes"].each {
-      Map sc = sceneCache.get(it)
-      if (sc) {
-         try {
-               if (logEnable == true) log.debug "Creating new device for Hue group ${it} (state.sceneFullNames?.get(it) ?: sc.name)"
-               String devDNI = "${DNI_PREFIX}/${app.id}/Scene/${it}"
-               Map devProps = [name: (state.sceneFullNames?.get(it) ?: sc.name)]
-               DeviceWrapper scDev = addChildDevice(NAMESPACE, DRIVER_NAME_SCENE, devDNI, devProps)
-               if (scDev != null && state.useV2) {
-                  scDev.createEventsFromMapV2([id_v1: sc.id_v1])
-                  String groupedLightId = groupCache.find { it.value.roomId == sc.group || it.value.zoneId == sc.group}?.key
-                  if (groupedLightId) scDev.setOwnerGroupIDV2(groupedLightId)
-               }
-         } catch (Exception ex) {
-               log.error "Unable to create new scene device for $it: $ex"
+   ["newScenes", "newSmartScenes"].each { String settingName ->
+      settings[settingName].each {
+         Map sc = sceneCache.get(it)
+         if (sc) {
+            try {
+                  if (logEnable == true) log.debug "Creating new device for Hue scene ${it} (state.sceneFullNames?.get(it) ?: sc.name)"
+                  String devDNI = "${DNI_PREFIX}/${app.id}/${settingName == 'newSmartScenes' ? 'SmartScene' : 'Scene'}/${it}"
+                  Map devProps = [name: (state.sceneFullNames?.get(it) ?: sc.name)]
+                  DeviceWrapper scDev = addChildDevice(NAMESPACE, DRIVER_NAME_SCENE, devDNI, devProps)
+                  if (scDev != null && state.useV2) {
+                     scDev.createEventsFromMapV2([id_v1: sc.id_v1])
+                     String groupedLightId = groupCache.find { it.value.roomId == sc.group || it.value.zoneId == sc.group}?.key
+                     if (groupedLightId) scDev.setOwnerGroupIDV2(groupedLightId)
+                  }
+            } catch (Exception ex) {
+                  log.error "Unable to create new scene device for $it: $ex"
+            }
+         } else {
+            log.error "Unable to create new scene for scene $it: ID not found on Hue Bridge"
          }
-      } else {
-         log.error "Unable to create new scene for scene $it: ID not found on Hue Bridge"
       }
    }
+   settings
    bridge.clearScenesCache()
    //bridge.getAllScenesV1()
    app.removeSetting("newScenes")
+   app.removeSetting("newSmartScenes")
    state.remove("sceneFullNames")
 }
 

@@ -14,9 +14,11 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2024-12-27
+ *  Last modified: 2024-12-29
  *
  *  Changelog:
+ *  v5.2.6  - Fix for zigbee_connectivity parsing
+ *  v5.2.5  - Add Smart Scene support
  *  v5.2.3  - Concurrency fixes; other minor fixes for SSE and V2 API
  *  v5.2.2  - Minor typo fix for SSE reconnection debug log
  *  v5.2.1  - Keep cache of /resources data in V2 API to reduce HTTP calls and facilite service and owner ID matching
@@ -258,6 +260,9 @@ void parse(String description) {
                            dev = parent.getChildDevice("${device.deviceNetworkId}/Scene/${idV2}")
                            if (dev == null)  dev = parent.getChildDevice("${device.deviceNetworkId}/Scene/${idV1}")
                            break
+                        case "smart_scene":
+                           dev = parent.getChildDevice("${device.deviceNetworkId}/SmartScene/${idV2}")
+                           break
                         case "motion":
                         case "contact":
                         case "temperature":
@@ -285,7 +290,7 @@ void parse(String description) {
                            break
                         case "zigbee_connectivity":
                            String ownerId = updateEntryMap.owner?.rid // find owner for zigbee_connectivity service, then...
-                           String lightId = getBridgeCacheV2().find { Map devData -> // use it to match up with the light ID
+                           String lightId = getBridgeCacheV2().data.find { Map devData -> // use it to match up with the light ID
                               devData.type == "light" &&
                               devData.owner?.rid == ownerId
                            }
@@ -865,6 +870,13 @@ void parseGetAllScenesResponseV2(resp, Map data=null) {
          }
          state.allScenes = scenes
          if (logEnable) log.debug "  All scenes received from Bridge: $scenes"
+         // Smart scenes (V2 API only):
+         Map smartScenes = [:]
+         resp.json.data.findAll { it.type == "smart_scene"}?.each { Map sceneData ->
+            smartScenes[sceneData.id] = [name: sceneData.metadata.name, group: sceneData.group?.rid]
+         }
+         state.allSmartScenes = smartScenes
+         if (logEnable) log.debug "  All Smart Scenes received from Bridge: $smartScenes"
       }
       catch (Exception ex) {
          log.error "Error in parseGetAllScenesResponseV2(): $ex"
@@ -876,7 +888,12 @@ void parseGetAllScenesResponseV2(resp, Map data=null) {
  *  requested list of scenes
  */
 Map getAllScenesCache() {
-   return state.allScenes
+   return state.allScenes ?: [:]
+}
+
+// Keeping this separate since only used in V2 API:
+Map getAllSmartScenesCache() {
+   return state.allSmartScenes ?: [:]
 }
 
 /** Clears cache of scene IDs/names; useful for parent app to call if trying to ensure
@@ -885,6 +902,7 @@ Map getAllScenesCache() {
 void clearScenesCache() {
    if (logEnable) log.debug "Running clearScenesCache..."
    state.remove("allScenes")
+   state.remove("allSmartScenes")
 }
 
 // ------------ MOTION SENSORS ------------

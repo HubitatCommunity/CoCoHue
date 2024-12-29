@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2024-09-22
+ *  Last modified: 2024-12-28
  *
  *  Changelog:
+ *  v5.2.5  - Add Smart Scene support
  *  v5.1.2  - Re-added "momentary"-only Switch capability (on does push(1), off does nothing, auto-off after few seconds by default)
  *  v5.1    - Remove Switch capability and associated preferences for groups and scenes
  *  v5.0.3  - Use V2 API for scene activation/recall
@@ -99,6 +100,7 @@ void configure() {
 
 void push(btnNum) {
    if (logEnable) log.debug "push($btnNum)"
+   if (btnNum != 1 && btnNum != "1") log.warn "Unsupported button number: $btnNum; assuming button 1. This may change in future; please check usage in all apps."
    activate()
    doSendEvent("pushed", btnNum.toInteger(), null, true)
 }
@@ -107,14 +109,19 @@ void on() {
    if (logEnable) log.debug "on()"
    push(1)
    doSendEvent("switch", "on", null)
-   if (settings.autoOff != "0") {
+   if (settings.autoOff != "no") {
       String sec = settings.autoOff ?: "2"
       runIn(sec.toInteger(), "autoOffHandler")
    }
 }
 
 void off() {
-   log.warn "command off() not implemented; turn off desired group or light devices instead"
+   if (!isSmartScene) {
+      log.warn "command off() not implemented; turn off desired group or light devices instead"
+   }
+   else {
+      deactivateSmartScene()
+   }
    if (device.currentValue("switch") != "off") {
       doSendEvent("switch", "off", null)
    }
@@ -173,13 +180,18 @@ Boolean getHasV2DNI() {
    }
 }
 
+Boolean getIsSmartScene() {
+   return device.deviceNetworkId.split("/")[-2] == "SmartScene"
+}
+
 // these were called on() and onV1() previously:
 void activate() {
    if (logEnable) log.debug "activate()"
    if (hasV2DNI == true) {
       if (logEnable) log.debug "activation will use V2 API"
-      Map cmd = [recall: [action: "active"]]
-      bridgeAsyncPutV2("parseSendCommandResponseV2", "/resource/scene/${getHueDeviceIdV2()}", cmd)
+      Map cmd = getIsSmartScene() ? [recall: [action: "activate"]] : [recall: [action: "active"]]
+      [recall: [action: "active"]]
+      bridgeAsyncPutV2("parseSendCommandResponseV2", "/resource/${getIsSmartScene() ? 'smart_scene' : 'scene'}/${getHueDeviceIdV2()}", cmd)
    }
    else {
       activateV1()
@@ -201,6 +213,14 @@ void activateV1() {
       parent.runInMillis(settings["onRefresh"] as Integer, "refreshBridge")
    }
    if (logEnable) log.debug "Command sent to Bridge: $cmd"
+}
+
+void deactivateSmartScene() {
+   if (logEnable) log.debug "deactivateSmartScene()"
+   if (hasV2DNI == true) {
+      Map cmd = [recall: [action: "deactivate"]]
+      bridgeAsyncPutV2("parseSendCommandResponseV2", "/resource/smart_scene/${getHueDeviceIdV2()}", cmd)
+   }
 }
 
 // remove if do not re-add Switch capability
@@ -315,6 +335,11 @@ void createEventsFromMapV2(Map data) {
          //    eventUnit = null
          //    if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue, eventUnit)
          //    break
+         case "state": // smart scene active/inactive status, apparently? not documented but does appear to indicate...
+            if (value == "active") eventValue = "on" else eventValue = "off"
+            eventName = "switch"
+            eventUnit = null
+            if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue, eventUnit)
          case "id_v1":
             if (state.id_v1 != value) state.id_v1 = value
             break
@@ -360,7 +385,11 @@ void parseSendCommandResponseV2(AsyncResponse resp, Map data) {
 
 /** Gets data about scene from Bridge; does not update bulb/group status */
 void fetchSceneData() {
-   if (logEnable) log.debug "refresh()"
+   if (logEnable) log.debug "fetchSceneData()"
+   if (getIsSmartScene()) {
+      log.warn "fetchSceneData() not supported on Smart Scenes; exiting"
+      return
+   }
    Map<String,String> data = parent.getBridgeData()
    if (data.apiVersion == APIV1 || data.apiVersion == null) {
       Map sceneParams = [
