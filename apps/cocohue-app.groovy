@@ -18,8 +18,9 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2024-12-28
+ *  Last modified: 2024-12-29
  *  Changelog:
+ *  v5.2.6 - Fix for error loading Scenes page after adding Smart Scenes
  *  v5.2.5 - Add Smart Scene support
  *  v5.2.4 - Additional improvements for the below; concurrency fixes
  *  v5.2.3 - Improve logic for choosing V2 API by default on new installs
@@ -1128,7 +1129,7 @@ def pageSelectScenes() {
                      smartScenesText << " <span style=\"font-style: italic\">(${it.value.hueName ?: 'not found on Hue'})</span></li>"
                      //input(name: "btnRemove_SmartScene_ID", type: "button", title: "Remove", width: 3)
                   }
-                  scenesText << "</ul>"
+                  smartScenesText << "</ul>"
                   paragraph(smartScenesText.toString())
                }
                else {

@@ -290,7 +290,7 @@ void parse(String description) {
                            break
                         case "zigbee_connectivity":
                            String ownerId = updateEntryMap.owner?.rid // find owner for zigbee_connectivity service, then...
-                           String lightId = getBridgeCacheV2().data.find { Map devData -> // use it to match up with the light ID
+                           String lightId = getBridgeCacheV2()?.data.find { Map devData -> // use it to match up with the light ID
                               devData.type == "light" &&
                               devData.owner?.rid == ownerId
                            }
