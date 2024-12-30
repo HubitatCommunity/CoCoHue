@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2024-12-08
+ *  Last modified: 2024-12-29
  *
  *  Changelog:
+ *  v5.2.7  - Use level 0 in color or CT commands as off()
  *  v5.2.2  - Populate initial states from V2 cache if available
  *  v5.1    - Remove scene switch preferences
  *  v5.0.1  - Fix for missing V1 IDs after device creation or upgrade
@@ -754,10 +755,14 @@ Integer scaleBriFromBridge(Number bridgeLevel, String apiVersion="1") {
 }
 
 // ~~~ IMPORTED FROM RMoRobert.CoCoHue_CT_Lib ~~~
-// Version 1.0.1
+// Version 1.0.2
 
 void setColorTemperature(Number colorTemperature, Number level = null, Number transitionTime = null) {
    if (logEnable == true) log.debug "setColorTemperature($colorTemperature, $level, $transitionTime)"
+   if (level == 0 || level == "0") {
+      off()
+      return
+   }
    state.lastKnownColorMode = "CT"
    Integer newCT = scaleCTToBridge(colorTemperature)
    Integer scaledRate = defaultLevelTransitionTime/100
@@ -820,10 +825,14 @@ void setGenericTempName(temp) {
 
 
 // ~~~ IMPORTED FROM RMoRobert.CoCoHue_HueSat_Lib ~~~
-// Version 1.0.2
+// Version 1.0.3
 
 void setColor(Map value) {
    if (logEnable == true) log.debug "setColor($value)"
+   if (value.level == 0 || value.level == "0") {
+      off()
+      return
+   }
    state.lastKnownColorMode = "RGB"
    if (value.hue == null || value.hue == "NaN" || value.saturation == null || value.saturation == "NaN") {
       if (logEnable == true) log.debug "Exiting setColor because no hue and/or saturation set"

@@ -1124,7 +1124,7 @@ def pageSelectScenes() {
                if (addedSmartScenes) {
                   StringBuilder smartScenesText = new StringBuilder()
                   smartScenesText << "<ul>"
-                  addedScenes.each {
+                  addedSmartScenes.each {
                      smartScenesText << "<li><a href=\"/device/edit/${it.value.hubitatId}\" target=\"_blank\">${it.value.hubitatName}</a>"
                      smartScenesText << " <span style=\"font-style: italic\">(${it.value.hueName ?: 'not found on Hue'})</span></li>"
                      //input(name: "btnRemove_SmartScene_ID", type: "button", title: "Remove", width: 3)

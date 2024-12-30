@@ -13,10 +13,11 @@
  *  for the specific language governing permissions and limitations under the License.
  *
  * =======================================================================================
-
- *  Last modified: 2024-12-08
+ *
+ *  Last modified: 2024-12-29
  *
  *  Changelog:
+ *  v5.2.7  - Use level 0 in color or CT commands as off()
  *  v5.2.2  - Populate initial states from V2 cache if available
  *  v5.0.1  - Fix for missing V1 IDs after device creation or upgrade
  *  v5.0    - Use API v2 by default, remove deprecated features
@@ -611,10 +612,14 @@ Integer scaleBriFromBridge(Number bridgeLevel, String apiVersion="1") {
 }
 
 // ~~~ IMPORTED FROM RMoRobert.CoCoHue_CT_Lib ~~~
-// Version 1.0.1
+// Version 1.0.2
 
 void setColorTemperature(Number colorTemperature, Number level = null, Number transitionTime = null) {
    if (logEnable == true) log.debug "setColorTemperature($colorTemperature, $level, $transitionTime)"
+   if (level == 0 || level == "0") {
+      off()
+      return
+   }
    state.lastKnownColorMode = "CT"
    Integer newCT = scaleCTToBridge(colorTemperature)
    Integer scaledRate = defaultLevelTransitionTime/100

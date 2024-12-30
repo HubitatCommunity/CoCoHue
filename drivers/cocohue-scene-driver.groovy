@@ -14,9 +14,11 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2024-12-28
+ *  Last modified: 2024-12-29
  *
  *  Changelog:
+ *  v5.2.7  - Add support for different V2 scene activation types (active/default, dynamic_palette, static) and
+ *            custom duration and brightness settings for higher-number button pushes to override scene settings
  *  v5.2.5  - Add Smart Scene support
  *  v5.1.2  - Re-added "momentary"-only Switch capability (on does push(1), off does nothing, auto-off after few seconds by default)
  *  v5.1    - Remove Switch capability and associated preferences for groups and scenes
@@ -49,6 +51,10 @@ import groovy.transform.Field
 
 @Field static final Integer debugAutoDisableMinutes = 30
 
+@Field static final String sACTIVATION_TYPE_ACTIVE = "active"
+@Field static final String sACTIVATION_TYPE_DYNAMIC_PALETTE = "dynamic_palette"
+@Field static final String sACTIVATION_TYPE_STATIC = "static"
+
 metadata {
    definition(name: "CoCoHue Scene", namespace: "RMoRobert", author: "Robert Morris", importUrl: "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-scene-driver.groovy") {
       capability "Actuator"
@@ -60,6 +66,10 @@ metadata {
    }
 
    preferences {
+      //if (!(getIsSmartScene() == true)) {
+         input name: "customBrightness", type: "number", title: "Custom brightness level (0-100) for scene activation with button 6 pushed and higher (overrides scene settings)", defaultValue: 100, range: "0..100"
+         input name: "customDuration", type: "number", title: "Custom duration (in ms) for scene activation transition with button 4-5 and 8-9 (overrides scene settings)", defaultValue: 400, range: "0..600000"
+      //}
       input name: "onRefresh", type: "enum", title: "Bridge refresh on activation/deactivation: when this scene is activated or deactivated by a Hubitat command...  (suggested only if depend on status of these devices and not using Hue V2 API)",
          options: [["none": "Do not refresh Bridge"],
                    ["1000": "Refresh Bridge device in 1s"],
@@ -75,7 +85,7 @@ metadata {
 void installed() {
    log.debug "installed()"
    setDefaultAttributeValues()
-   initialize()
+   runIn(3, "initialize")
 }
 
 void updated() {
@@ -85,7 +95,27 @@ void updated() {
 
 void initialize() {
    log.debug "initialize()"
-   sendEvent(name: "numberOfButtons", value: 1)
+   if (getIsSmartScene() == false) {
+      sendEvent(name: "numberOfButtons", value: 9)
+      state.supportedButtonPushes = [
+         1: "Default",
+         2: "Dynamic palette",
+         3: "Static",
+         4: "Dynamic palette, custom duration",
+         5: "Static, custom duration",
+         6: "Dynamic palette, custom brightness",
+         7: "Static, custom brightness",
+         8: "Dynamic palette, custom duration and brightness",
+         9: "Static, custom duration and brightness"
+      ]
+   }
+   else {
+      sendEvent(name: "numberOfButtons", value: 2)
+      state.supportedButtonPushes = [
+         1: "Activate Smart Scene",
+         2: "Deactiveate Smart Scene"
+      ]
+   }
    if (logEnable) {
       log.debug "Debug logging will be automatically disabled in ${debugAutoDisableMinutes} minutes"
       runIn(debugAutoDisableMinutes*60, "debugOff")
@@ -98,13 +128,58 @@ void configure() {
    setDefaultAttributeValues()
 }
 
-void push(btnNum) {
-   if (logEnable) log.debug "push($btnNum)"
-   if (btnNum != 1 && btnNum != "1") log.warn "Unsupported button number: $btnNum; assuming button 1. This may change in future; please check usage in all apps."
-   activate()
-   doSendEvent("pushed", btnNum.toInteger(), null, true)
+void push(String btnNum) {
+   if (logEnable) log.debug "push(String $btnNum)"
+   Integer intBtnNum = Integer.parseInt(btnNum)
+   push(intBtnNum)
 }
 
+void push(Number btnNum) {
+   if (logEnable) log.debug "push(Number $btnNum)"
+   Integer intBtnNum = btnNum.toInteger()
+   switch (intBtnNum) {
+      case 1:
+         activate()
+         break
+      case 2:
+         if (getIsSmartScene() == true) deactivateSmartScene()
+         else activate(activationType: sACTIVATION_TYPE_DYNAMIC_PALETTE)
+         break
+      case 3:
+         activate(activationType: sACTIVATION_TYPE_STATIC)
+         break
+      case 4:
+         activate(activationType: sACTIVATION_TYPE_DYNAMIC_PALETTE,
+                  duration: settings.customDuration != null ? settings.customDuration : 400)
+         break
+      case 5:
+         activate(activationType: sACTIVATION_TYPE_STATIC,
+                  duration: settings.customDuration != null ? settings.customDuration : 400)
+         break
+      case 6:
+         activate(activationType: sACTIVATION_TYPE_DYNAMIC_PALETTE,
+                  brightness: settings.customBrightness != null ? settings.customBrightness : 100)
+         break
+      case 7:
+         activate(activationType: sACTIVATION_TYPE_STATIC,
+                  brightness: settings.customBrightness != null ? settings.customBrightness : 100)
+         break
+      case 8:
+         activate(activationType: sACTIVATION_TYPE_DYNAMIC_PALETTE,
+                  duration: settings.customDuration != null ? settings.customDuration : 400,
+                  brightness: settings.customBrightness != null ? settings.customBrightness : 100)
+         break
+      case 9:
+         activate(activationType: sACTIVATION_TYPE_STATIC,
+                  duration: settings.customDuration != null ? settings.customDuration : 400,
+                  brightness: settings.customBrightness != null ? settings.customBrightness : 100)
+         break
+      default:
+         log.warn "Unsupported button number: $intBtnNum; assuming button 1. This may change in future; please check usage in all apps."
+         activate()
+   }
+   doSendEvent("pushed", intBtnNum, null, true)
+}
 void on() {
    if (logEnable) log.debug "on()"
    push(1)
@@ -184,16 +259,58 @@ Boolean getIsSmartScene() {
    return device.deviceNetworkId.split("/")[-2] == "SmartScene"
 }
 
-// these were called on() and onV1() previously:
-void activate() {
-   if (logEnable) log.debug "activate()"
+/**
+ * Activates scene or smart scene on Hue Bridge, preferring V2 API if available
+ * @param options Map with optional keys (optional; apply to regular/non-Smart scenes only):
+ *           - `String activationType`: one of `"active" (default), "dynamic_palette", or "static" (not applicable to Smart Scenes)
+             - `Long duration`: duration in milliseconds for transition to fully activated scene (not applicable to Smart Scenes)
+             - `Long brightness`: override brightness/dimming level for scene (not applicable to Smart Scenes)
+ */
+void activate(Map options=null) {
+   if (logEnable) log.debug "activate(Map options=$options)"
    if (hasV2DNI == true) {
       if (logEnable) log.debug "activation will use V2 API"
-      Map cmd = getIsSmartScene() ? [recall: [action: "activate"]] : [recall: [action: "active"]]
-      [recall: [action: "active"]]
-      bridgeAsyncPutV2("parseSendCommandResponseV2", "/resource/${getIsSmartScene() ? 'smart_scene' : 'scene'}/${getHueDeviceIdV2()}", cmd)
+      String path
+      Map cmd
+      if (getIsSmartScene() == false) {
+         path = "/resource/scene/${getHueDeviceIdV2()}"
+         String action
+         log.warn "optins = $options"
+         log.error options?.activationType?.trim()?.toLowerCase()
+         log.warn options?.brightness
+         if (options?.activationType?.trim()?.toLowerCase() == sACTIVATION_TYPE_DYNAMIC_PALETTE) {
+            action = sACTIVATION_TYPE_DYNAMIC_PALETTE
+         }
+         else if (options?.activationType?.trim()?.toLowerCase() == sACTIVATION_TYPE_STATIC) {
+            action = sACTIVATION_TYPE_STATIC
+         }
+         else {
+            action = sACTIVATION_TYPE_ACTIVE
+         }
+         cmd = [recall: [action: action]]
+         if (options?.duration != null) {
+            cmd.recall.duration = options.duration
+         }
+         if (options?.brightness != null) {
+            if (options.brightness < 0) options.brightness = 0
+            if (options.brightness > 100) options.brightness = 100
+            cmd.recall.dimming = [:]
+            cmd.recall.dimming.brightness = options.brightness
+         }
+      }
+      else {
+         path = "/resource/smart_scene/${getHueDeviceIdV2()}"
+         if (options && logEnable) {
+            log.warn "Non-default activation options not supported by Hue for Smart Scenes; ignoring"
+         }
+         cmd = [recall: [action: "activate"]]
+      }
+      bridgeAsyncPutV2("parseSendCommandResponseV2", path, cmd)
    }
    else {
+      if (options && logEnable) {
+         log.warn "Non-default activation options require V2 API but device uses V1; activating without options using V1"
+      }
       activateV1()
    }
 }
@@ -624,6 +741,7 @@ void bridgeAsyncPutV2(String callbackMethod, String clipV2Path, Map body, Map<St
 @Field static final String DRIVER_NAME_DIMMABLE_BULB  = "CoCoHue Dimmable Bulb"
 @Field static final String DRIVER_NAME_GROUP          = "CoCoHue Group"
 @Field static final String DRIVER_NAME_MOTION         = "CoCoHue Motion Sensor"
+@Field static final String DRIVER_NAME_CONTACT        = "CoCoHue Contact Sensor"
 @Field static final String DRIVER_NAME_PLUG           = "CoCoHue Plug"
 @Field static final String DRIVER_NAME_RGBW_BULB      = "CoCoHue RGBW Bulb"
 @Field static final String DRIVER_NAME_RGB_BULB       = "CoCoHue RGB Bulb"
