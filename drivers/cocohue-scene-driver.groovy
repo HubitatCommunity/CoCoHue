@@ -275,9 +275,6 @@ void activate(Map options=null) {
       if (getIsSmartScene() == false) {
          path = "/resource/scene/${getHueDeviceIdV2()}"
          String action
-         log.warn "optins = $options"
-         log.error options?.activationType?.trim()?.toLowerCase()
-         log.warn options?.brightness
          if (options?.activationType?.trim()?.toLowerCase() == sACTIVATION_TYPE_DYNAMIC_PALETTE) {
             action = sACTIVATION_TYPE_DYNAMIC_PALETTE
          }
