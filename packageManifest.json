@@ -12,7 +12,7 @@
          "namespace": "RMoRobert",
          "location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/apps/cocohue-app.groovy",
          "required": true,
-         "version": "5.2.5",
+         "version": "5.2.6",
          "primary": true,
          "oauth": false
       }
