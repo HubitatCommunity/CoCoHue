@@ -14,10 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2024-12-29
+ *  Last modified: 2024-12-30
  *
  *  Changelog:
- *  v5.2.7  - Add support for different V2 scene activation types (active/default, dynamic_palette, static) and
+ *  v5.2.8  - Add support for different V2 scene activation types (active/default, dynamic_palette, static) and
  *            custom duration and brightness settings for higher-number button pushes to override scene settings
  *  v5.2.5  - Add Smart Scene support
  *  v5.1.2  - Re-added "momentary"-only Switch capability (on does push(1), off does nothing, auto-off after few seconds by default)
@@ -68,7 +68,7 @@ metadata {
    preferences {
       //if (!(getIsSmartScene() == true)) {
          input name: "customBrightness", type: "number", title: "Custom brightness level (0-100) for scene activation with button 6 pushed and higher (overrides scene settings)", defaultValue: 100, range: "0..100"
-         input name: "customDuration", type: "number", title: "Custom duration (in ms) for scene activation transition with button 4-5 and 8-9 (overrides scene settings)", defaultValue: 400, range: "0..600000"
+         input name: "customDuration", type: "decimal", title: "Custom duration (in seconds) for scene activation transition with buttons 4-5 and 8-9 (overrides scene settings)", defaultValue: 0.4, range: "0..600"
       //}
       input name: "onRefresh", type: "enum", title: "Bridge refresh on activation/deactivation: when this scene is activated or deactivated by a Hubitat command...  (suggested only if depend on status of these devices and not using Hue V2 API)",
          options: [["none": "Do not refresh Bridge"],
@@ -263,7 +263,7 @@ Boolean getIsSmartScene() {
  * Activates scene or smart scene on Hue Bridge, preferring V2 API if available
  * @param options Map with optional keys (optional; apply to regular/non-Smart scenes only):
  *           - `String activationType`: one of `"active" (default), "dynamic_palette", or "static" (not applicable to Smart Scenes)
-             - `Long duration`: duration in milliseconds for transition to fully activated scene (not applicable to Smart Scenes)
+             - `Number duration`: duration in seconds for transition to fully activated scene (not applicable to Smart Scenes)
              - `Long brightness`: override brightness/dimming level for scene (not applicable to Smart Scenes)
  */
 void activate(Map options=null) {
@@ -286,7 +286,8 @@ void activate(Map options=null) {
          }
          cmd = [recall: [action: action]]
          if (options?.duration != null) {
-            cmd.recall.duration = options.duration
+            Long duration = (options.duration * 1000).toLong() // Hue uses ms
+            cmd.recall.duration = duration
          }
          if (options?.brightness != null) {
             if (options.brightness < 0) options.brightness = 0

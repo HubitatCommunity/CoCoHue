@@ -20,6 +20,7 @@
  *
  *  Last modified: 2024-12-29
  *  Changelog:
+ *  v5.2.7 - Additional Scene page fixes
  *  v5.2.6 - Fix for error loading Scenes page after adding Smart Scenes
  *  v5.2.5 - Add Smart Scene support
  *  v5.2.4 - Additional improvements for the below; concurrency fixes
@@ -1389,8 +1390,8 @@ void createNewSelectedGroupDevices() {
 void createNewSelectedSceneDevices() {
    DeviceWrapper bridge = getChildDevice("${DNI_PREFIX}/${app.id}")
    if (!bridge) log.error("Unable to find Bridge device")
-   Map sceneCache = bridge?.getAllScenesCache()
-   if (state.useV2) sceneCache += bridge?.getAllSmartScenesCache()
+   Map sceneCache = bridge?.getAllScenesCache() ?: [:]
+   if (state.useV2) sceneCache += (bridge?.getAllSmartScenesCache() ?: [:])
    Map groupCache
    if (state.useV2) {  // get rooms and zones (which own scenes and are owned by a grouped_light service whose ID we need)
       groupCache = (bridge.getAllRoomsCache() ?: [:]) + (bridge.getAllZonesCache() ?: [:])
