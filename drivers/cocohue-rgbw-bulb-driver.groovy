@@ -1,7 +1,7 @@
 /*
  * =============================  CoCoHue RGBW Bulb (Driver) ===============================
  *
- *  Copyright 2019-2024 Robert Morris
+ *  Copyright 2019-2025 Robert Morris
  * 
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2024-12-29
+ *  Last modified: 2025-01-01
  *
  *  Changelog:
+ *  v5.2.8  - Ignore 0 CT values
  *  v5.2.7  - Use level 0 in color or CT commands as off()
  *  v5.2.2  - Populate initial states (if data available)
  *  v5.2    - Add status (online/offline) parsing for V2
@@ -281,9 +282,10 @@ void createEventsFromMapV1(Map bridgeCommandMap, Boolean isFromBridge = false, S
          case "ct":
             eventName = "colorTemperature"
             eventValue = scaleCTFromBridge(it.value)
-            eventValue = it.value == 0 ? 0 : scaleCTFromBridge(it.value)
+            if (eventValue == 0) break // skip invalid value that sometimes appears
+            eventValue = scaleCTFromBridge(it.value)
             eventUnit = "K"
-            if (device.currentValue(eventName) != eventValue && eventValue != 0) {
+            if (device.currentValue(eventName) != eventValue) {
                if (isFromBridge && colorMode == "hs") {
                   if (logEnable == true) log.debug "Skipping colorTemperature event creation because light not in ct mode"
                   break
@@ -396,6 +398,7 @@ void createEventsFromMapV2(Map data) {
                return
             }
             eventName = "colorTemperature"
+            if (value.mirek == 0) break // skip invalid if V2 ever reports this like V1 sometimes does...
             eventValue = scaleCTFromBridge(value.mirek)
             eventUnit = "K"
             if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue, eventUnit)
@@ -405,8 +408,6 @@ void createEventsFromMapV2(Map data) {
             eventUnit = null
             if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue, eventUnit)
             break
-         // TODO: Figure out equivalent of "reachable" in V2 (zigbee_connectivity on owner?)
-         // TODO: Figure out if this works as equivalent of "reachable" in V2:
          case "status":
             if (data.type == "zigbee_connectivity") { // not sure if any other types use this key, but just in case
                eventName = "reachable"

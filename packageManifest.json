@@ -2,9 +2,9 @@
    "packageName": "CoCoHue (Hue Bridge Integration)",
    "minimumHEVersion": "2.3.9",
    "author": "Robert Morris",
-   "dateReleased": "2024-12-29",
+   "dateReleased": "2025-01-01",
    "communityLink": "https://community.hubitat.com/t/release-cocohue-hue-bridge-integration-including-scenes/27978",
-   "releaseNotes": "IMPORTANT NOTE (new!): If upgrading from 4.x, open the CoCoHue app and hit \"Done\" once after updating. Additionally, download a hub backup beforehand, and vist the Community thread for more information. Additionally, if upgrading to 5.1 or newer from 5.0.x or older and use scene switch states, please view Community thread for more details.\n\n*Version 5.2.5, 5.2.6, 5.2.7: Add Smart Scene support, fix for parse error with zigbee_connectivity; use level 0 as off in CT or color commands; add support for additional scene activation types with different button numbers (see Community for discussion)\n\nVersion 5.1: Removed Switch capability from scene driver and related preferences from scene and group drivers (to activate a scene, push button 1 instead of turn on). Version 5.2 (5.2.4): Possible concurrency fixes; efficiency improvements when using V2 API due to increase use of shared cache; minor logging improvements.\n\nVersion 5.1.2 re-adds certain switch features to scene drivers (momentary only and no state by default). Version 5.1.1 fixes motion sensor IDs for new migrations (existing users: see Community thread if problems).\n\n*Version 5.0: Use of V2 API throughout more of CoCoHue app on supported bridges, parsing changes and improvements to all drivers, addition of RGB-only driver; removal of deprecated prestaging preferences and prestaging commands. Support buttons and motion sensors on V2 API only. Version 5.0.1 offers fixes for V1 IDs (and NPE errors for getHueDeviceIdV1 in Logs. Version 5.0.3 offers automatic migration of logging preferences from 4.x, transparent use of V2 API for scene activation where possible, and other minor changes/fixes. Version 5.0.2 futureproofs scene creation for future increased V2 API use (existing users: please run Fetch Scene Data command on each scene if already using or upgraded to V2 API)\n\n*Version 4.2: Generate on/off events for scenes (V2 API only); Hubitat mobile app v2 improvements; preparation for more v2 API use and other minor tweaks. This may be the last release in the 4.x series; expect removal of Hue Labs sensors and prestage options and possibly other breaking changes in 5.x release, with more v2 API use.\n\nFor older release notes, please see Community thread.\n\nNOTE: Users upgrading from v1.x should follow instructions forum or on GitHub (parent app deprecatred but still available) and perform initial upgrade manually, not with HPM.",
+   "releaseNotes": "IMPORTANT NOTE (new!): If upgrading from 4.x, open the CoCoHue app and hit \"Done\" once after updating. Additionally, download a hub backup beforehand, and vist the Community thread for more information. Additionally, if upgrading to 5.1 or newer from 5.0.x or older and use scene switch states, please view Community thread for more details.\n\n*Version 5.2.5, 5.2.6, 5.2.7: Add Smart Scene support, fix for parse error with zigbee_connectivity; use level 0 as off in CT or color commands; add support for additional scene activation types with different button numbers (see Community for discussion); Version 5.2.8: Ignore 0 CT reports to prevent errors\n\nVersion 5.1: Removed Switch capability from scene driver and related preferences from scene and group drivers (to activate a scene, push button 1 instead of turn on). Version 5.2 (5.2.4): Possible concurrency fixes; efficiency improvements when using V2 API due to increase use of shared cache; minor logging improvements.\n\nVersion 5.1.2 re-adds certain switch features to scene drivers (momentary only and no state by default). Version 5.1.1 fixes motion sensor IDs for new migrations (existing users: see Community thread if problems).\n\n*Version 5.0: Use of V2 API throughout more of CoCoHue app on supported bridges, parsing changes and improvements to all drivers, addition of RGB-only driver; removal of deprecated prestaging preferences and prestaging commands. Support buttons and motion sensors on V2 API only. Version 5.0.1 offers fixes for V1 IDs (and NPE errors for getHueDeviceIdV1 in Logs. Version 5.0.3 offers automatic migration of logging preferences from 4.x, transparent use of V2 API for scene activation where possible, and other minor changes/fixes. Version 5.0.2 futureproofs scene creation for future increased V2 API use (existing users: please run Fetch Scene Data command on each scene if already using or upgraded to V2 API)\n\n*Version 4.2: Generate on/off events for scenes (V2 API only); Hubitat mobile app v2 improvements; preparation for more v2 API use and other minor tweaks. This may be the last release in the 4.x series; expect removal of Hue Labs sensors and prestage options and possibly other breaking changes in 5.x release, with more v2 API use.\n\nFor older release notes, please see Community thread.\n\nNOTE: Users upgrading from v1.x should follow instructions forum or on GitHub (parent app deprecatred but still available) and perform initial upgrade manually, not with HPM.",
    "apps": [
       {
          "id": "568bab8e-5c69-4800-a038-481026904c05",
@@ -47,7 +47,7 @@
          "name": "CoCoHue Dimmable Bulb",
          "namespace": "RMoRobert",
          "location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-dimmable-bulb-driver.groovy",
-         "version": "5.2.2",
+         "version": "5.2.8",
          "required": true
       },
       {
@@ -55,7 +55,7 @@
          "name": "CoCoHue Group",
          "namespace": "RMoRobert",
          "location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-group-driver.groovy",
-         "version": "5.2.7",
+         "version": "5.2.8",
          "required": true
       },
       {
@@ -79,7 +79,7 @@
          "name": "CoCoHue RGB Bulb",
          "namespace": "RMoRobert",
          "location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-rgb-bulb-driver.groovy",
-         "version": "5.2.7",
+         "version": "5.2.8",
          "required": true
       },
       {
@@ -87,7 +87,7 @@
          "name": "CoCoHue RGBW Bulb",
          "namespace": "RMoRobert",
          "location": "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-rgbw-bulb-driver.groovy",
-         "version": "5.2.7",
+         "version": "5.2.8",
          "required": true
       },
       {

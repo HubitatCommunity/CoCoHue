@@ -1,7 +1,7 @@
 /*
  * =============================  CoCoHue RGB Bulb (Driver) ===============================
  *
- *  Copyright 2019-2024 Robert Morris
+ *  Copyright 2019-2025 Robert Morris
  * 
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2024-12-29
+ *  Last modified: 2025-01-01
  *
  *  Changelog:
+ *  v5.2.8  - Update to more closely match RGBW driver (no functional changes)
  *  v5.2.7  - Use level 0 in color or CT commands as off()
  *  v5.2.2  - Populate initial states (if data available)
  *  v5.2    - Add status (online/offline) parsing for V2
@@ -336,7 +337,6 @@ void createEventsFromMapV2(Map data) {
                if (logEnable == true) log.debug "color received but also have CT, so assume CT parsing"
             }
             break
-         // TODO: Figure out if this works as equivalent of "reachable" in V2:
          case "status":
             if (data.type == "zigbee_connectivity") { // not sure if any other types use this key, but just in case
                eventName = "reachable"

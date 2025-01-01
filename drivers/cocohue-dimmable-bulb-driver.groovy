@@ -1,7 +1,7 @@
 /*
  * =============================  CoCoHue Dimmable Bulb (Driver) ===============================
  *
- *  Copyright 2019-2024 Robert Morris
+ *  Copyright 2019-2025 Robert Morris
  * 
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2024-12-08
+ *  Last modified: 2025-01-01
  *
  *  Changelog:
+ *  v5.2.8  - Add reachable attribute to V2 API parsing
  *  v5.2.2  - Populate initial states from V2 cache if available
  *  v5.0.1  - Fix for missing V1 IDs after device creation or upgrade
  *  v5.0    - Use API v2 by default, remove deprecated features
@@ -251,6 +252,20 @@ void createEventsFromMapV2(Map data) {
                doSendEvent(eventName, eventValue, eventUnit)
             }
             break
+         case "status":
+            if (data.type == "zigbee_connectivity") { // not sure if any other types use this key, but just in case
+               eventName = "reachable"
+               if (value == "disconnected" || value == "connectivity_issue") {
+                  eventValue = "true"
+               }
+               else {
+                  eventValue = false
+               }
+               eventUnit = null
+               if (device.currentValue(eventName) != eventValue) {
+                  doSendEvent(eventName, eventValue, eventUnit)
+               }
+            }
          case "id_v1":
             if (state.id_v1 != value) state.id_v1 = value
             break
