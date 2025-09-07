@@ -456,6 +456,7 @@ void sendBridgeCommandV1(Map commandMap, Boolean createHubEvents=true) {
       path: "/api/${data.username}/groups/${getHueDeviceIdV1()}/action",
       contentType: 'application/json',
       body: commandMap,
+      ignoreSSLIssues: true,
       timeout: 15
    ]
    asynchttpPut("parseSendCommandResponseV1", params, createHubEvents ? commandMap : null)

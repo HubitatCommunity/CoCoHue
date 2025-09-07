@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2025-02-15
+ *  Last modified: 2025-09-07
  *
  *  Changelog:
+ *  v5.3.4  - Changes to accommodate HTTPS by default
  *  v5.3.1 - Implement async HTTP call queueing from child drivers through parent app
  *  v5.3.0  - Use V2 for most commands, parse 0 mired as 0 K
  *  v5.2.8  - Add reachable attribute to V2 API parsing; ignore 0 CT values
@@ -358,6 +359,7 @@ void sendBridgeCommandV1(Map commandMap, Boolean createHubEvents=true) {
       path: "/api/${data.username}/lights/${getHueDeviceIdV1()}/state",
       contentType: 'application/json',
       body: commandMap,
+      ignoreSSLIssues: true,
       timeout: 15
    ]
    asynchttpPut("parseSendCommandResponseV1", params, createHubEvents ? commandMap : null)

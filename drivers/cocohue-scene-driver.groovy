@@ -14,10 +14,11 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2025-02-15
+ *  Last modified: 2025-09-07
  *
  *  Changelog:
- *  v5.3.1 - Implement async HTTP call queueing from child drivers through parent app
+ *  v5.3.4  - Changes to accommodate HTTPS by default
+ *  v5.3.1  - Implement async HTTP call queueing from child drivers through parent app
  *  v5.2.8  - Add support for different V2 scene activation types (active/default, dynamic_palette, static) and
  *            custom duration and brightness settings for higher-number button pushes to override scene settings
  *  v5.2.5  - Add Smart Scene support
@@ -298,6 +299,7 @@ void activateV1() {
       path: "/api/${data.username}/groups/0/action",
       contentType: 'application/json',
       body: cmd,
+      ignoreSSLIssues: true,
       timeout: 15
       ]
    asynchttpPut("parseSendCommandResponseV1", params /*, [attribute: 'switch', value: 'on']*/)
@@ -488,6 +490,7 @@ void fetchSceneData() {
          uri: data.fullHost,
          path: "/api/${data.username}/scenes/${getHueDeviceIdV1()}",
          contentType: 'application/json',
+         ignoreSSLIssues: true,
          timeout: 15
          ]
       asynchttpGet("fetchSceneDataResponseV1", sceneParams)

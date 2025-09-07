@@ -17,7 +17,7 @@
  *  Last modified: 2025-09-07
  *
  *  Changelog:
- *  v5.3.0  - Changes related to HTTPS as default
+ *  v5.3.4  - Changes to accommodate HTTPS by default
  *  v5.2.7  - Eliminate errors for missing id_v1 on sensors and other devices
  *  v5.2.6  - Fix for zigbee_connectivity parsing
  *  v5.2.5  - Add Smart Scene support
