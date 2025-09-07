@@ -1,7 +1,7 @@
 /**
  * ===========================  CoCoHue - Hue Bridge Integration =========================
  *
- *  Copyright 2019-2024 Robert Morris
+ *  Copyright 2019-2025 Robert Morris
  *
  *  DESCRIPTION:
  *  Hue Bridge integration app for Hubitat, including support for lights,
@@ -18,8 +18,14 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2024-12-29
+ *  Last modified: 2025-09-07
  *  Changelog:
+ *  v5.3.4 - Prefer HTTPS by default or if set to use V2 API for SSE (new Pro Bridge does not support HTTP so would fail)
+ *  v5.3.3 - Prefer HTTP if not set to use V2 API; begin to add mDNS listener (commented out, to finish later)
+ *  v5.3.2 - Add option for spacing between metered HTTP calls
+ *  v5.3.1 - Implement async HTTP call queueing from child drivers through parent app
+ *  v5.2.9 - Additional debug logging
+ *  v5.2.8 - Minor upgrade tweaks
  *  v5.2.7 - Additional Scene page fixes
  *  v5.2.6 - Fix for error loading Scenes page after adding Smart Scenes
  *  v5.2.5 - Add Smart Scene support
@@ -98,6 +104,9 @@ String getDriverNameForDeviceType(String deviceType) {
 @Field static final Integer minPossibleV2SwVersion = 1948086000 // minimum swversion on Bridge needed for Hue V2 API
 @Field static final Integer minV2SwVersion = 1955082050         // ... but 1955082050 recommended for production use
 
+// Used to prevent multiple HTTP PUTs from child devices at the same time:
+@Field static final Object bridgeHttpPutLock = new Object()
+
 definition (
    name: "CoCoHue - Hue Bridge Integration",
    namespace: "RMoRobert",
@@ -105,7 +114,6 @@ definition (
    description: "Community-created Philips Hue integration for Hue Bridge lights and other Hue devices and features",
    category: "Convenience",
    installOnOpen: true,
-   //singleThreaded: true,
    documentationLink: "https://community.hubitat.com/t/release-cocohue-hue-bridge-integration-including-scenes/27978",
    iconUrl: "",
    iconX2Url: "",
@@ -332,8 +340,11 @@ String getBridgeId() {
 void initialize() {
    log.debug "initialize()"
    unschedule()
+   unsubscribe("ssdpBridgeHandler") // just in case leftover from pre-2.4.0 integration (remove eventually since should now be removed as part of convertBuiltIn... code?)
    state.remove("discoveredBridges")
    if (settings.useSSDP == true || settings["useSSDP"] == null) {
+      // TODO: Separate mDNS and SSDP and pick only one, prefer mDNS if available (V2 bridge, maybe newer FW only?)
+      // registerMDNSListener("_hue._tcp")
       if (settings["keepSSDP"] != false) {
          if (logEnable == true) log.debug "Subscribing to SSDP..."
          subscribe(location, "ssdpTerm.urn:schemas-upnp-org:device:basic:1", "ssdpHandler")
@@ -371,7 +382,7 @@ void initialize() {
          if (state.useV2 == true) bridge.connectEventStream()
          String bridgeSwVersion = bridge.getDataValue("swversion")
          if (bridgeSwVersion == null) {
-            sendBridgeInfoRequest()
+            (settings.useEventStream == true) ? sendBridgeInfoRequest() : sendBridgeInfoRequest(protocol: "http")
             // TODO: Re-time this and retryUpgradeCCHV1... method or figure out some way to avoid unschedule!
             runIn(15, "initialize") // re-check version after has time to fetch in case upgrading from old version without this value
          }
@@ -396,6 +407,7 @@ void scheduleRefresh() {
    switch (pollInt) {
       case 0:
          if (logEnable == true) log.debug "Polling disabled; not scheduling"
+         unschedule("refreshBridge")
          break
       case 1..59:
          if (logEnable == true) log.debug "Scheduling polling every ${pollInt} seconds"
@@ -462,6 +474,7 @@ void hubRestartHandler(evt) {
    if (state.useV2) {
       runIn(Math.round(Math.random() * 20) + 35, "sendUpdateBridgeCacheRequest") // do in about 35-55 seconds
    }
+   //registerMDNSListener("_hue._tcp")
 }
 
 /** Calls method on Bridge child device to get new cache (of /resources endpoint if V2 API enabled)
@@ -518,7 +531,7 @@ def pageAddBridge() {
    }
    if (settings.useSSDP != false && state.discoTryCount < 5) {
       if (logEnable == true) log.debug "Subscribing to and sending SSDP discovery..."
-      subscribe(location, "ssdpTerm.urn:schemas-upnp-org:device:basic:1", ssdpHandler)
+      subscribe(location, "ssdpTerm.urn:schemas-upnp-org:device:basic:1", "ssdpHandler")
       sendBridgeDiscoveryCommand()
    }  
    dynamicPage(name: "pageAddBridge", uninstall: true, install: false,
@@ -628,7 +641,7 @@ def pageLinkBridge() {
          if (!(state.bridgeAuthorized)) {
                log.debug "Attempting Hue Bridge authorization; attempt number ${state.authTryCount+1}"
                if (settings.useSSDP) sendUsernameRequest()
-               else sendUsernameRequest("http", settings["customPort"] as Integer ?: 80)
+               else sendUsernameRequest(null, settings["customPort"] as Integer ?: null)
                state.authTryCount += 1
                paragraph "Waiting for Bridge to authorize. This page will automatically refresh."
                if (state.authTryCount > 5 && state.authTryCount < authMaxTries) {
@@ -652,8 +665,9 @@ def pageLinkBridge() {
                if (!state.bridgeLinked || !getChildDevice("${DNI_PREFIX}/${app.id}")) {
                   log.debug "Bridge authorized. Requesting information from Bridge and creating Hue Bridge device on Hubitat..."
                   paragraph "Bridge authorized. Requesting information from Bridge and creating Hue Bridge device on Hubitat..."
-                  if (settings["useSSDP"]) sendBridgeInfoRequest(createBridge: true)
-                  else sendBridgeInfoRequest(createBridge: true, ip: settings.bridgeIP ?: state.ipAddress, port: settings.customPort as Integer ?: null)
+                  String protocol = (settings.useEventStream == true) ? "https" : "http"
+                  if (settings["useSSDP"]) sendBridgeInfoRequest(createBridge: true, protocol: protocol)
+                  else sendBridgeInfoRequest(createBridge: true, ip: settings.bridgeIP ?: state.ipAddress, port: settings.customPort as Integer ?: null, protocol: protocol)
                }
                else {
                   if (logEnable == true) log.debug("Bridge already linked; skipping Bridge device creation")
@@ -702,6 +716,8 @@ def pageSupportOptions() {
          paragraph "Scenes:", width: 3
          input name: "btnFetchScenesInfo", type: "button", title: "Fetch Scenes Info", width: 4
          input name: "btnLogScenesInfo", type: "button", title: "Log Scenes Cache", width: 5
+         paragraph "mDNS:", width: 3
+         input name: "btnLogMDNSEntries", type: "button", title: "Log mDNS Entries", width: 9
          if (state.useV2) {
             paragraph "Sensors:", width: 3
             input name: "btnFetchSensorsInfo", type: "button", title: "Fetch Motion Sensors Info", width: 4
@@ -721,6 +737,9 @@ def pageSupportOptions() {
 
          paragraph "Retry enabling V2 API (server-sent events/SSE/eventstream) option:"
          input name: "btnRetryV2APIEnable", type: "button", title: "Retry Hue V2 API Migration", submitOnChange: true
+
+         paragraph "Custom delay between queued HTTP PUT commands:"
+         input name: "meteringDelay", type: "number", title: "Delay in milliseconds; default is 200 (blank or 0 will also use default)"
       }
    }
 }
@@ -794,21 +813,23 @@ def pageManageBridge() {
          String v2SettingText = "Prefer V2 Hue API (EventStream/Server-Sent Events) if available"
          if (!(state.useV2)) {
             input name: "useEventStream", type: "bool", title: "$v2SettingText. NOTE: Cannot be disabled once enabled."
-            paragraph "<small>The V2 Hue API allows instant status updates from devices instead of relying on polling to retrieve new states. It is available on V2 bridges with firmware starting around late 2021 (though current firmware is recommended) and " +
-               "is necessary to use for sensor and button devices. Enabling is recommended for most users. This setting cannot be disabled once enabled (without restoring a hub backup or if you have not yet selected a Hue Bridge to link with).</small>"
+            paragraph "<small>The V2 Hue API allows instant status updates from devices instead of relying on polling to retrieve new states. It is available on V2 and newer bridges with firmware starting around late 2021 (though current firmware is recommended). It " +
+               "is recommended for most users but required for adding sensor or button devices or if using Hue Bridge Pro. This setting cannot be disabled once enabled (without restoring a hub backup or if you have not yet selected a Hue Bridge to link with).</small>"
          }
          else {
-            paragraph "The \"$v2SettingText\" setting is enabled.<br><small>(This setting cannot be disabled in setups where it is enabled and is presented for information only.)</small>"
+            paragraph "The \"$v2SettingText\" setting is enabled.<br><small>(This setting cannot be disabled in setups where it is enabled and is presented for information only. This is the recommended setup.)</small>"
          }
          input name: "pollInterval", type: "enum", title: "Poll bridge every...",
             options: [0:"Disabled", 15:"15 seconds", 20:"20 seconds", 30:"30 seconds", 45:"45 seconds", 60:"1 minute (default)", 120:"2 minutes",
                       180:"3 minutes", 300:"5 minutes", 420:"7 minutes", 6000:"10 minutes", 1800:"30 minutes", 3600:"1 hour", 7200:"2 hours", 18000:"5 hours"],
                       defaultValue: 60
-         paragraph "<small>NOTE: Polling is recommended if not using the V2 Hue API, as changes made outside Hubitat will not be reflected on Hubitat without this feature enabled. " +
-            "Polling is still suggested if using the V2 API, but you may consider a longer polling interval, as most device attributes should instantly update on their own most of the " +
-            "time if using the V2 API. Consult the documentation for additional information."
-         if (state.useV2) {
-            input name: "useV1Polling", type: "bool", title: "Use V1 API for polling (if polling enabled above) (recommended)", defaultValue: true
+         if (state.useV2 == true) {
+            input name: "useV1Polling", type: "bool", title: "If polling enabled, use V1 API for polling (recommended)", defaultValue: true
+            paragraph "It is recommended to keep polling enabled, even when the \"${v2SettingText}\" setting is enabled, as it will reduce the possibility of missed events from Hue. " +
+               "It is also currently recommended to use the V1 API for polling (the V2 API will still be used for other functions where possible). Both of these settings are set to their recommended values by default."
+         }
+         else {
+            paragraph "<small>NOTE: Polling is recommended if \"${v2SettingText}\" not enabled, as changes made outside Hubitat will not be reflected on Hubitat until after a poll.</small>"
          }
       }
       section("Other Options:") {
@@ -1494,8 +1515,27 @@ void createNewSelectedButtonDevices() {
 /** Sends request for username creation to Bridge API. Intended to be called after user
  *  presses link button on Bridge
  */
-void sendUsernameRequest(String protocol="http", Integer port=null) {
+void sendUsernameRequest(String protocol="https", Integer port=null) {
    if (logEnable == true) log.debug "sendUsernameRequest()... (IP = ${state.ipAddress})"
+   if (protocol == null) {
+      if (settings.useEventStream || state.useV2) {
+         // V1 Bridge users or old firmware V2 Bridge users can disable setting if HTTPS not available yet (has been since 2018)
+         protocol = "https"
+      }
+      else {
+         DeviceWrapper bridgeDevice = getChildDevice("${DNI_PREFIX}/${app.id}")
+         if (bridgeDevice != null) {
+            String strVersion = bridgeDevice.getDataValue("swversion")
+            Integer intVersion = null
+            if (strVersion?.isInteger()) intVersion = Integer.parseInt(strVersion)
+            if (intVersion != null && intVersion >= minV2SwVersion) {
+               protocol = "https"
+            }
+         }
+      }
+      // Default to HTTP if nothing else matched
+      if (protocol == null) protocol = "http"
+   }
    String locationNameNormalized = location.name?.replaceAll("\\P{InBasic_Latin}", "_").take(16) // Cap at first 16 characters (possible 30-char total limit?)
    String userDesc = locationNameNormalized ? "Hubitat ${DNI_PREFIX}#${locationNameNormalized}" : "Hubitat ${DNI_PREFIX}"
    String ip = state.ipAddress
@@ -1506,6 +1546,7 @@ void sendUsernameRequest(String protocol="http", Integer port=null) {
       path: "/api",
       body: [devicetype: userDesc],
       contentType: 'text/xml',
+      ignoreSSLIssues: true,
       timeout: 15
    ]
    asynchttpPost("parseUsernameResponse", params, null)
@@ -1656,9 +1697,12 @@ void parseBridgeInfoResponse(resp, Map data) {
       else { // Bridge already added, so likely added with discovery; check if IP changed
          if (logEnable == true) log.debug "  Bridge already added; seaching if Bridge matches MAC $bridgeMAC"
          if (bridgeMAC == state.bridgeMAC && bridgeMAC != null) { // found a match for this Bridge, so update IP:
-            if (data?.ip && settings.useSSDP) {
+            if (data?.ip && settings.useSSDP != false) {
                state.ipAddress = data.ip
                if (logEnable == true) log.debug "  Bridge MAC matched. Setting IP as ${state.ipAddress}"
+            }
+            else {
+                if (logEnable == true) log.debug "   Bridge MAC matched but not changing IP because not configured to use manual setup. `settings.useSSDP` = ${settings.useSSDP}"
             }
             String dataSwversion = bridgeDevice.getDataValue("swversion")
             if (dataSwversion != swVersion && swVersion) bridgeDevice.updateDataValue("swversion", swVersion)
@@ -1703,21 +1747,26 @@ private String convertHexToIP(hex) {
  * Returns map containing Bridge username, IP, and full HTTP post/port, intended to be
  * called by child devices so they can send commands to the Hue Bridge API using info
  */
-Map<String,String> getBridgeData(String protocol="http", Integer port=null) {
+Map<String,String> getBridgeData(String protocol=null, Integer port=null) {
    if (logEnable == true) log.debug "getBridgeData()"
    if (!state.ipAddress && settings.bridgeIP && !(settings.useSSDP)) state.ipAddress = settings.bridgeIP // seamless upgrade from v1.x
    if (!state.username || !state.ipAddress) log.error "Missing username or IP address from Bridge"
+   String theProtocol = protocol
    Integer thePort = port
+   if (theProtocol == null) {
+      // Should be good enough check, but can get more nuanced if demand (user doesn't want SSE on capable Bridge?)
+      theProtocol = state.useV2 ? "https" : "http"
+   }
    if (thePort == null) {
       if (!settings.useSSDP && settings.customPort) {
          thePort = settings.customPort as Integer
       }
       else {
-         thePort = (protocol == "https") ? 443 : 80
+         thePort = (theProtocol == "https") ? 443 : 80
       }
    }
    String apiVer = state.useV2 ? APIV2 : APIV1
-   Map<String,String> map = [username: state.username, ip: "${state.ipAddress}", fullHost: "${protocol}://${state.ipAddress}:${thePort}", apiVersion: apiVer]
+   Map<String,String> map = [username: state.username, ip: "${state.ipAddress}", fullHost: "${theProtocol}://${state.ipAddress}:${thePort}", apiVersion: apiVer]
    return map
 }
 
@@ -1892,6 +1941,105 @@ Boolean getEventStreamOpenStatus() {
    return (state.eventStreamOpenStatus == true) ? true : false
 }
 
+
+/** Performs asynchttpPut() to Bridge, normally done from child devices as way of sending commands from device
+  * @param deviceCallbackMethod Method to call (on specified device) from callback here (simulates behavior from before parent app queue for simplicity)
+  * @param deviceForCallbackMethod The device on which to call the callbackMethod, or will use only method in this app if this or deviceCallbackMethod is `null`
+  * @param clipV2Path The Hue V2 API path ('/clip/v2' is automatically prepended), e.g. '/resource' or '/resource/light'
+  * @param body Body data, a Groovy Map representing JSON for the Hue V2 API command, e.g., [on: [on: true]]
+  * @param data Extra data to pass as optional third (data) parameter to asynchtttpPut() method
+  */
+void bridgeAsyncPutV2(String deviceCallbackMethod = null, DeviceWrapper deviceForCallbackMethod = null, String clipV2Path, Map body, Map data = null) {
+   Map params = [
+      uri: "https://${getBridgeData().ip}",
+      path: "/clip/v2${clipV2Path}",
+      headers: ["hue-application-key": getBridgeData().username],
+      contentType: "application/json",
+      body: body,
+      timeout: 15,
+      ignoreSSLIssues: true
+   ]
+   if (!data) {
+      data = [deviceCallbackMethod: deviceCallbackMethod, deviceForCallbackMethod: deviceForCallbackMethod]
+   }
+   else {
+      data << [deviceCallbackMethod: deviceCallbackMethod, deviceForCallbackMethod: deviceForCallbackMethod]
+   }
+   // Attempt at implementing metering of commands:
+   synchronized(bridgeHttpPutLock) {
+      asynchttpPut("bridgeAsyncPutV2Callback", params, data)
+      pauseExecution(meteringDelay ?: 200) // tried 100 and 200, added option to increase (or decrease) but can change default if needed
+   }
+   if (logEnable == true) log.debug "Command sent to Bridge: $body at ${clipV2Path}"
+}
+
+void bridgeAsyncPutV2Callback(AsyncResponse resp, Map data=null) {
+   if (logEnable) log.debug "bridgeAsyncPutV2Callback()"
+   if (data.deviceCallbackMethod && data.deviceForCallbackMethod) {
+      if (logEnable) "Passing bridgeAsyncPutV2Callback() responsibility to child ${data.deviceForCallbackMethod.displayName}.${deviceCallBackMethod}()..."
+      Map dataForCallback = [:]
+      data.keySet().each { String keyName ->
+         if (!(keyName == "deviceCallbackMethod" || keyName == "deviceForCallbackMethod")) {
+            dataForCallback[keyName] = data[keyName]
+         }
+      }
+      getChildDevice(data.deviceForCallbackMethod.deviceNetworkId)?."${data.deviceCallbackMethod}"(resp, dataForCallback)
+   }
+   else {
+      if (logEnable) "No child device and/or child callback method specified; handling here "
+      if (checkIfValidPUTResponse(resp)) {
+         if (logEnable == true) log.debug "  Bridge response valid; no further processing since none specified"
+      }
+      else {
+         if (logEnable == true) log.debug "  Invalid response; consult checkIfValidPUTResponse() output for errors"
+      }
+   }
+}
+
+/** Performs basic check on data returned from HTTP response to determine if should be
+  * parsed as likely Hue Bridge data or not; returns true (if OK) or logs errors/warnings and
+  * returns false if not
+  * @param resp The async HTTP response object to examine
+  */
+private Boolean checkIfValidPUTResponse(hubitat.scheduling.AsyncResponse resp) {
+   if (logEnable == true) log.debug "checkIfValidPUTResponse()"
+   Boolean isOK = true
+   if (resp.status < 400) {
+      if (resp.json == null) {
+         isOK = false
+         if (resp.headers == null) log.error "Error: HTTP ${resp.status} when attempting to communicate with Bridge"
+         else log.error "No JSON data found in response. ${resp.headers.'Content-Type'} (HTTP ${resp.status})"
+         sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery 
+         setBridgeOnlineStatus(false)
+      }
+      else if (resp.json) {
+         if ((resp.json instanceof List) && resp.json.getAt(0).error) {
+            // Bridge (not HTTP) error (bad username, bad command formatting, etc.):
+            isOK = false
+            log.warn "Error from Hue Bridge: ${resp.json[0].error}"
+            // Not setting Bridge to offline when light/scene/group devices end up here because could
+            // be old/bad ID and don't want to consider Bridge offline just for that (but also won't set
+            // to online because wasn't successful attempt)
+         }
+         // Otherwise: probably OK (not changing anything because isOK = true already)
+      }
+      else {
+         isOK = false
+         log.warn("HTTP status code ${resp.status} from Bridge")
+         // TODO: Update for mDNS if/when switch:
+         if (resp?.status >= 400) sendBridgeDiscoveryCommandIfSSDPEnabled(true) // maybe IP changed, so attempt rediscovery 
+         setBridgeOnlineStatus(false)
+      }
+      if (isOK == true) setBridgeOnlineStatus(true)
+   }
+   else {
+      log.warn "Error communicating with Hue Bridge: HTTP ${resp?.status}"
+      isOK = false
+   }
+   return isOK
+}
+
+
 void appButtonHandler(btn) {
    switch(btn) {
       // "Refresh" buttons on Select Lights, Groups, Scenes, bridge discovery, etc. pages:
@@ -1980,6 +2128,11 @@ void appButtonHandler(btn) {
          else {
             log.debug "EMPTY BRIDGE CACHE ON BRIDGE"
          }
+         break
+      case "btnLogMDNSEntries":
+         log.debug "Logging mDNS entries for _hue._tcp:"
+         registerMDNSListener("_hue._tcp")
+         log.debug getMDNSEntries("_hue._tcp")
          break
       case "btnRetryV2APIEnable":
          app.updateSetting("logEnable", true)

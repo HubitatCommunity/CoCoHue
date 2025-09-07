@@ -1,7 +1,7 @@
 /*
  * =============================  CoCoHue Plug (On/Off Light) (Driver) ===============================
  *
- *  Copyright 2019-2024 Robert Morris
+ *  Copyright 2019-2025 Robert Morris
  * 
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
@@ -14,8 +14,11 @@
  *
  * =======================================================================================
  *
+ *  Last modified: 2025-02-15
  *
  *  Changelog:
+ *  v5.3.1 - Implement async HTTP call queueing from child drivers through parent app
+ *  v5.3.0  - Use V2 for most commands
  *  v5.2.2  - Populate initial states from V2 cache if available
  *  v5.0.1  - Fix for missing V1 IDs after device creation or upgrade
  *  v5.0    - Use API v2 by default, remove deprecated features
@@ -119,14 +122,6 @@ String getHueDeviceIdV1() {
    return id
 }
 
-/**
- * Parses V2 Hue Bridge device ID out of Hubitat DNI for use with Hue V2 API calls
- * Hubitat DNI is created in format "CCH/BridgeMACAbbrev/Light/HueDeviceID", so just
- * looks for string after last "/" character
- */
-String getHueDeviceIdV2() {
-   return device.deviceNetworkId.split("/").last()
-}
 void on() {
    if (logEnable == true) log.debug "on()"
    Map bridgeCmd = ["on": true]
@@ -263,11 +258,50 @@ void parseSendCommandResponseV1(AsyncResponse resp, Map data) {
    }
 }
 
+
+/** 
+  * Parses response from Bridge (or not) after sendBridgeCommandV2. Can optionally use V1-inspired
+  * logic to update device states if `data` map provided.
+  * @param resp Async HTTP response object
+  * @param data Map of commands sent to Bridge if specified to create events from map
+  */
+void parseSendCommandResponseV2(AsyncResponse resp, Map data) {
+   if (logEnable == true) log.debug "parseSendCommandResponseV2(): Response status from Bridge: ${resp.status}"
+   if (checkIfValidResponse(resp) && data) {
+      if (logEnable == true) log.debug "  Bridge response valid; creating events from data map"
+      createEventsFromMapV2(data)
+      if ((data.containsKey("on") || data.containsKey("dimming")) && settings["updateGroups"]) {
+         parent.updateGroupStatesFromBulb(data, getHueDeviceIdV2())
+      }
+   }
+   else {
+      if (logEnable == true) log.debug "  Not creating events from map because not specified to do or Bridge response invalid"
+   }
+}
+
+/**
+ * Sends HTTP PUT to Bridge using the V1-format map data provided
+ * @param commandMap Groovy Map (will be converted to JSON) of Hue V1 API commands to send, e.g., [on: true]
+ * @param createHubEvents Will iterate over Bridge command map and do sendEvent for all
+ *        affected device attributes (e.g., will send an "on" event for "switch" if ["on": true] in map)
+ */
+void sendBridgeCommandV2(Map commandMap, Boolean createHubEvents=false) {
+   if (logEnable == true) log.debug "sendBridgeCommandV2($commandMap)"
+   if (commandMap == null || commandMap == [:]) {
+      if (logEnable == true) log.debug "Commands not sent to Bridge because command map null or empty"
+      return
+   }
+   parent.bridgeAsyncPutV2("parseSendCommandResponseV2", this.device, "/resource/light/${getHueDeviceIdV2()}",
+                           commandMap, createHubEvents ? commandMap : null)
+   if (logEnable == true) log.debug "-- Command sent to Bridge! --"
+}
+
 // ~~~ IMPORTED FROM RMoRobert.CoCoHue_Common_Lib ~~~
-// Version 1.0.5
+// Version 1.0.6
 // For use with CoCoHue drivers (not app)
 
 /**
+ * 1.0.6 - Remove common bridgeAsyncPutV2() method (now call from parent app instead of driver)
  * 1.0.5 - Add common bridgeAsyncPutV2() method for asyncHttpPut (goal to reduce individual driver code)
  * 1.0.4 - Add common bridgeAsyncGetV2() method asyncHttpGet (goal to reduce individual driver code)
  * 1.0.3 - Add APIV1 and APIV2 "constants"
@@ -358,29 +392,31 @@ void bridgeAsyncGetV2(String callbackMethod, String clipV2Path, Map<String,Strin
    asynchttpGet(callbackMethod, params, data)
 }
 
-/** Performs asynchttpPut() to Bridge using data retrieved from parent app or as passed in
-  * @param callbackMethod Callback method
-  * @param clipV2Path The Hue V2 API path ('/clip/v2' is automatically prepended), e.g. '/resource' or '/resource/light'
-  * @param body Body data, a Groovy Map representing JSON for the Hue V2 API command, e.g., [on: [on: true]]
-  * @param bridgeData Bridge data from parent getBridgeData() call, or will call this method on parent if null
-  * @param data Extra data to pass as optional third (data) parameter to asynchtttpPut() method
-  */
-void bridgeAsyncPutV2(String callbackMethod, String clipV2Path, Map body, Map<String,String> bridgeData = null, Map data = null) {
-   if (bridgeData == null) {
-      bridgeData = parent.getBridgeData()
-   }
-   Map params = [
-      uri: "https://${bridgeData.ip}",
-      path: "/clip/v2${clipV2Path}",
-      headers: ["hue-application-key": bridgeData.username],
-      contentType: "application/json",
-      body: body,
-      timeout: 15,
-      ignoreSSLIssues: true
-   ]
-   asynchttpPut(callbackMethod, params, data)
-   if (logEnable == true) log.debug "Command sent to Bridge: $body at ${clipV2Path}"
-}
+// REMOVED, now call from parent app instead of driver:
+// /** Performs asynchttpPut() to Bridge using data retrieved from parent app or as passed in
+//   * @param callbackMethod Callback method
+//   * @param clipV2Path The Hue V2 API path ('/clip/v2' is automatically prepended), e.g. '/resource' or '/resource/light'
+//   * @param body Body data, a Groovy Map representing JSON for the Hue V2 API command, e.g., [on: [on: true]]
+//   * @param bridgeData Bridge data from parent getBridgeData() call, or will call this method on parent if null
+//   * @param data Extra data to pass as optional third (data) parameter to asynchtttpPut() method
+//   */
+// void bridgeAsyncPutV2(String callbackMethod, String clipV2Path, Map body, Map<String,String> bridgeData = null, Map data = null) {
+//    if (bridgeData == null) {
+//       bridgeData = parent.getBridgeData()
+//    }
+//    Map params = [
+//       uri: "https://${bridgeData.ip}",
+//       path: "/clip/v2${clipV2Path}",
+//       headers: ["hue-application-key": bridgeData.username],
+//       contentType: "application/json",
+//       body: body,
+//       timeout: 15,
+//       ignoreSSLIssues: true
+//    ]
+//    asynchttpPut(callbackMethod, params, data)
+//    if (logEnable == true) log.debug "Command sent to Bridge: $body at ${clipV2Path}"
+//    pauseExecution(200) // see if helps HTTP 429 errors?
+// }
 
 
 // ~~~ IMPORTED FROM RMoRobert.CoCoHue_Constants_Lib ~~~
@@ -413,3 +449,31 @@ void bridgeAsyncPutV2(String callbackMethod, String clipV2Path, Map body, Map<St
 // Used in app and Bridge driver, may eventually find use in more:
 @Field static final String APIV1 = "V1"
 @Field static final String APIV2 = "V2"
+
+// ~~~ IMPORTED FROM RMoRobert.CoCoHue_V2_DNI_Tools_Lib ~~~
+// Version 1.0.0
+
+
+/**
+ * Parses V2 Hue Bridge device ID out of Hubitat DNI for use with Hue V2 API calls
+ * Hubitat DNI is created in format "CCH/BridgeMACAbbrev/Scene/HueDeviceID", so just
+ * looks for string after last "/" character
+ */
+String getHueDeviceIdV2() {
+   if (getHasV2DNI() == true) {
+      return device.deviceNetworkId.split("/").last()
+   }
+   else {
+      log.error "DNI not in V2 format but attempeting to fetch API V2 ID. Cannot continue."
+   }
+}
+
+Boolean getHasV2DNI() {
+   String id = device.deviceNetworkId.split("/").last()
+   if (id.length() > 32) {  // max length of Hue V1 ID per regex in V2 API docs
+      return true
+   }
+   else {
+      return false
+   }
+}

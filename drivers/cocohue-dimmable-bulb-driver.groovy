@@ -14,9 +14,11 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2025-01-01
+ *  Last modified: 2025-02-15
  *
  *  Changelog:
+ *  v5.3.1 - Implement async HTTP call queueing from child drivers through parent app
+ *  v5.3.0  - Use V2 for most commands
  *  v5.2.8  - Add reachable attribute to V2 API parsing
  *  v5.2.2  - Populate initial states from V2 cache if available
  *  v5.0.1  - Fix for missing V1 IDs after device creation or upgrade
@@ -47,7 +49,7 @@ import hubitat.scheduling.AsyncResponse
 @Field static final Integer debugAutoDisableMinutes = 30
 
 // Default preference values
-@Field static final BigDecimal defaultLevelTransitionTime = 1000
+@Field static final BigDecimal defaultLevelTransitionTime = 400
 
 // Default list of command Map keys to ignore if SSE enabled and command is sent from hub (not polled from Bridge), used to
 // ignore duplicates that are expected to be processed from SSE momentarily:
@@ -132,27 +134,55 @@ String getHueDeviceIdV1() {
    return id
 }
 
-/**
- * Parses V2 Hue Bridge device ID out of Hubitat DNI for use with Hue V2 API calls
- * Hubitat DNI is created in format "CCH/BridgeMACAbbrev/Light/HueDeviceID", so just
- * looks for string after last "/" character
- */
-String getHueDeviceIdV2() {
-   return device.deviceNetworkId.split("/").last()
-}
-
 void on(Number transitionTime = null) {
    if (logEnable == true) log.debug "on()"
-   Map bridgeCmd = ["on": true]
-   if (transitionTime != null) {
-      scaledRate = (transitionTime * 10) as Integer
-      bridgeCmd << ["transitiontime": scaledRate]
+   if (getHasV2DNI() == false) {
+      onV1(transitionTime)
+      return
+   }
+   Map bridgeCmd
+   Integer scaledRate = transitionTime != null ? Math.round(transitionTime * 1000).toInteger() : getScaledOnTransitionTime()
+   if (scaledRate == null) {
+      bridgeCmd = ["on": ["on": true]]
+   }
+   else {
+      bridgeCmd = ["on": ["on": true], "dynamics": ["duration": scaledRate]]
+   }
+   sendBridgeCommandV2(bridgeCmd)
+}
+
+void onV1(Number transitionTime = null) {
+   if (logEnable == true) log.debug "onV1()"
+   Map bridgeCmd
+   Integer scaledRate = transitionTime != null ? Math.round(transitionTime * 10).toInteger() : getScaledOnTransitionTime()
+   if (scaledRate == null) {
+      bridgeCmd = ["on": true]
+   }
+   else {
+      bridgeCmd = ["on": true, "transitiontime": scaledRate]
    }
    sendBridgeCommandV1(bridgeCmd)
 }
 
 void off(Number transitionTime = null) {
    if (logEnable == true) log.debug "off()"
+   if (getHasV2DNI() == false) {
+      offV1(transitionTime)
+      return
+   }
+   Map bridgeCmd
+   Integer scaledRate = transitionTime != null ? Math.round(transitionTime * 1000).toInteger() : getScaledOnTransitionTime()
+   if (scaledRate == null) {
+      bridgeCmd = ["on": ["on": false]]
+   }
+   else {
+      bridgeCmd = ["on": ["on": false], "dynamics": ["duration": scaledRate]]
+   }
+   sendBridgeCommandV2(bridgeCmd)
+}
+
+void offV1(Number transitionTime = null) {
+   if (logEnable == true) log.debug "offV1()"
    Map bridgeCmd
    Integer scaledRate = transitionTime != null ? Math.round(transitionTime * 10).toInteger() : null
    if (scaledRate == null) {
@@ -200,8 +230,9 @@ void createEventsFromMapV1(Map bridgeCommandMap, Boolean isFromBridge = false, S
             if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue, eventUnit)
             break
          case "bri":
+            if (it.value == 0) break // skip invalid value if ever appears...
             eventName = "level"
-            eventValue = scaleBriFromBridge(it.value)
+            eventValue = scaleBriFromBridge(it.value, APIV1)
             eventUnit = "%"
             if (device.currentValue(eventName) != eventValue) {
                doSendEvent(eventName, eventValue, eventUnit)
@@ -246,7 +277,7 @@ void createEventsFromMapV2(Map data) {
             break
          case "dimming":
             eventName = "level"
-            eventValue = scaleBriFromBridge(value.brightness, "2")
+            eventValue = scaleBriFromBridge(value.brightness, APIV2)
             eventUnit = "%"
             if (device.currentValue(eventName) != eventValue && eventValue > 0) {
                doSendEvent(eventName, eventValue, eventUnit)
@@ -319,11 +350,49 @@ void parseSendCommandResponseV1(AsyncResponse resp, Map data) {
    }
 }
 
+/** 
+  * Parses response from Bridge (or not) after sendBridgeCommandV2. Can optionally use V1-inspired
+  * logic to update device states if `data` map provided.
+  * @param resp Async HTTP response object
+  * @param data Map of commands sent to Bridge if specified to create events from map
+  */
+void parseSendCommandResponseV2(AsyncResponse resp, Map data) {
+   if (logEnable == true) log.debug "parseSendCommandResponseV2(): Response status from Bridge: ${resp.status}"
+   if (checkIfValidResponse(resp) && data) {
+      if (logEnable == true) log.debug "  Bridge response valid; creating events from data map"
+      createEventsFromMapV2(data)
+      if ((data.containsKey("on") || data.containsKey("dimming")) && settings["updateGroups"]) {
+         parent.updateGroupStatesFromBulb(data, getHueDeviceIdV2())
+      }
+   }
+   else {
+      if (logEnable == true) log.debug "  Not creating events from map because not specified to do or Bridge response invalid"
+   }
+}
+
+/**
+ * Sends HTTP PUT to Bridge using the V1-format map data provided
+ * @param commandMap Groovy Map (will be converted to JSON) of Hue V1 API commands to send, e.g., [on: true]
+ * @param createHubEvents Will iterate over Bridge command map and do sendEvent for all
+ *        affected device attributes (e.g., will send an "on" event for "switch" if ["on": true] in map)
+ */
+void sendBridgeCommandV2(Map commandMap, Boolean createHubEvents=false) {
+   if (logEnable == true) log.debug "sendBridgeCommandV2($commandMap)"
+   if (commandMap == null || commandMap == [:]) {
+      if (logEnable == true) log.debug "Commands not sent to Bridge because command map null or empty"
+      return
+   }
+   parent.bridgeAsyncPutV2("parseSendCommandResponseV2", this.device, "/resource/light/${getHueDeviceIdV2()}",
+                           commandMap, createHubEvents ? commandMap : null)
+   if (logEnable == true) log.debug "-- Command sent to Bridge! --"
+}
+
 // ~~~ IMPORTED FROM RMoRobert.CoCoHue_Common_Lib ~~~
-// Version 1.0.5
+// Version 1.0.6
 // For use with CoCoHue drivers (not app)
 
 /**
+ * 1.0.6 - Remove common bridgeAsyncPutV2() method (now call from parent app instead of driver)
  * 1.0.5 - Add common bridgeAsyncPutV2() method for asyncHttpPut (goal to reduce individual driver code)
  * 1.0.4 - Add common bridgeAsyncGetV2() method asyncHttpGet (goal to reduce individual driver code)
  * 1.0.3 - Add APIV1 and APIV2 "constants"
@@ -414,29 +483,31 @@ void bridgeAsyncGetV2(String callbackMethod, String clipV2Path, Map<String,Strin
    asynchttpGet(callbackMethod, params, data)
 }
 
-/** Performs asynchttpPut() to Bridge using data retrieved from parent app or as passed in
-  * @param callbackMethod Callback method
-  * @param clipV2Path The Hue V2 API path ('/clip/v2' is automatically prepended), e.g. '/resource' or '/resource/light'
-  * @param body Body data, a Groovy Map representing JSON for the Hue V2 API command, e.g., [on: [on: true]]
-  * @param bridgeData Bridge data from parent getBridgeData() call, or will call this method on parent if null
-  * @param data Extra data to pass as optional third (data) parameter to asynchtttpPut() method
-  */
-void bridgeAsyncPutV2(String callbackMethod, String clipV2Path, Map body, Map<String,String> bridgeData = null, Map data = null) {
-   if (bridgeData == null) {
-      bridgeData = parent.getBridgeData()
-   }
-   Map params = [
-      uri: "https://${bridgeData.ip}",
-      path: "/clip/v2${clipV2Path}",
-      headers: ["hue-application-key": bridgeData.username],
-      contentType: "application/json",
-      body: body,
-      timeout: 15,
-      ignoreSSLIssues: true
-   ]
-   asynchttpPut(callbackMethod, params, data)
-   if (logEnable == true) log.debug "Command sent to Bridge: $body at ${clipV2Path}"
-}
+// REMOVED, now call from parent app instead of driver:
+// /** Performs asynchttpPut() to Bridge using data retrieved from parent app or as passed in
+//   * @param callbackMethod Callback method
+//   * @param clipV2Path The Hue V2 API path ('/clip/v2' is automatically prepended), e.g. '/resource' or '/resource/light'
+//   * @param body Body data, a Groovy Map representing JSON for the Hue V2 API command, e.g., [on: [on: true]]
+//   * @param bridgeData Bridge data from parent getBridgeData() call, or will call this method on parent if null
+//   * @param data Extra data to pass as optional third (data) parameter to asynchtttpPut() method
+//   */
+// void bridgeAsyncPutV2(String callbackMethod, String clipV2Path, Map body, Map<String,String> bridgeData = null, Map data = null) {
+//    if (bridgeData == null) {
+//       bridgeData = parent.getBridgeData()
+//    }
+//    Map params = [
+//       uri: "https://${bridgeData.ip}",
+//       path: "/clip/v2${clipV2Path}",
+//       headers: ["hue-application-key": bridgeData.username],
+//       contentType: "application/json",
+//       body: body,
+//       timeout: 15,
+//       ignoreSSLIssues: true
+//    ]
+//    asynchttpPut(callbackMethod, params, data)
+//    if (logEnable == true) log.debug "Command sent to Bridge: $body at ${clipV2Path}"
+//    pauseExecution(200) // see if helps HTTP 429 errors?
+// }
 
 
 // ~~~ IMPORTED FROM RMoRobert.CoCoHue_Constants_Lib ~~~
@@ -471,8 +542,9 @@ void bridgeAsyncPutV2(String callbackMethod, String clipV2Path, Map body, Map<St
 @Field static final String APIV2 = "V2"
 
 // ~~~ IMPORTED FROM RMoRobert.CoCoHue_Bri_Lib ~~~
-// Version 1.0.4
+// Version 1.0.5
 
+// 1.0.5  - allow V2 for all commands
 // 1.0.4  - accept String for setLevel() level also 
 // 1.0.3  - levelhandling tweaks
 
@@ -480,39 +552,36 @@ void bridgeAsyncPutV2(String callbackMethod, String clipV2Path, Map body, Map<St
 
 void startLevelChange(String direction) {
    if (logEnable == true) log.debug "startLevelChange($direction)..."
-   Map cmd = ["bri": (direction == "up" ? 254 : 1),
-            "transitiontime": ((settings["levelChangeRate"] == "fast" || !settings["levelChangeRate"]) ?
-                                 30 : (settings["levelChangeRate"] == "slow" ? 60 : 45))]
-   sendBridgeCommandV1(cmd, false) 
+   if (getHasV2DNI() == true) {
+      Map cmd = [
+            "dimming_delta": ["brightness_delta": 100, "action": (direction == "up" ? "up" : "down")],
+             "dynamics":  ["duration": ((settings["levelChangeRate"] == "fast" || !settings["levelChangeRate"]) ?
+                                    3000 : (settings["levelChangeRate"] == "slow" ? 6000 : 4500))]]
+      sendBridgeCommandV2(cmd, false) 
+   }
+   else {
+      Map cmd = ["bri": (direction == "up" ? 254 : 1),
+               "transitiontime": ((settings["levelChangeRate"] == "fast" || !settings["levelChangeRate"]) ?
+                                    30 : (settings["levelChangeRate"] == "slow" ? 60 : 45))]
+      sendBridgeCommandV1(cmd, false) 
+   }
 }
 
 void stopLevelChange() {
    if (logEnable == true) log.debug "stopLevelChange()..."
-   Map cmd = ["bri_inc": 0]
-   sendBridgeCommandV1(cmd, false) 
+   if (getHasV2DNI() == true) {
+      Map cmd = ["dimming_delta": ["action": "stop"]]
+      sendBridgeCommandV2(cmd, false) 
+   }
+   else {
+      Map cmd = ["bri_inc": 0]
+      sendBridgeCommandV1(cmd, false)
+   }
 }
 
 void setLevel(value) {
    if (logEnable == true) log.debug "setLevel($value)"
    setLevel(value, ((transitionTime != null ? transitionTime.toFloat() : defaultLevelTransitionTime.toFloat())) / 1000)
-}
-
-void setLevel(Number value, Number rate) {
-   if (logEnable == true) log.debug "setLevel($value, $rate)"
-   if (value < 0) value = 1
-   else if (value > 100) value = 100
-   else if (value == 0) {
-      off(rate)
-      return
-   }
-   Integer newLevel = scaleBriToBridge(value)
-   Integer scaledRate = (rate * 10).toInteger()
-   Map bridgeCmd = [
-      "on": true,
-      "bri": newLevel,
-      "transitiontime": scaledRate
-   ]
-   sendBridgeCommandV1(bridgeCmd)
 }
 
 void setLevel(value, rate) {
@@ -523,17 +592,58 @@ void setLevel(value, rate) {
    setLevel(intLevel, floatRate)
 }
 
+void setLevel(Number value, Number rate) {
+   if (logEnable == true) log.debug "setLevel(Number $value, Number $rate)"
+   if (getHasV2DNI() == false) {
+      setLevelV1(value, rate)
+      return
+   }
+   if (value < 0) value = 0.01
+   else if (value > 100) value = 100
+   else if (value == 0) {
+      off(rate)
+      return
+   }
+   Integer newLevel = scaleBriToBridge(value, APIV2)
+   Integer scaledRate = (rate * 1000).toInteger()
+   Map bridgeCmd = [
+         "on": ["on": true],
+         "dimming": ["brightness": scaleBriToBridge(value, APIV2)],
+         "dynamics": ["duration": scaledRate]
+   ]
+   sendBridgeCommandV2(bridgeCmd)
+}
+
+void setLevelV1(Number value, Number rate) {
+   if (logEnable == true) log.debug "setLevel($value, $rate)"
+   if (value < 0) value = 1
+   else if (value > 100) value = 100
+   else if (value == 0) {
+      off(rate)
+      return
+   }
+   Integer newLevel = scaleBriToBridge(value, APIV1)
+   Integer scaledRate = (rate * 10).toInteger()
+   Map bridgeCmd = [
+      "on": true,
+      "bri": newLevel,
+      "transitiontime": scaledRate
+   ]
+   sendBridgeCommandV1(bridgeCmd)
+}
+
 /**
  * Reads device preference for on() transition time, or provides default if not available; device
  * can use input(name: onTransitionTime, ...) to provide this
  */
-Integer getScaledOnTransitionTime() {
+Integer getScaledOnTransitionTime(String apiVersion=APIV1) {
    Integer scaledRate = null
    if (settings.onTransitionTime == null || settings.onTransitionTime == "-2" || settings.onTransitionTime == -2) {
       // keep null; will result in not specifiying with command
    }
    else {
-      scaledRate = Math.round(settings.onTransitionTime.toFloat() / 100)
+      if (apiVersion == APIV1) scaledRate = Math.round(settings.onTransitionTime.toFloat() / 100)
+      else scaledRate = settings.onTransitionTime.toInteger()
    }
    return scaledRate
 }
@@ -543,7 +653,7 @@ Integer getScaledOnTransitionTime() {
  * Reads device preference for off() transition time, or provides default if not available; device
  * can use input(name: onTransitionTime, ...) to provide this
  */
-Integer getScaledOffTransitionTime() {
+Integer getScaledOffTransitionTime(String apiVersion=APIV1) {
    Integer scaledRate = null
    if (settings.offTransitionTime == null || settings.offTransitionTime == "-2" || settings.offTransitionTime == -2) {
       // keep null; will result in not specifiying with command
@@ -552,7 +662,8 @@ Integer getScaledOffTransitionTime() {
       scaledRate = getScaledOnTransitionTime()
    }
    else {
-      scaledRate = Math.round(settings.offTransitionTime.toFloat() / 100)
+      if (apiVersion == APIV1) scaledRate = Math.round(settings.offTransitionTime.toFloat() / 100)
+      else scaledRate = settings.offTransitionTime.toInteger()
    }
    return scaledRate
 }
@@ -562,10 +673,10 @@ Integer getScaledOffTransitionTime() {
 
 /**
  * Scales Hubitat's 1-100 brightness levels to Hue Bridge's 1-254 (or 0-100)
- * @param apiVersion: Use "1" (default) for classic, 1-254 API values; use "2" for v2/SSE 0.0-100.0 values (note: 0.0 is on)
+ * @param apiVersion: Use APIV1/"V1" (default) for classic, 1-254 API values; use APIV2 for v2/SSE 0.0-100.0 values (note: 0.0 is on)
  */
-Number scaleBriToBridge(Number hubitatLevel, String apiVersion="1") {
-   if (apiVersion != "2") {
+Number scaleBriToBridge(Number hubitatLevel, String apiVersion=APIV1) {
+   if (apiVersion == APIV1) {
       Integer scaledLevel
       scaledLevel = Math.round(hubitatLevel == 1 ? 1 : hubitatLevel.toBigDecimal() / 100 * 254)
       return Math.round(scaledLevel) as Integer
@@ -582,9 +693,9 @@ Number scaleBriToBridge(Number hubitatLevel, String apiVersion="1") {
  * Scales Hue Bridge's 1-254 brightness levels to Hubitat's 1-100 (or 0-100)
  * @param apiVersion: Use "1" (default) for classic, 1-254 API values; use "2" for v2/SSE 0.0-100.0 values (note: 0.0 is on)
  */
-Integer scaleBriFromBridge(Number bridgeLevel, String apiVersion="1") {
+Integer scaleBriFromBridge(Number bridgeLevel, String apiVersion=APIV1) {
    Integer scaledLevel
-   if (apiVersion != "2") {
+   if (apiVersion == APIV1) {
       scaledLevel = Math.round(bridgeLevel.toBigDecimal() / 254 * 100)
       if (scaledLevel < 1) scaledLevel = 1
    }
@@ -596,25 +707,78 @@ Integer scaleBriFromBridge(Number bridgeLevel, String apiVersion="1") {
 }
 
 // ~~~ IMPORTED FROM RMoRobert.CoCoHue_Flash_Lib ~~~
-// Version 1.0.0
+// Version 1.0.2
 
 void flash() {
    if (logEnable == true) log.debug "flash()"
-   if (settings.txtEnable == true) log.info("${device.displayName} started 15-cycle flash")
-   Map<String,String> cmd = ["alert": "lselect"]
-   sendBridgeCommandV1(cmd, false) 
+   if (getHasV2DNI() == true) {
+      if (settings.txtEnable == true) log.info("${device.displayName} started ~18-hr flash cycle")
+      Map<String,String> cmd = ["signaling": ["signal": "on_off", "duration": 65534000]]
+      // Possible alternative, likely more similar to V1 behavior if needed:
+      //Map<String,String> cmd = ["alert": ["action": "breathe"]]
+      sendBridgeCommandV2(cmd, false)
+   }
+   else {
+      if (settings.txtEnable == true) log.info("${device.displayName} started 15-cycle flash")
+      Map<String,String> cmd = ["alert": "lselect"]
+      sendBridgeCommandV1(cmd, false)
+   }
 }
 
 void flashOnce() {
    if (logEnable == true) log.debug "flashOnce()"
    if (settings.txtEnable == true) log.info("${device.displayName} started 1-cycle flash")
-   Map<String,String> cmd = ["alert": "select"]
-   sendBridgeCommandV1(cmd, false) 
+   if (getHasV2DNI() == true) {
+      Map cmd
+      // Approximation for groups since don't support 'identify':
+      if (device.deviceNetworkId.tokenize("/")[-2] == "Group") cmd = ["signaling": ["signal": "on_off", "duration": 1500]]
+      // Otherwise, use normal method (API docs suggest this could change and suggest already doesn't only do single, but always has for me?):
+      else cmd = ["identify": ["action": "identify"]]
+      sendBridgeCommandV2(cmd, false)
+   }
+   else {
+      Map<String,String> cmd = ["alert": "select"]
+      sendBridgeCommandV1(cmd, false) 
+   }
 }
 
 void flashOff() {
    if (logEnable == true) log.debug "flashOff()"
    if (settings.txtEnable == true) log.info("${device.displayName} was sent command to stop flash")
-   Map<String,String> cmd = ["alert": "none"]
-   sendBridgeCommandV1(cmd, false) 
+   if (getHasV2DNI() == true) {
+      Map<String,String> cmd = ["signaling": ["signal": "no_signal", "duration": 0]]
+      sendBridgeCommandV2(cmd, false)
+   }
+   else {
+      Map<String,String> cmd = ["alert": "none"]
+      sendBridgeCommandV1(cmd, false) 
+   }
+}
+
+// ~~~ IMPORTED FROM RMoRobert.CoCoHue_V2_DNI_Tools_Lib ~~~
+// Version 1.0.0
+
+
+/**
+ * Parses V2 Hue Bridge device ID out of Hubitat DNI for use with Hue V2 API calls
+ * Hubitat DNI is created in format "CCH/BridgeMACAbbrev/Scene/HueDeviceID", so just
+ * looks for string after last "/" character
+ */
+String getHueDeviceIdV2() {
+   if (getHasV2DNI() == true) {
+      return device.deviceNetworkId.split("/").last()
+   }
+   else {
+      log.error "DNI not in V2 format but attempeting to fetch API V2 ID. Cannot continue."
+   }
+}
+
+Boolean getHasV2DNI() {
+   String id = device.deviceNetworkId.split("/").last()
+   if (id.length() > 32) {  // max length of Hue V1 ID per regex in V2 API docs
+      return true
+   }
+   else {
+      return false
+   }
 }

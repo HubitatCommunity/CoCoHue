@@ -1,7 +1,7 @@
 /**
  * =============================  CoCoHue Bridge (Driver) ===============================
  *
- *  Copyright 2019-2024 Robert Morris
+ *  Copyright 2019-2025 Robert Morris
  * 
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
@@ -14,9 +14,11 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2024-12-29
+ *  Last modified: 2025-09-07
  *
  *  Changelog:
+ *  v5.3.0  - Changes related to HTTPS as default
+ *  v5.2.7  - Eliminate errors for missing id_v1 on sensors and other devices
  *  v5.2.6  - Fix for zigbee_connectivity parsing
  *  v5.2.5  - Add Smart Scene support
  *  v5.2.3  - Concurrency fixes; other minor fixes for SSE and V2 API
@@ -77,7 +79,6 @@ metadata {
       name: "CoCoHue Bridge",
       namespace:"RMoRobert",
       author: "Robert Morris",
-      //singleThreaded: true,
       importUrl: "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-bridge-driver.groovy"
    ) {
       capability "Actuator"
@@ -339,6 +340,7 @@ void refreshV1() {
          uri: data.fullHost,
          path: "/api/${data.username}/",
          contentType: 'application/json',
+         ignoreSSLIssues: true,
          timeout: 15
       ]
       asynchttpGet("parseStatesV1", params)
@@ -429,9 +431,9 @@ void parseLightStatesV2(List lightsJson) {
    try {
       lightsJson.each { Map data ->
          String id = data.id 
-         String id_v1 = data.id_v1 - "/lights/"
+         String id_v1 = data.id_v1 != null ? data.id_v1 - "/lights/" : null
          DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Light/${id}")
-         if (dev == null) {
+         if (dev == null && id_v1 != null) {
             dev = parent.getChildDevice("${device.deviceNetworkId}/Light/${id_v1}")
             if (dev != null) log.warn "Device ${dev.displayName} with Hue V1 ID $id_v1 and V2 ID $id never converted to V2 DNI format. Try selecting \"Done\" in the parent app to retry conversion. Found and using V1 device for now."
          }
@@ -474,9 +476,9 @@ void parseGroupStatesV2(List groupsJson) {
    try {
       groupsJson.each { Map data ->
          String id = data.id 
-         String id_v1 = data.id_v1 - "/groups/"
+         String id_v1 = data.id_v1 != null ? data.id_v1 - "/groups/" : null
          DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Group/${id}")
-         if (dev == null) {
+         if (dev == null && id_v1 != null) {
             dev = parent.getChildDevice("${device.deviceNetworkId}/Group/${id_v1}")
             if (dev != null) log.warn "Device ${dev.displayName} with Hue V1 ID $id_v1 and V2 ID $id never converted to V2 DNI format. Try selecting \"Done\" in the parent app to retry conversion. Found and using V1 device for now."
          }
@@ -526,9 +528,9 @@ void parseSceneStatesV2(List scenesJson) {
    try {
       scenesJson.each { Map data ->
          String id = data.id 
-         String id_v1 = data.id_v1 - "/scene/"
+         String id_v1 = data.id_v1 != null ? data.id_v1 - "/scene/" : null
          DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Scene/${id}")
-         if (dev == null) {
+         if (dev == null && id_v1 != null) {
             dev = parent.getChildDevice("${device.deviceNetworkId}/Scene/${id_v1}")
             if (dev != null) log.warn "Device ${dev.displayName} with Hue V1 ID $id_v1 and V2 ID $id never converted to V2 DNI format. Try selecting \"Done\" in the parent app to retry conversion. Found and using V1 device for now."
          }
@@ -570,9 +572,9 @@ void parseMotionSensorStatesV2(List sensorJson) {
    try {
       sensorJson.each { Map data ->
          String id = data.owner.rid // use owner ID for sensor to keep same physical devices together more easily 
-         String id_v1 = data.id_v1 - "/sensors/"
+         String id_v1 = data.id_v1 != null ? data.id_v1 - "/sensors/" : null
          DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Sensor/${id}")
-         if (dev == null) {
+         if (dev == null && id_v1 != null) {
                dev = parent.getChildDevices().find { DeviceWrapper d ->
                   d.deviceNetworkId.startsWith("${device.deviceNetworkId}/Sensor/") &&
                   id_v1 in d.deviceNetworkId.tokenize('/')[-1].tokenize('|')
@@ -1168,10 +1170,11 @@ Map getBridgeCacheV2() {
 
 
 // ~~~ IMPORTED FROM RMoRobert.CoCoHue_Common_Lib ~~~
-// Version 1.0.5
+// Version 1.0.6
 // For use with CoCoHue drivers (not app)
 
 /**
+ * 1.0.6 - Remove common bridgeAsyncPutV2() method (now call from parent app instead of driver)
  * 1.0.5 - Add common bridgeAsyncPutV2() method for asyncHttpPut (goal to reduce individual driver code)
  * 1.0.4 - Add common bridgeAsyncGetV2() method asyncHttpGet (goal to reduce individual driver code)
  * 1.0.3 - Add APIV1 and APIV2 "constants"
@@ -1262,29 +1265,31 @@ void bridgeAsyncGetV2(String callbackMethod, String clipV2Path, Map<String,Strin
    asynchttpGet(callbackMethod, params, data)
 }
 
-/** Performs asynchttpPut() to Bridge using data retrieved from parent app or as passed in
-  * @param callbackMethod Callback method
-  * @param clipV2Path The Hue V2 API path ('/clip/v2' is automatically prepended), e.g. '/resource' or '/resource/light'
-  * @param body Body data, a Groovy Map representing JSON for the Hue V2 API command, e.g., [on: [on: true]]
-  * @param bridgeData Bridge data from parent getBridgeData() call, or will call this method on parent if null
-  * @param data Extra data to pass as optional third (data) parameter to asynchtttpPut() method
-  */
-void bridgeAsyncPutV2(String callbackMethod, String clipV2Path, Map body, Map<String,String> bridgeData = null, Map data = null) {
-   if (bridgeData == null) {
-      bridgeData = parent.getBridgeData()
-   }
-   Map params = [
-      uri: "https://${bridgeData.ip}",
-      path: "/clip/v2${clipV2Path}",
-      headers: ["hue-application-key": bridgeData.username],
-      contentType: "application/json",
-      body: body,
-      timeout: 15,
-      ignoreSSLIssues: true
-   ]
-   asynchttpPut(callbackMethod, params, data)
-   if (logEnable == true) log.debug "Command sent to Bridge: $body at ${clipV2Path}"
-}
+// REMOVED, now call from parent app instead of driver:
+// /** Performs asynchttpPut() to Bridge using data retrieved from parent app or as passed in
+//   * @param callbackMethod Callback method
+//   * @param clipV2Path The Hue V2 API path ('/clip/v2' is automatically prepended), e.g. '/resource' or '/resource/light'
+//   * @param body Body data, a Groovy Map representing JSON for the Hue V2 API command, e.g., [on: [on: true]]
+//   * @param bridgeData Bridge data from parent getBridgeData() call, or will call this method on parent if null
+//   * @param data Extra data to pass as optional third (data) parameter to asynchtttpPut() method
+//   */
+// void bridgeAsyncPutV2(String callbackMethod, String clipV2Path, Map body, Map<String,String> bridgeData = null, Map data = null) {
+//    if (bridgeData == null) {
+//       bridgeData = parent.getBridgeData()
+//    }
+//    Map params = [
+//       uri: "https://${bridgeData.ip}",
+//       path: "/clip/v2${clipV2Path}",
+//       headers: ["hue-application-key": bridgeData.username],
+//       contentType: "application/json",
+//       body: body,
+//       timeout: 15,
+//       ignoreSSLIssues: true
+//    ]
+//    asynchttpPut(callbackMethod, params, data)
+//    if (logEnable == true) log.debug "Command sent to Bridge: $body at ${clipV2Path}"
+//    pauseExecution(200) // see if helps HTTP 429 errors?
+// }
 
 
 // ~~~ IMPORTED FROM RMoRobert.CoCoHue_Constants_Lib ~~~
