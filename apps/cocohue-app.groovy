@@ -18,8 +18,9 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2025-09-20
+ *  Last modified: 2026-05-16
  *  Changelog:
+ *  v5.4.2 - Move to "Integrations" menu introduced in platform 2.5.0
  *  v5.4.1 - Fix discovery time recheck threshold logic
  *  v5.4.0 - Add mDNS for discovery (needed for Bridge Pro, usable on all but V1 and old V2 firmware)
  *  v5.3.4 - Prefer HTTPS by default or if set to use V2 API for SSE (new Pro Bridge does not support HTTP so would fail)
