@@ -119,6 +119,7 @@ definition (
    description: "Community-created Philips Hue integration for Hue Bridge lights and other Hue devices and features",
    menu: "Integrations",
    category: "Convenience",
+   menu: "Integrations",
    installOnOpen: true,
    documentationLink: "https://community.hubitat.com/t/release-cocohue-hue-bridge-integration-including-scenes/27978",
    iconUrl: "",
