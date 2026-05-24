@@ -1,7 +1,7 @@
 /*
  * =============================  CoCoHue Motion Sensor (Driver) ===============================
  *
- *  Copyright 2020-2024 Robert Morris
+ *  Copyright 2020-2025 Robert Morris
  * 
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
@@ -14,9 +14,11 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2024-12-08
+ *  Last modified: 2025-09-27
  *
  *  Changelog:
+ *  v5.5.1  - Fix error parsing light level reports
+ *  v5.5    - Use new motion_report and light_level_report objects instead of deprecated motion and light objects in V2 API
  *  v5.2.2  - Populate initial states from V2 cache if available
  *  v5.0    - Use API v2 by default, remove deprecated features
  *  v4.2    - Library updates, prep for more v2 API
@@ -59,7 +61,6 @@ void installed() {
       List bridgeCacheData = parent.getBridgeCacheV2()?.data ?: []
       Map devCache = bridgeCacheData.find { it.type == "sensor" && it.id == device.deviceNetworkId.split("/").last() }
       if (devCache != null) {
-         log.warn devCache.id
          createEventsFromMapV2(devCache)
       }
    }
@@ -85,9 +86,10 @@ void refresh() {
 
 // Probably won't happen but...
 void parse(String description) {
-   log.warn("Running unimplemented parse for: '${description}'")
+   log.warn "Running unimplemented parse for: '${description}'"
 }
 
+// Still need for polling, even though integration app requires use of V2 API to add these devices
 /**
  * Iterates over Hue sensor state commands/states in Hue format (e.g., ["lightlevel": 25000]) and does
  * a sendEvent for each relevant attribute; for sensors, intended to be called
@@ -138,7 +140,7 @@ void createEventsFromMapV1(Map bridgeCmd) {
 }
 
 /**
- * (for "new"/v2/EventSocket [SSE] API; not documented and subject to change)
+ * (for "new"/v2/EventSocket [SSE] API)
  * Iterates over Hue light state states in Hue API v2 format (e.g., "on={on=true}") and does
  * a sendEvent for each relevant attribute; intended to be called when EventSocket data
  * received for device (as an alternative to polling)
@@ -151,23 +153,30 @@ void createEventsFromMapV2(Map data) {
       switch (key) {
          case "motion":
             eventName = "motion"
-            eventValue = value.motion ? "active" : "inactive"
+            eventValue = value.motion_report?.motion ? "active" : "inactive"
             eventUnit = null
             if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue, eventUnit)
             break
          case "light":
             eventName = "illuminance"
-            eventValue = Math.round(10 ** (((value.light_level as Integer)-1)/10000))
-            eventUnit = "lux"
-            if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue as Integer, eventUnit)
+            Integer lightLevel = value.light_level_report?.light_level
+            if (lightLevel != null) {
+               eventValue = Math.round(10 ** ((lightLevel-1)/10000))
+               if (eventValue < 0) eventValue = 0
+               eventUnit = "lux"
+               if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue as Integer, eventUnit)
+            }
             break
          case "temperature":
             eventName = "temperature"
-            if (location.temperatureScale == "C") eventValue = ((value.temperature as BigDecimal)).setScale(1, java.math.RoundingMode.HALF_UP)
-            else eventValue = celsiusToFahrenheit((value.temperature  as BigDecimal).setScale(1, java.math.RoundingMode.HALF_UP))
-            if (settings["tempAdjust"]) eventValue = (eventValue as BigDecimal) + (settings["tempAdjust"] as BigDecimal)
-            eventUnit = "°${location.temperatureScale}"
-            if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue as BigDecimal, eventUnit)
+            BigDecimal temperature = value.temperature_report?.temperature
+            if (temperature != null) {
+               if (location.temperatureScale == "C") eventValue = temperature.setScale(1, java.math.RoundingMode.HALF_UP)
+               else eventValue = celsiusToFahrenheit(temperature.setScale(1, java.math.RoundingMode.HALF_UP))
+               if (settings["tempAdjust"]) eventValue = (eventValue as BigDecimal) + (settings["tempAdjust"] as BigDecimal)
+               eventUnit = "°${location.temperatureScale}"
+               if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue as BigDecimal, eventUnit)
+            }
             break
          case "power_state":
             eventName = "battery"
@@ -179,7 +188,7 @@ void createEventsFromMapV2(Map data) {
             if (state.id_v1 != value) state.id_v1 = value
             break
          default:
-            if (logEnable == true) log.debug "not handling: key $key = value $value"
+            if (logEnable == true) log.debug "not handling: key = $key, value = $value"
       }
    }
 }
@@ -281,35 +290,9 @@ void bridgeAsyncGetV2(String callbackMethod, String clipV2Path, Map<String,Strin
    asynchttpGet(callbackMethod, params, data)
 }
 
-// REMOVED, now call from parent app instead of driver:
-// /** Performs asynchttpPut() to Bridge using data retrieved from parent app or as passed in
-//   * @param callbackMethod Callback method
-//   * @param clipV2Path The Hue V2 API path ('/clip/v2' is automatically prepended), e.g. '/resource' or '/resource/light'
-//   * @param body Body data, a Groovy Map representing JSON for the Hue V2 API command, e.g., [on: [on: true]]
-//   * @param bridgeData Bridge data from parent getBridgeData() call, or will call this method on parent if null
-//   * @param data Extra data to pass as optional third (data) parameter to asynchtttpPut() method
-//   */
-// void bridgeAsyncPutV2(String callbackMethod, String clipV2Path, Map body, Map<String,String> bridgeData = null, Map data = null) {
-//    if (bridgeData == null) {
-//       bridgeData = parent.getBridgeData()
-//    }
-//    Map params = [
-//       uri: "https://${bridgeData.ip}",
-//       path: "/clip/v2${clipV2Path}",
-//       headers: ["hue-application-key": bridgeData.username],
-//       contentType: "application/json",
-//       body: body,
-//       timeout: 15,
-//       ignoreSSLIssues: true
-//    ]
-//    asynchttpPut(callbackMethod, params, data)
-//    if (logEnable == true) log.debug "Command sent to Bridge: $body at ${clipV2Path}"
-//    pauseExecution(200) // see if helps HTTP 429 errors?
-// }
-
 
 // ~~~ IMPORTED FROM RMoRobert.CoCoHue_Constants_Lib ~~~
-// Version 1.0.0
+// Version 1.0.2
 
 // --------------------------------------
 // APP AND DRIVER NAMESPACE AND NAMES:

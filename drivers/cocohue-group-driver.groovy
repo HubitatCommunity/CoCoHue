@@ -14,10 +14,14 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2025-02-15
+ *  Last modified: 2025-11-10
  *
  *  Changelog:
- *  v5.3.1 - Implement async HTTP call queueing from child drivers through parent app
+ *  v5.6.1  - Fix error with flashOnce() command and others where [on: ...] not in command map
+ *  v5.6    - Remove "reachable" (only applicable to individual devices)
+ *  v5.5    - Adjust for new, wider CT ranges
+ *  v5.3.4  - Changes to accommodate HTTPS by default
+ *  v5.3.1  - Implement async HTTP call queueing from child drivers through parent app
  *  v5.3.0  - Use V2 for most commands; fix transition time preferences; parse 0 mired as 0 K
  *  v5.2.8  - Add reachable attribute to V2 API parsing; ignore 0 CT values
  *  v5.2.7  - Use level 0 in color or CT commands as off()
@@ -65,8 +69,8 @@ import hubitat.scheduling.AsyncResponse
 @Field static final Integer debugAutoDisableMinutes = 30
 
 // Currently works for all Hue bulbs; can adjust if needed:
-@Field static final minMireds = 153
-@Field static final maxMireds = 500
+@Field static final minMireds = 50   // 20,000 Kelvin
+@Field static final maxMireds = 1000  // 1,000 Kelvin
 
 @Field static final Map<Integer,String> lightEffects = [0: "None", 1:"Color Loop"]
 @Field static final Integer maxEffectNumber = 1
@@ -100,7 +104,6 @@ metadata {
       command "flashOff"
    
       attribute "effect", "string"
-      attribute "reachable", "string"
    }
        
    preferences {
@@ -126,14 +129,15 @@ void installed() {
    groovy.json.JsonBuilder le = new groovy.json.JsonBuilder(lightEffects)
    sendEvent(name: "lightEffects", value: le)
    if (device.currentValue("switch") == null) {
-      // Populate initial device data (if V2 available; V1 users would need manual refresh)
+      // Populate initial device data if available in V2 API data:
       List bridgeCacheData = parent.getBridgeCacheV2()?.data ?: []
       Map devCache = bridgeCacheData.find { it.type == "grouped_light" && it.id == device.deviceNetworkId.split("/").last() }
       if (devCache == null) devCache == bridgeCacheData.find { it.type == "grouped_light" && it.id_v1 == device.deviceNetworkId.split("/").last() }
       if (devCache != null) {
-         log.warn devCache.id
          createEventsFromMapV2(devCache)
       }
+      // Fallback since V2 API apparently doesn't contain some data we'll need for groups (CT/color), or if using V1 only:
+      setDefaultAttributeValues(onlyIfAttributeNull: true)
    }
    initialize()
 }
@@ -357,14 +361,6 @@ void createEventsFromMapV1(Map bridgeCommandMap, Boolean isFromBridge = false, S
             eventUnit = null
             if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue, eventUnit)
             break
-         case "reachable":
-            eventName = "reachable"
-            eventValue = it.value ? "true" : "false"
-            eventUnit = null
-            if (device.currentValue(eventName) != eventValue) {
-               doSendEvent(eventName, eventValue, eventUnit)
-            }
-            break
          case "transitiontime":
          case "mode":
          case "alert":
@@ -504,21 +500,31 @@ void parseSendCommandResponseV2(AsyncResponse resp, Map data) {
 }
 
 /**
- * Sends HTTP PUT to Bridge using the V1-format map data provided
+ * Sends HTTP PUT to Bridge using the V2-format map data provided
  * @param commandMap Groovy Map (will be converted to JSON) of Hue V1 API commands to send, e.g., [on: true]
  * @param createHubEvents Will iterate over Bridge command map and do sendEvent for all
  *        affected device attributes (e.g., will send an "on" event for "switch" if ["on": true] in map)
+ * @param includeColorOrCTEventsEvenIfOthersNotCreated If true, will create color or CT events even if
+ *        createHubEvents is false; useful because color/CT not apparently not reported for grouped_light in V2 API
  */
-void sendBridgeCommandV2(Map commandMap, Boolean createHubEvents=false) {
+void sendBridgeCommandV2(Map commandMap, Boolean createHubEvents=false, Boolean includeColorOrCTEventsEvenIfOthersNotCreated=true) {
    if (logEnable == true) log.debug "sendBridgeCommandV2($commandMap)"
    if (commandMap == null || commandMap == [:]) {
       if (logEnable == true) log.debug "Commands not sent to Bridge because command map null or empty"
       return
    }
+   Map eventCmdMap = createHubEvents ? commandMap : null
+   if (includeColorOrCTEventsEvenIfOthersNotCreated == true) {
+      eventCmdMap = [:]
+      if (commandMap.on != null) eventCmdMap << ["on": commandMap.on]
+      if (commandMap.color_temperature != null) eventCmdMap << ["color_temperature": commandMap.color_temperature]
+      if (commandMap.color != null) eventCmdMap << ["color": commandMap.color]
+   }
    parent.bridgeAsyncPutV2("parseSendCommandResponseV2", this.device, "/resource/grouped_light/${getHueDeviceIdV2()}",
-                           commandMap, createHubEvents ? commandMap : null)
+                           commandMap, eventCmdMap)
    if (logEnable == true) log.debug "-- Command sent to Bridge! --"
 }
+
 
 /**
  *  Sets state.memberBulbs to IDs of bulbs contained in this group; used to manipulate CoCoHue member
@@ -543,15 +549,86 @@ void setGroupedLightId(String id) {
    state.groupedLightId = id
 }
 
+// This may be useful in future, but scrapping for now since V1 data not cached and V2 not available unless V1 polling not enabled/
+// May revisit when x/y color problem cracked...
+// /**
+//  * Attemps to find member lights in Bridge cache and calculate resultant group state based on those values;
+//  * useful because color/CT data and perhaps more not available in grouped_light data in V2 API
+//  */
+// void calculateStateFromMemberStatesV2() {
+//    if (logEnable) log.debug "calculateStateFromMemberStatesV2()"
+//    Map bridgeCache = parent.getBridgeCacheV2()
+//    if (bridgeCache != null && bridgeCache.data != null) {
+//       String roomOrZoneId = bridgeCache.data.find { it.type == "grouped_light" && it.id == getHueDeviceIdV2() }?.owner?.rid
+//       String roomOrZone = bridgeCache.data.find { it.type == "grouped_light" && it.id == getHueDeviceIdV2() }?.owner?.rtype
+//       log.trace "1. $roomOrZoneId, $roomOrZone"
+//       if (roomOrZoneId != null && roomOrZone != null) {
+//          List<String> memberDeviceIds = bridgeCache.data.find { it.type == roomOrZone && it.id == roomOrZoneId }?.children?.collect { it.rid }
+//          log.trace "2. $memberDeviceIds"
+//          if (memberDeviceIds != null && memberDeviceIds != []) {
+//             List<String> memberLightIds = bridgeCache.data.findAll { it.type == "device" && it.id in memberDeviceIds }?.collect { it.services.find { it.rtype == "light" }?.rid }
+//             List<Map> memberLightStates = bridgeCache.data.findAll { it.type == "light" && it.id in memberLightIds }
+//             log.trace "3. $memberLightStates"
+//             if (memberLightStates != null || memberLightStates != []) {
+//                Boolean anyOn = memberLightStates.any { it.on?.on == true }
+//                List<Integer> validBris = memberLightStates.findAll { it.on?.on == true }.collect { scaleBriFromBridge(it.dimming?.brightness, APIV2) }
+//                Integer avgBri = validBris.size() > 0 ? Math.round(validBris.sum() / validBris.size()) : 0
+//                // For color properties, use turned-on devices if any are on, otherwise use all devices
+//                List<Map> devicesForColor = anyOn ? memberLightStates.findAll { it.on?.on == true } : memberLightStates
+//                List<Integer> validCTs = devicesForColor.findAll { it.color_temperature?.mirek != null }.collect { scaleCTFromBridge(it.color_temperature.mirek) }
+//                Integer avgCT = validCTs.size() > 0 ? Math.round(validCTs.sum() / validCTs.size()) : null
+//                List<Integer> validXs = devicesForColor.findAll { it.color?.x != null }
+//                Integer avgX = validXs.size() > 0 ? Math.round(validXs.sum() / validXs.size()) : null
+//                List<Integer> validYs = devicesForColor.findAll { it.color?.y != null }
+//                Integer avgY = validYs.size() > 0 ? Math.round(validYs.sum() / validYs.size()) : null
+//                log.trace "Calculated group state from ${memberLightStates.size()} members: on: $anyOn, level: $avgBri, ct: $avgCT, x: $avgX, y: $avgY"
+//                // if (device.currentValue("switch") != (anyOn ? "on" : "off")) {
+//                //    doSendEvent("switch", anyOn ? "on" : "off", null)
+//                // }
+//                // if (anyOn && avgBri != null && device.currentValue("level") != avgBri) {
+//                //    doSendEvent("level", avgBri, "%")
+//                // }
+//                // if (anyOn && avgCT != null && avgCT > 0 && device.currentValue
+//             }
+//             else {
+//                 if (logEnable) log.debug "No lights states found in Bridge cache for group members; skipping calculation"
+//             }
+//          }
+//       }
+//    } else {
+//       if (logEnable == true) log.debug "Cannot calculate group state from member states because Bridge cache not available"
+//    }
+// }
+
 /**
- * Sets all group attribute values to something, intended to be called when device initially created to avoid
- * missing attribute values (may cause problems with GH integration, etc. otherwise). Default values are
- * approximately warm white and off.
+ * Sets all group attribute values to some default if needed, intended to be called when device initially created and
+ * no values found in cache to avoid missing attribute values (may cause problems with GH integration, etc. otherwise).
+ * Default values are approximately warm white and off with valid hue and saturation set for completeness.
  */
-private void setDefaultAttributeValues() {
-   if (logEnable == true) log.debug "Setting group device states to sensibile default values..."
-   Map defaultValues = [any_on: false, bri: 254, hue: 8593, sat: 121, ct: 370 ]
-   createEventsFromMapV1(defaultValues)
+private void setDefaultAttributeValues(Map options = [onlyIfAttributeNull: true]) {
+   if (logEnable == true) log.debug "Setting group device states to sensibile default values... (onlyIfAttributeNull: ${options?.onlyIfAttributeNull})"
+   Boolean onlyIfNull = options?.onlyIfAttributeNull == true
+   if (device.currentValue("switch") == null || onlyIfNull == false) {
+      sendEvent(name: "switch", value: "off")
+   }
+   if (device.currentValue("level") == null || onlyIfNull == false) {
+      sendEvent(name: "level", value: 100, unit: "%")
+   }
+   if (device.currentValue("colorTemperature") == null || onlyIfNull == false) {
+      sendEvent(name: "colorTemperature", value: 2700, unit: "K")
+   }
+   if (device.currentValue("hue") == null || onlyIfNull == false) {
+      sendEvent(name: "hue", value: 0)
+   }
+   if (device.currentValue("saturation") == null || onlyIfNull == false) {
+      sendEvent(name: "saturation", value: 100)
+   }
+   if (device.currentValue("colorMode") == null || onlyIfNull == false) {
+      sendEvent(name: "colorMode", value: "CT")
+   }
+   if (device.currentValue("effects") == null || onlyIfNull == false) {
+      sendEvent(name: "effects", value: "none")
+   }
 }
 
 // ~~~ IMPORTED FROM RMoRobert.CoCoHue_Common_Lib ~~~
@@ -650,35 +727,9 @@ void bridgeAsyncGetV2(String callbackMethod, String clipV2Path, Map<String,Strin
    asynchttpGet(callbackMethod, params, data)
 }
 
-// REMOVED, now call from parent app instead of driver:
-// /** Performs asynchttpPut() to Bridge using data retrieved from parent app or as passed in
-//   * @param callbackMethod Callback method
-//   * @param clipV2Path The Hue V2 API path ('/clip/v2' is automatically prepended), e.g. '/resource' or '/resource/light'
-//   * @param body Body data, a Groovy Map representing JSON for the Hue V2 API command, e.g., [on: [on: true]]
-//   * @param bridgeData Bridge data from parent getBridgeData() call, or will call this method on parent if null
-//   * @param data Extra data to pass as optional third (data) parameter to asynchtttpPut() method
-//   */
-// void bridgeAsyncPutV2(String callbackMethod, String clipV2Path, Map body, Map<String,String> bridgeData = null, Map data = null) {
-//    if (bridgeData == null) {
-//       bridgeData = parent.getBridgeData()
-//    }
-//    Map params = [
-//       uri: "https://${bridgeData.ip}",
-//       path: "/clip/v2${clipV2Path}",
-//       headers: ["hue-application-key": bridgeData.username],
-//       contentType: "application/json",
-//       body: body,
-//       timeout: 15,
-//       ignoreSSLIssues: true
-//    ]
-//    asynchttpPut(callbackMethod, params, data)
-//    if (logEnable == true) log.debug "Command sent to Bridge: $body at ${clipV2Path}"
-//    pauseExecution(200) // see if helps HTTP 429 errors?
-// }
-
 
 // ~~~ IMPORTED FROM RMoRobert.CoCoHue_Constants_Lib ~~~
-// Version 1.0.0
+// Version 1.0.2
 
 // --------------------------------------
 // APP AND DRIVER NAMESPACE AND NAMES:
@@ -874,7 +925,7 @@ Integer scaleBriFromBridge(Number bridgeLevel, String apiVersion=APIV1) {
 }
 
 // ~~~ IMPORTED FROM RMoRobert.CoCoHue_CT_Lib ~~~
-// Version 1.0.6
+// Version 1.0.7
 
 void setColorTemperature(String colorTemperature, level=null, transitionTime=null) {
    if (logEnable == true) log.debug "setColorTemperature(Object $colorTemperature, $level, $transitionTime)"

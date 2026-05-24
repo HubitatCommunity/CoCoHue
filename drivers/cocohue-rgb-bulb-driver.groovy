@@ -14,9 +14,11 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2025-09-07
+ *  Last modified: 2025-10-27
  *
  *  Changelog:
+ *  v5.6.1  - Fix for state.id_v1 being inadvertendly overwritten in some cases
+ *  v5.6    - Fix for V2 "reachable" and rename to "networkStatus"
  *  v5.3.4  - Changes to accommodate HTTPS by default
  *  v5.3.1 - Implement async HTTP call queueing from child drivers through parent app
  *  v5.3.0  - Use V2 for most commands
@@ -69,7 +71,7 @@ metadata {
       command "flashOff"
 
       attribute "effect", "string"
-      attribute "reachable", "string"
+      attribute "networkStatus", "enum", ["online", "offine"]
    }
 
    preferences {
@@ -98,7 +100,7 @@ metadata {
 
 void installed() {
    log.debug "installed()"
-   groovy.json.JsonBuilder le = new groovy.json.JsonBuilder(lightEffects)
+   String le = new groovy.json.JsonBuilder(lightEffects).toString()
    sendEvent(name: "lightEffects", value: le)
    if (device.currentValue("switch") == null) {
       // Populate initial device data (if V2 available; V1 users would need manual refresh)
@@ -106,8 +108,17 @@ void installed() {
       Map devCache = bridgeCacheData.find { it.type == "light" && it.id == device.deviceNetworkId.split("/").last() }
       if (devCache == null) devCache == bridgeCacheData.find { it.type == "light" && it.id_v1 == device.deviceNetworkId.split("/").last() }
       if (devCache != null) {
-         log.warn devCache.id
          createEventsFromMapV2(devCache)
+         // Also fetch Zigbee connectivity status from other data if available:
+         String zigbeeConnectivityId =  bridgeCacheData.find {
+            it.type == "device" && it.id == devCache.owner?.rid
+         }?.services?.find {
+            it.rtype == "zigbee_connectivity"
+         }?.rid
+         String zigbeeConnectivityStatus = bridgeCacheData.find { it.type == "zigbee_connectivity" && it.id == zigbeeConnectivityId }?.get("status")
+         if (zigbeeConnectivityStatus) {
+            createEventsFromMapV2([type: "zigbee_connectivity", status: zigbeeConnectivityStatus])
+         }
       }
    }
    initialize()
@@ -311,8 +322,8 @@ void createEventsFromMapV1(Map bridgeCommandMap, Boolean isFromBridge = false, S
             if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue, eventUnit)
             break
          case "reachable":
-            eventName = "reachable"
-            eventValue = it.value ? "true" : "false"
+            eventName = "networkStatus"
+            eventValue = it.value ? "connected" : "disconnected"
             eventUnit = null
             if (device.currentValue(eventName) != eventValue) {
                doSendEvent(eventName, eventValue, eventUnit)
@@ -368,18 +379,19 @@ void createEventsFromMapV2(Map data) {
             break
          case "status":
             if (data.type == "zigbee_connectivity") { // not sure if any other types use this key, but just in case
-               eventName = "reachable"
-               if (value == "disconnected" || value == "connectivity_issue") {
-                  eventValue = "true"
+               eventName = "networkStatus"
+               if (value != "connected") {
+                  eventValue = "disconnected"
                }
                else {
-                  eventValue = false
+                  eventValue = "connected"
                }
                eventUnit = null
                if (device.currentValue(eventName) != eventValue) {
                   doSendEvent(eventName, eventValue, eventUnit)
                }
             }
+            break
          case "id_v1":
             if (state.id_v1 != value) state.id_v1 = value
             break
@@ -455,8 +467,8 @@ void parseSendCommandResponseV2(AsyncResponse resp, Map data) {
 }
 
 /**
- * Sends HTTP PUT to Bridge using the V1-format map data provided
- * @param commandMap Groovy Map (will be converted to JSON) of Hue V1 API commands to send, e.g., [on: true]
+ * Sends HTTP PUT to Bridge using the V2-format map data provided
+ * @param commandMap Groovy Map (will be converted to JSON) of Hue V2 API commands to send, e.g., [on: true]
  * @param createHubEvents Will iterate over Bridge command map and do sendEvent for all
  *        affected device attributes (e.g., will send an "on" event for "switch" if ["on": true] in map)
  */
@@ -567,35 +579,9 @@ void bridgeAsyncGetV2(String callbackMethod, String clipV2Path, Map<String,Strin
    asynchttpGet(callbackMethod, params, data)
 }
 
-// REMOVED, now call from parent app instead of driver:
-// /** Performs asynchttpPut() to Bridge using data retrieved from parent app or as passed in
-//   * @param callbackMethod Callback method
-//   * @param clipV2Path The Hue V2 API path ('/clip/v2' is automatically prepended), e.g. '/resource' or '/resource/light'
-//   * @param body Body data, a Groovy Map representing JSON for the Hue V2 API command, e.g., [on: [on: true]]
-//   * @param bridgeData Bridge data from parent getBridgeData() call, or will call this method on parent if null
-//   * @param data Extra data to pass as optional third (data) parameter to asynchtttpPut() method
-//   */
-// void bridgeAsyncPutV2(String callbackMethod, String clipV2Path, Map body, Map<String,String> bridgeData = null, Map data = null) {
-//    if (bridgeData == null) {
-//       bridgeData = parent.getBridgeData()
-//    }
-//    Map params = [
-//       uri: "https://${bridgeData.ip}",
-//       path: "/clip/v2${clipV2Path}",
-//       headers: ["hue-application-key": bridgeData.username],
-//       contentType: "application/json",
-//       body: body,
-//       timeout: 15,
-//       ignoreSSLIssues: true
-//    ]
-//    asynchttpPut(callbackMethod, params, data)
-//    if (logEnable == true) log.debug "Command sent to Bridge: $body at ${clipV2Path}"
-//    pauseExecution(200) // see if helps HTTP 429 errors?
-// }
-
 
 // ~~~ IMPORTED FROM RMoRobert.CoCoHue_Constants_Lib ~~~
-// Version 1.0.0
+// Version 1.0.2
 
 // --------------------------------------
 // APP AND DRIVER NAMESPACE AND NAMES:

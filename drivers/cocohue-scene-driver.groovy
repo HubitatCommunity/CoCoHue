@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2025-09-07
+ *  Last modified: 2025-10-27
  *
  *  Changelog:
+ *  v5.6.1  - Fix for state.id_v1 being inadvertendly overwritten in some cases
  *  v5.3.4  - Changes to accommodate HTTPS by default
  *  v5.3.1  - Implement async HTTP call queueing from child drivers through parent app
  *  v5.2.8  - Add support for different V2 scene activation types (active/default, dynamic_palette, static) and
@@ -434,11 +435,12 @@ void createEventsFromMapV2(Map data) {
             eventName = "switch"
             eventUnit = null
             if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue, eventUnit)
+            break
          case "id_v1":
             if (state.id_v1 != value) state.id_v1 = value
             break
          default:
-            if (logEnable == true) "not handling: $key: $value"
+            if (logEnable == true) log.debug "not handling: key = $key, value = $value"
       }
    }
 }
@@ -682,35 +684,9 @@ void bridgeAsyncGetV2(String callbackMethod, String clipV2Path, Map<String,Strin
    asynchttpGet(callbackMethod, params, data)
 }
 
-// REMOVED, now call from parent app instead of driver:
-// /** Performs asynchttpPut() to Bridge using data retrieved from parent app or as passed in
-//   * @param callbackMethod Callback method
-//   * @param clipV2Path The Hue V2 API path ('/clip/v2' is automatically prepended), e.g. '/resource' or '/resource/light'
-//   * @param body Body data, a Groovy Map representing JSON for the Hue V2 API command, e.g., [on: [on: true]]
-//   * @param bridgeData Bridge data from parent getBridgeData() call, or will call this method on parent if null
-//   * @param data Extra data to pass as optional third (data) parameter to asynchtttpPut() method
-//   */
-// void bridgeAsyncPutV2(String callbackMethod, String clipV2Path, Map body, Map<String,String> bridgeData = null, Map data = null) {
-//    if (bridgeData == null) {
-//       bridgeData = parent.getBridgeData()
-//    }
-//    Map params = [
-//       uri: "https://${bridgeData.ip}",
-//       path: "/clip/v2${clipV2Path}",
-//       headers: ["hue-application-key": bridgeData.username],
-//       contentType: "application/json",
-//       body: body,
-//       timeout: 15,
-//       ignoreSSLIssues: true
-//    ]
-//    asynchttpPut(callbackMethod, params, data)
-//    if (logEnable == true) log.debug "Command sent to Bridge: $body at ${clipV2Path}"
-//    pauseExecution(200) // see if helps HTTP 429 errors?
-// }
-
 
 // ~~~ IMPORTED FROM RMoRobert.CoCoHue_Constants_Lib ~~~
-// Version 1.0.0
+// Version 1.0.2
 
 // --------------------------------------
 // APP AND DRIVER NAMESPACE AND NAMES:

@@ -12,7 +12,7 @@ integration. It provides several additional features compared to older versions 
 
 As of platform version 2.4.0, most of these features are now also available in the built-in integration. However,
 some users may prefer CoCoHue for other reasons (e.g., existing user of this integration, prefer open-source code, 
-etc.)
+etc.) **If you are a new user, I suggest starting with the built-in integration instead.**
 
 For discussion and more information, visit the <a href="https://community.hubitat.com/t/release-cocohue-hue-bridge-integration-including-scenes/27978">Hubitat Community forum thread</a>. (GitHub is used primarily for sharing the code. Releases, discussion, and other issues will be noted in the Hubitat Community forum.)
 

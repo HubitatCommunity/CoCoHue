@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2025-09-07
+ *  Last modified: 2025-10-30
  *
  *  Changelog:
+ *  v5.6.2  - Add battery events for button devices
  *  v5.3.4  - Changes to accommodate HTTPS by default
  *  v5.2.7  - Eliminate errors for missing id_v1 on sensors and other devices
  *  v5.2.6  - Fix for zigbee_connectivity parsing
@@ -61,7 +62,7 @@ import groovy.transform.Field
 // by a reconnect (~6 sec for me, so 7 should cover most)
 @Field static final Integer eventStreamDisconnectGracePeriod = 8
 // For readTimeout value in eventstream connection:
-@Field static final Integer eventStreamReadTimeout = 3600
+@Field static final Integer eventStreamReadTimeout = 0  // in seconds, zero disables timeout (was trying 3600)
 
 @Field static final Integer debugAutoDisableMinutes = 30
 
@@ -215,6 +216,7 @@ Boolean getEventStreamOpenStatus() {
    }
 }
 
+
 // For Eventstream:
 void parse(String description) {
    if (logEnable) log.debug "parse: $description"
@@ -233,84 +235,95 @@ void parse(String description) {
          }
       }
       if (sbData) {
+         try {
          List dataList = new JsonSlurper().parseText(sbData.toString())
          dataList.each { dataEntryMap ->
             //log.trace "--> DATA = ${dataEntryMap}"
             if (dataEntryMap.type == "update") {
-               dataEntryMap.data?.each { updateEntryMap ->
-                  //log.trace "--> map = ${updateEntryMap}"
-                  String idV1
-                  if (updateEntryMap.id_v1 != null) idV1 = updateEntryMap.id_v1.split("/").last()
-                  String idV2 = updateEntryMap.id
-                  String idV1Num
-                  DeviceWrapper dev
-                  if (idV2 != null) {
-                     switch (updateEntryMap.type) {
-                        case "light":
-                           dev = parent.getChildDevice("${device.deviceNetworkId}/Light/${idV2}")
-                           if (dev == null) dev = parent.getChildDevice("${device.deviceNetworkId}/Light/${idV1}")
-                           break
-                        case "grouped_light":  // does this one actually happpen?
-                        case "room":
-                        case "zone":
-                        case "bridge_home":
-                           dev = parent.getChildDevice("${device.deviceNetworkId}/Group/${idV2}")
-                           if (dev == null)  dev = parent.getChildDevice("${device.deviceNetworkId}/Group/${idV1}")
-                           break
-                        case "scene":
-                           dev = parent.getChildDevice("${device.deviceNetworkId}/Scene/${idV2}")
-                           if (dev == null)  dev = parent.getChildDevice("${device.deviceNetworkId}/Scene/${idV1}")
-                           break
-                        case "smart_scene":
-                           dev = parent.getChildDevice("${device.deviceNetworkId}/SmartScene/${idV2}")
-                           break
-                        case "motion":
-                        case "contact":
-                        case "temperature":
-                        case "light_level": //todo: test or check is correct?
-                           String ownerId = updateEntryMap.owner?.rid
-                           dev = parent.getChildDevice("${device.deviceNetworkId}/Sensor/${ownerId}") // motion
-                           if (dev == null) dev = parent.getChildDevice("${device.deviceNetworkId}/Contact/${ownerId}") // contact
-                           if (dev == null && idV1 != null) {
-                              // or for now also check V1 motion sensor ID
-                              dev = parent.getChildDevices().find { DeviceWrapper d ->
-                                 idV1 in d.deviceNetworkId.tokenize('/').last().tokenize('|') &&
-                                 d.deviceNetworkId.startsWith("${device.deviceNetworkId}/Sensor/")  // shouldn't be necessary but gave me a Light ID once in testing for a sensor, so?!
-                              }
+                  dataEntryMap.data?.each { updateEntryMap ->
+                     //log.trace "--> map = ${updateEntryMap}"
+                     String idV1
+                     if (updateEntryMap.id_v1 != null) idV1 = updateEntryMap.id_v1.split("/").last()
+                     String idV2 = updateEntryMap.id
+                     String idV1Num
+                     DeviceWrapper dev
+                     if (idV2 != null) {
+                        switch (updateEntryMap.type) {
+                              // Some devices are different; lights and groups use light or grouped_light ID, but others like
+                              // motion sensors and buttons use owner ID to group related devices together. This depends on what
+                              // ID is easier to work with (lights and groups often need to send commands, and the light or group ID makes
+                              // that easy; motion sensors have multiple "services" that need to be tied together, and the overarching device ID
+                              // makes more sense than any individual service ID).
+                              case "light":
+                                 dev = parent.getChildDevice("${device.deviceNetworkId}/Light/${idV2}")
+                                 if (dev == null) dev = parent.getChildDevice("${device.deviceNetworkId}/Light/${idV1}")
+                                 break
+                              case "grouped_light":  // does this one actually happpen?
+                              case "room":           // rooms
+                              case "zone":           // zones
+                              case "bridge_home":    // captures "All Hue Lights" group
+                                 dev = parent.getChildDevice("${device.deviceNetworkId}/Group/${idV2}")
+                                 if (dev == null) dev = parent.getChildDevice("${device.deviceNetworkId}/Group/${idV1}")
+                                 break
+                              case "scene":        // scenes
+                                 dev = parent.getChildDevice("${device.deviceNetworkId}/Scene/${idV2}")
+                                 if (dev == null) dev = parent.getChildDevice("${device.deviceNetworkId}/Scene/${idV1}")
+                                 break
+                              case "smart_scene":  // smart scenes
+                                 dev = parent.getChildDevice("${device.deviceNetworkId}/SmartScene/${idV2}")
+                                 break
+                              case "motion":        // motion sensor
+                              case "contact":       // contact sensor
+                              case "temperature":   // temperature (from motion sensor)
+                              case "light_level":   // light/lux(-ish) level (from motion sensor)
+                                 String ownerId = updateEntryMap.owner?.rid
+                                 dev = parent.getChildDevice("${device.deviceNetworkId}/Sensor/${ownerId}") // motion
+                                 if (dev == null) dev = parent.getChildDevice("${device.deviceNetworkId}/Contact/${ownerId}") // contact
+                                 if (dev == null && idV1 != null) {
+                                    // or for now also check V1 motion sensor ID
+                                    dev = parent.getChildDevices().find { DeviceWrapper d ->
+                                          idV1 in d.deviceNetworkId.tokenize('/').last().tokenize('|') &&
+                                                d.deviceNetworkId.startsWith("${device.deviceNetworkId}/Sensor/")  // shouldn't be necessary but gave me a Light ID once in testing for a sensor, so?!
+                                    }
+                                 }
+                                 break
+                              case "button":          // button devices/events like Hue Dimmer or buttons on Tap Dial
+                              case "bell_button":     // doorbell button
+                              case "relative_rotary": // rotary devices/events like Hue Tap Dial or Lutron Aurora spinners
+                                 String ownerId = updateEntryMap.owner?.rid
+                                 dev = parent.getChildDevice("${device.deviceNetworkId}/Button/${ownerId}")
+                                 break
+                              case "device_power": // battery level, could be motion sensor or button
+                                 String ownerId = updateEntryMap.owner?.rid
+                                 dev = parent.getChildDevice("${device.deviceNetworkId}/Sensor/${ownerId}")
+                                 if (dev == null) parent.getChildDevice("${device.deviceNetworkId}/Button/${ownerId}")
+                                 break
+                              case "zigbee_connectivity": // for most devices: connected, disconnected, etc.
+                                 String ownerId = updateEntryMap.owner?.rid // find owner for zigbee_connectivity service, then...
+                                 String resourceId = getBridgeCacheV2()?.data.find { Map devData -> // use it to match up with the light, chime, etc. ID
+                                    devData.type in ["light", "speaker"] && devData.owner?.rid == ownerId
+                                 }?.id
+                                 if (resourceId != null) {
+                                    dev = parent.getChildDevice("${device.deviceNetworkId}/Light/${resourceId}")
+                                    if (dev == null) dev = parent.getChildDevice("${device.deviceNetworkId}/Chime/${resourceId}")
+                                 }
+                                 // not doing for sensors or buttons but could if wanted to with minor adjustments above
+                              default:
+                                 if (logEnable) log.debug "skipping Hue v2 ID: $idV2"
                            }
-                           break
-                        case "button":
-                        case "relative_rotary":
-                           String ownerId = updateEntryMap.owner?.rid
-                           dev = parent.getChildDevice("${device.deviceNetworkId}/Button/${ownerId}")
-                           break
-                        case "device_power": // could be motion sensor or button
-                           String ownerId = updateEntryMap.owner?.rid
-                           dev = parent.getChildDevice("${device.deviceNetworkId}/Sensor/${ownerId}")
-                           if (dev == null) parent.getChildDevice("${device.deviceNetworkId}/Button/${ownerId}")
-                           break
-                        case "zigbee_connectivity":
-                           String ownerId = updateEntryMap.owner?.rid // find owner for zigbee_connectivity service, then...
-                           String lightId = getBridgeCacheV2()?.data.find { Map devData -> // use it to match up with the light ID
-                              devData.type == "light" &&
-                              devData.owner?.rid == ownerId
-                           }
-                           if (lightId != null) dev = parent.getChildDevice("${device.deviceNetworkId}/Light/${lightId}")
-                           // not doing for sensors or buttons but could if wanted to with minor adjustments above
-                        default:
-                           if (logEnable) log.debug "skipping Hue v1 ID: $idV1"
-                     }
-                     // If child device found, send map to it for parsing:
-                     if (dev != null) dev.createEventsFromMapV2(updateEntryMap)
+                           // If child device found, send map to it for parsing (in Hue V2 API format -- further parsing done in driver):
+                           if (dev != null) dev.createEventsFromMapV2(updateEntryMap)
+                        }
+                        }
+                  } else {
+                        if (logEnable) log.debug "skip: $dataEntryMap"
                   }
                }
+            } catch (Exception e) {
+               log.error "Error parsing eventstream data: ${getStackTrace(e)}"
+               log.error sbData.toString()
             }
-            else {
-               if (logEnable) log.debug "skip: $dataEntryMap"
-            }
-         }
-      }
-      else {
+      } else {
          if (logEnable) log.trace "no data parsed from message: $message"
       }
    }
@@ -388,19 +401,18 @@ void parseStatesV2(AsyncResponse resp, Map data) {
       List<Map> contactData = resp.json.data.findAll { it.type == "contact_report" }
       // Motion sensors (motion, temperature, lux, battery):
       List<Map> motionData = resp.json.data.findAll { it.type == "motion" }
-      //log.trace "motion = $motionData"
       List<Map> temperatureData = resp.json.data.findAll { it.type == "temperature" }
-      //log.trace  "ill = $illuminanceData"
       List<Map> illuminanceData = resp.json.data.findAll { it.type == "light_level" }
-      //log.trace "ll = $illuminanceData"
       List<Map> batteryData = resp.json.data.findAll { it.type == "device_power" }
+      log.warn batteryData
       //log.trace "batt = $batteryData"
-      // TODO: batteryData could also be useful for buttons/remotes?
+      // TODO: batteryData could also be useful for buttons/remotes? But should also come in real time with V2.
       // Probably does not make sense to parse other button events now (only in real time)
-      // Check if anything else?
+      // Check if anything else
       if (lightsData) parseLightStatesV2(lightsData)
       if (groupsData) parseGroupStatesV2(groupsData)
       if (scenesData) parseSceneStatesV2(scenesData)
+      if (batteryData) parseButtonStatesV2(batteryData)
       // TODO: see if can combine this data into one instead of calling 4x total:
       if (motionData) parseMotionSensorStatesV2(motionData)
       if (temperatureData) parseMotionSensorStatesV2(temperatureData)
@@ -1013,7 +1025,7 @@ void parseGetAllButtonsResponseV2(resp, data) {
    if (checkIfValidResponse(resp)) {
       Map buttons = [:]
       // button resources:
-      List<Map> buttonDevs = resp.json?.data?.findAll { Map devData -> devData.type == "button" }
+      List<Map> buttonDevs = resp.json?.data?.findAll { Map devData -> devData.type in ["button", "bell_button"] }
       buttonDevs?.each { Map devData ->
          if (buttons[devData.owner.rid] == null) buttons[devData.owner.rid] = [buttons: [:]]
          buttons[devData.owner.rid].buttons << [(devData.id): devData.metadata.control_id]
@@ -1045,81 +1057,6 @@ void parseGetAllButtonsResponseV2(resp, data) {
    }
 }
 
-// void parseGetAllButtonsResponseV2OLD(resp, data) {
-//    if (logEnable) log.debug "parseGetAllButtonsResponseV2()"
-//    if (checkIfValidResponse(resp)) {
-//       try {
-//          Map buttons = [:]
-//          // Get specific /button devices first....
-//          Map<String,String> bridgeData = parent.getBridgeData()
-//          // TODO: Consider making this async, but should be pretty safe considerng we just heard from Bridge...
-//          Map params = [
-//             uri: "https://${bridgeData.ip}",
-//             path: "/clip/v2/resource/button",
-//             headers: ["hue-application-key": bridgeData.username],
-//             contentType: "application/json",
-//             timeout: 10,
-//             ignoreSSLIssues: true
-//          ]
-//          httpGet(params,
-//             { response ->
-//                   response.data.data.each {
-//                      if (buttons[it.owner.rid] == null) buttons[it.owner.rid] = [buttons: [:]]
-//                      buttons[it.owner.rid].buttons << [(it.id): it.metadata.control_id]
-//                   }
-//             }
-//          )
-//          pauseExecution(500)
-//          // Check for relative_rotary, too (Hue Tap Dial, Lutron Aurora)
-//          params = [
-//             uri: "https://${bridgeData.ip}",
-//             path: "/clip/v2/resource/relative_rotary",
-//             headers: ["hue-application-key": bridgeData.username],
-//             contentType: "application/json",
-//             timeout: 10,
-//             ignoreSSLIssues: true
-//          ]
-//          httpGet(params,
-//             { response ->
-//                   response.data.data.each {
-//                      if (buttons[it.owner.rid] != null) {
-//                         if (buttons[it.owner.rid].relative_rotary == null) {
-//                            buttons[it.owner.rid] << [relative_rotary: []]
-//                         }
-//                         buttons[it.owner.rid].relative_rotary << it.id
-//                      }
-//                      else {
-//                         // probably won't happen, but skip if no associated button
-//                      }
-//                   }
-//             }
-//          )
-//          // But also have to get name from /devices data...
-//          if (resp?.json?.data) {
-//             List devicesJson = resp.json.data
-//             buttons.keySet().each { String id ->
-//                Map dev = devicesJson.find { dev -> dev.id == id }
-//                buttons[id].name = dev.metadata.name
-//                buttons[id].manufacturer_name = dev.product_data.manufacturer_name
-//                buttons[id].model_id = dev.product_data.model_id
-//             }
-//          }
-//          else {
-//             log.warn "No data in returned JSON: $data"
-//          }
-//          state.allButtons = buttons
-//          //state.allRelativeRotaries = relativeRotaries
-//          if (logEnable) log.debug "  All buttons received from Bridge: $buttons"
-//       }
-//       catch (Exception ex) {
-//          log.error "Error parsing all buttons response: $ex"
-//       }
-//    }
-// }
-
-/** Intended to be called from parent app to retrive previously
- *  requested list of bulbs
- */
 Map getAllButtonsCache() {
    return state.allButtons 
 }
@@ -1265,35 +1202,9 @@ void bridgeAsyncGetV2(String callbackMethod, String clipV2Path, Map<String,Strin
    asynchttpGet(callbackMethod, params, data)
 }
 
-// REMOVED, now call from parent app instead of driver:
-// /** Performs asynchttpPut() to Bridge using data retrieved from parent app or as passed in
-//   * @param callbackMethod Callback method
-//   * @param clipV2Path The Hue V2 API path ('/clip/v2' is automatically prepended), e.g. '/resource' or '/resource/light'
-//   * @param body Body data, a Groovy Map representing JSON for the Hue V2 API command, e.g., [on: [on: true]]
-//   * @param bridgeData Bridge data from parent getBridgeData() call, or will call this method on parent if null
-//   * @param data Extra data to pass as optional third (data) parameter to asynchtttpPut() method
-//   */
-// void bridgeAsyncPutV2(String callbackMethod, String clipV2Path, Map body, Map<String,String> bridgeData = null, Map data = null) {
-//    if (bridgeData == null) {
-//       bridgeData = parent.getBridgeData()
-//    }
-//    Map params = [
-//       uri: "https://${bridgeData.ip}",
-//       path: "/clip/v2${clipV2Path}",
-//       headers: ["hue-application-key": bridgeData.username],
-//       contentType: "application/json",
-//       body: body,
-//       timeout: 15,
-//       ignoreSSLIssues: true
-//    ]
-//    asynchttpPut(callbackMethod, params, data)
-//    if (logEnable == true) log.debug "Command sent to Bridge: $body at ${clipV2Path}"
-//    pauseExecution(200) // see if helps HTTP 429 errors?
-// }
-
 
 // ~~~ IMPORTED FROM RMoRobert.CoCoHue_Constants_Lib ~~~
-// Version 1.0.0
+// Version 1.0.2
 
 // --------------------------------------
 // APP AND DRIVER NAMESPACE AND NAMES:

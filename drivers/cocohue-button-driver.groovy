@@ -1,7 +1,7 @@
 /*
  * =============================  CoCoHue Button (Driver) ===============================
  *
- *  Copyright 2022-2024 Robert Morris
+ *  Copyright 2022-2025 Robert Morris
  * 
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
@@ -14,9 +14,13 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2024-09-14
+ *  Last modified: 2025-10-30
  *
  *  Changelog:
+ *  v5.6.1   - Add battery capability
+
+ *  v5.6     - Add doorbell button support
+ *  v5.5     - Use new button_report and rotary_report objects instead of deprecated last_event objects
  *  v5.0     - Use API v2 by default, remove deprecated features
  *  v4.2     - Library updates, prep for more v2 API
  *  v4.1.5   - Improve button command compatibility
@@ -35,7 +39,7 @@ import groovy.transform.Field
 metadata {
    definition(name: "CoCoHue Button", namespace: "RMoRobert", author: "Robert Morris", importUrl: "https://raw.githubusercontent.com/HubitatCommunity/CoCoHue/master/drivers/cocohue-button-driver.groovy") {
       capability "Actuator"
-      //capability "Refresh"
+      capability "Battery"
       capability "PushableButton"
       capability "HoldableButton"
       capability "ReleasableButton"
@@ -119,9 +123,9 @@ void release(btnNum) {
 void createEventsFromMapV2(Map data) {
    if (logEnable == true) log.debug "createEventsFromMapV2($data)"
    String eventName
-   if (data.type == "button") {
+   if (data.type == "button" || data.type == "bell_button") {
       Integer eventValue = state.buttons.find({ it.key == data.id})?.value ?: 1
-      switch (data.button.last_event) {
+      switch (data.button.button_report?.event) {
          case "initial_press":
             eventName = "pushed"
             break
@@ -137,17 +141,17 @@ void createEventsFromMapV2(Map data) {
             if (state.id_v1 != value) state.id_v1 = value
             break
          default:
-            if (logEnable == true) log.debug "No button event created from: ${data.button.last_event}"
+            if (logEnable == true) log.debug "No button event created from button_report event: ${data.button.button_report?.event}"
             break
       }
-      state.lastHueEvent = data.button.last_event
+      state.lastHueEvent = data.button.button_report?.event
       if (eventName != null) doSendEvent(eventName, eventValue, null, true)
    }
    else if  (data.type == "relative_rotary") {
       Integer eventValue = state.relative_rotary.indexOf(data.id) + state.buttons.size() + 1
       // using counterclockwise = index+1, clockwise = index+2 for rotary devices
-      if (data.relative_rotary.last_event.rotation.direction == "clock_wise") eventValue++
-      switch (data.relative_rotary.last_event.action) {
+      if (data.relative_rotary.rotary_report.rotation.direction == "clock_wise") eventValue++
+      switch (data.relative_rotary.rotary_report.action) {
          case "start":
             eventName = "pushed"
             break
@@ -157,10 +161,17 @@ void createEventsFromMapV2(Map data) {
             else eventName = null
             break
          default:
+            if (logEnable == true) log.debug "No button event created from rotary_report action: ${data.relative_rotary.rotary_report.action}"
             break
       }
-      state.lastHueEvent = data.relative_rotary.last_event.action
+      state.lastHueEvent = data.relative_rotary.rotary_report.action
       if (eventName != null) doSendEvent(eventName, eventValue, null, true)
+   }
+   else if (data.type == "device_power") {
+      Integer batteryLevel = data.power_state?.battery_level
+      if (batteryLevel != null) {
+         doSendEvent("battery", batteryLevel, "%")
+      }
    }
    else {
       if (logEnable) log.debug "ignoring; data.type = ${data.type}"
@@ -278,35 +289,9 @@ void bridgeAsyncGetV2(String callbackMethod, String clipV2Path, Map<String,Strin
    asynchttpGet(callbackMethod, params, data)
 }
 
-// REMOVED, now call from parent app instead of driver:
-// /** Performs asynchttpPut() to Bridge using data retrieved from parent app or as passed in
-//   * @param callbackMethod Callback method
-//   * @param clipV2Path The Hue V2 API path ('/clip/v2' is automatically prepended), e.g. '/resource' or '/resource/light'
-//   * @param body Body data, a Groovy Map representing JSON for the Hue V2 API command, e.g., [on: [on: true]]
-//   * @param bridgeData Bridge data from parent getBridgeData() call, or will call this method on parent if null
-//   * @param data Extra data to pass as optional third (data) parameter to asynchtttpPut() method
-//   */
-// void bridgeAsyncPutV2(String callbackMethod, String clipV2Path, Map body, Map<String,String> bridgeData = null, Map data = null) {
-//    if (bridgeData == null) {
-//       bridgeData = parent.getBridgeData()
-//    }
-//    Map params = [
-//       uri: "https://${bridgeData.ip}",
-//       path: "/clip/v2${clipV2Path}",
-//       headers: ["hue-application-key": bridgeData.username],
-//       contentType: "application/json",
-//       body: body,
-//       timeout: 15,
-//       ignoreSSLIssues: true
-//    ]
-//    asynchttpPut(callbackMethod, params, data)
-//    if (logEnable == true) log.debug "Command sent to Bridge: $body at ${clipV2Path}"
-//    pauseExecution(200) // see if helps HTTP 429 errors?
-// }
-
 
 // ~~~ IMPORTED FROM RMoRobert.CoCoHue_Constants_Lib ~~~
-// Version 1.0.0
+// Version 1.0.2
 
 // --------------------------------------
 // APP AND DRIVER NAMESPACE AND NAMES:

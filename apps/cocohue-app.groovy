@@ -1,7 +1,7 @@
 /**
  * ===========================  CoCoHue - Hue Bridge Integration =========================
  *
- *  Copyright 2019-2025 Robert Morris
+ *  Copyright 2019-2026 Robert Morris
  *
  *  DESCRIPTION:
  *  Hue Bridge integration app for Hubitat, including support for lights,
@@ -18,9 +18,11 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2026-05-16
+ *  Last modified: 2026-05-23
  *  Changelog:
- *  v5.4.2 - Move to "Integrations" menu introduced in platform 2.5.0
+ *  v5.6.2 - Move to "Integrations" menu introduced in platform 2.5.0, minor connection tweaks
+ *  v5.5.1 - Fix error when saving 2-minute polling interval
+ *  v5.5   - Add MotionAware (motion area) support
  *  v5.4.1 - Fix discovery time recheck threshold logic
  *  v5.4.0 - Add mDNS for discovery (needed for Bridge Pro, usable on all but V1 and old V2 firmware)
  *  v5.3.4 - Prefer HTTPS by default or if set to use V2 API for SSE (new Pro Bridge does not support HTTP so would fail)
@@ -115,6 +117,7 @@ definition (
    namespace: "RMoRobert",
    author: "Robert Morris",
    description: "Community-created Philips Hue integration for Hue Bridge lights and other Hue devices and features",
+   menu: "Integrations",
    category: "Convenience",
    installOnOpen: true,
    documentationLink: "https://community.hubitat.com/t/release-cocohue-hue-bridge-integration-including-scenes/27978",
@@ -428,7 +431,6 @@ void scheduleRefresh() {
       case 120..179:
          if (logEnable == true) log.debug "Scheduling polling every 2 minutes"
          schedule("${Math.round(Math.random() * 59)} */2 * ? * * *", "refreshBridge")
-         runEvery2Minutes("refreshBridge")
          break
       case 180..299:
          if (logEnable == true) log.debug "Scheduling polling every 3 minutes"
@@ -452,7 +454,7 @@ void scheduleRefresh() {
  * Sends SSDP discovery command on network to find Bridges, and also checks hub's mDNS cache. The mDNS
  * method is preferred (by Hue), but older firmware and V1 Bridges only support SSDP. Keep both for now.
  */
-void sendBridgeDiscoveryCommand(Map optionns = null) {
+void sendBridgeDiscoveryCommand() {
    // Try SSDP for older bridges (or networks where mDNS doesn't work):
     sendHubCommand(new hubitat.device.HubAction("lan discovery ssdpTerm.urn:schemas-upnp-org:device:basic:1",
                    hubitat.device.Protocol.LAN))
@@ -811,12 +813,15 @@ def pageManageBridge() {
       log.warn "Bridge device not found!"
    }
    state.remove("sceneFullNames")
+   // Could be left over from older versions:
    state.remove("addedBulbs")
    state.remove("addedGroups")
    state.remove("addedScenes")
    state.remove("addedSensors")
    state.remove("addedButtons")
-   state.remove("bridgeJustAdded")
+   ////////////////////////////////////////
+   // Actual page content:
+   ////////////////////////////////////////
    dynamicPage(name: "pageManageBridge", uninstall: true, install: true) {  
       section("Add Hue Bridge Devices to Hubitat:") {
          href(name: "hrefSelectLights", title: "Select Lights",
@@ -1253,7 +1258,6 @@ def pageSelectMotionSensors() {
                addedSensors.each {
                   sensorText << "<li><a href=\"/device/edit/${it.value.hubitatId}\" target=\"_blank\">${it.value.hubitatName}</a>"
                   sensorText << " <span style=\"font-style: italic\">(${it.value.hueName ?: 'not found on Hue'})</span></li>"
-                  //input(name: "btnRemove_Sensor_ID", type: "button", title: "Remove", width: 3)
                }
                sensorText << "</ul>"
                paragraph(sensorText.toString())
@@ -2178,7 +2182,7 @@ void appButtonHandler(btn) {
 }
 
 // ~~~ IMPORTED FROM RMoRobert.CoCoHue_Constants_Lib ~~~
-// Version 1.0.0
+// Version 1.0.2
 
 // --------------------------------------
 // APP AND DRIVER NAMESPACE AND NAMES:
