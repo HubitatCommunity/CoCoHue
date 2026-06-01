@@ -117,7 +117,6 @@ definition (
    namespace: "RMoRobert",
    author: "Robert Morris",
    description: "Community-created Philips Hue integration for Hue Bridge lights and other Hue devices and features",
-   menu: "Integrations",
    category: "Convenience",
    menu: "Integrations",
    installOnOpen: true,
