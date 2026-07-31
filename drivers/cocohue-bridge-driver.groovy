@@ -223,8 +223,11 @@ void parse(String description) {
    List<String> messages = description.split("\n\n")
    setEventStreamStatusToConnected() // should help avoid spurious disconnect messages?
    if (logEnable) log.debug "messages (${messages.size()} total): $messages"
-   messages.each { String message -> 
-      List<String> lines = description.split("\n")
+   messages.each { String message ->
+      // Fix: must split the current message, not the full description, otherwise every iteration
+      // reprocesses the entire raw payload. When a callback contains more than one SSE message,
+      // this concatenates multiple JSON arrays together and JsonSlurper throws parsing the result.
+      List<String> lines = message.split("\n")
       StringBuilder sbData = new StringBuilder()
       lines.each { String line ->
          if (line.startsWith("data: ")) {
