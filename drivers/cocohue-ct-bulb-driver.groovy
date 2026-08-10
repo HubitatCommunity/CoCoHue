@@ -732,6 +732,7 @@ Integer scaleBriFromBridge(Number bridgeLevel, String apiVersion=APIV1) {
 }
 
 // ~~~ IMPORTED FROM RMoRobert.CoCoHue_CT_Lib ~~~
+// Version 1.0.7
 
 void setColorTemperature(String colorTemperature, level=null, transitionTime=null) {
    if (logEnable == true) log.debug "setColorTemperature(Object $colorTemperature, $level, $transitionTime)"

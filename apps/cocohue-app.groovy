@@ -117,8 +117,8 @@ definition (
    namespace: "RMoRobert",
    author: "Robert Morris",
    description: "Community-created Philips Hue integration for Hue Bridge lights and other Hue devices and features",
-   category: "Convenience",
    menu: "Integrations",
+   category: "Convenience",
    installOnOpen: true,
    documentationLink: "https://community.hubitat.com/t/release-cocohue-hue-bridge-integration-including-scenes/27978",
    iconUrl: "",
@@ -1215,7 +1215,7 @@ def pageSelectMotionSensors() {
    Map sensorCache = bridge.getAllMotionSensorsCache()
    List<DeviceWrapper> unclaimedSensors = getChildDevices().findAll { it.deviceNetworkId.startsWith("${DNI_PREFIX}/${app.id}/Sensor/") }
    dynamicPage(name: "pageSelectMotionSensors", refreshInterval: sensorCache ? null : 6, uninstall: true, install: false, nextPage: "pageManageBridge") {
-      Map addedSensors = [:]  // To be populated with sensors user has added, matched by Hue ID
+      Map addedSensors = [:]  // To be populated with motion sensors user has added, matched by Hue device ID
       if (!bridge) {
          log.error "No Bridge device found"
          return

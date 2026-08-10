@@ -1,7 +1,7 @@
 /**
  * =============================  CoCoHue Bridge (Driver) ===============================
  *
- *  Copyright 2019-2025 Robert Morris
+ *  Copyright 2019-2026 Robert Morris
  * 
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2025-10-30
+ *  Last modified: 2026-08-09
  *
  *  Changelog:
+ *  v5.6.3  - Fix for parsing of EventStream messages (newline separation)
  *  v5.6.2  - Add battery events for button devices
  *  v5.3.4  - Changes to accommodate HTTPS by default
  *  v5.2.7  - Eliminate errors for missing id_v1 on sensors and other devices
@@ -224,7 +225,7 @@ void parse(String description) {
    setEventStreamStatusToConnected() // should help avoid spurious disconnect messages?
    if (logEnable) log.debug "messages (${messages.size()} total): $messages"
    messages.each { String message -> 
-      List<String> lines = description.split("\n")
+      List<String> lines = message.split("\n")
       StringBuilder sbData = new StringBuilder()
       lines.each { String line ->
          if (line.startsWith("data: ")) {
