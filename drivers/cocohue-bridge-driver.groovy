@@ -18,7 +18,7 @@
  *
  *  Changelog:
  *  v5.6.4  - Fix V2 refresh stopping before sensors (missing parseButtonStatesV2); fix button battery from eventstream;
- *            remove leftover warn log; faster V1 polling when devices have V2 IDs
+ *            remove leftover warn log; faster V1 polling when devices have V2 IDs; mask API key in debug log
  *  v5.6.3  - Fix for parsing of EventStream messages (newline separation)
  *  v5.6.2  - Add battery events for button devices
  *  v5.3.4  - Changes to accommodate HTTPS by default
@@ -137,7 +137,7 @@ void connectEventStream() {
    }
    Map<String,String> data = parent.getBridgeData()
    if (logEnable) {
-      log.debug "Connecting to event stream at 'https://${data.ip}/eventstream/clip/v2' with Hue API key '${data.username}'"
+      log.debug "Connecting to event stream at 'https://${data.ip}/eventstream/clip/v2' with Hue API key '${data.username ? data.username.take(4) + "****" : null}'" // masked; logs get shared
    }
    interfaces.eventStream.close()
    interfaces.eventStream.connect(
