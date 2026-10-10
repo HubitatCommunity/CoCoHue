@@ -14,9 +14,11 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2026-08-09
+ *  Last modified: 2026-10-10
  *
  *  Changelog:
+ *  v5.6.4  - Fix V2 refresh stopping before sensors (missing parseButtonStatesV2); fix button battery from eventstream;
+ *            remove leftover warn log; faster V1 polling when devices have V2 IDs
  *  v5.6.3  - Fix for parsing of EventStream messages (newline separation)
  *  v5.6.2  - Add battery events for button devices
  *  v5.3.4  - Changes to accommodate HTTPS by default
@@ -297,7 +299,7 @@ void parse(String description) {
                               case "device_power": // battery level, could be motion sensor or button
                                  String ownerId = updateEntryMap.owner?.rid
                                  dev = parent.getChildDevice("${device.deviceNetworkId}/Sensor/${ownerId}")
-                                 if (dev == null) parent.getChildDevice("${device.deviceNetworkId}/Button/${ownerId}")
+                                 if (dev == null) dev = parent.getChildDevice("${device.deviceNetworkId}/Button/${ownerId}")
                                  break
                               case "zigbee_connectivity": // for most devices: connected, disconnected, etc.
                                  String ownerId = updateEntryMap.owner?.rid // find owner for zigbee_connectivity service, then...
@@ -405,7 +407,6 @@ void parseStatesV2(AsyncResponse resp, Map data) {
       List<Map> temperatureData = resp.json.data.findAll { it.type == "temperature" }
       List<Map> illuminanceData = resp.json.data.findAll { it.type == "light_level" }
       List<Map> batteryData = resp.json.data.findAll { it.type == "device_power" }
-      log.warn batteryData
       //log.trace "batt = $batteryData"
       // TODO: batteryData could also be useful for buttons/remotes? But should also come in real time with V2.
       // Probably does not make sense to parse other button events now (only in real time)
@@ -466,10 +467,12 @@ void parseLightStatesV1(Map lightsJson) {
    // Uncomment this line if asked to for debugging (or you're curious):
    //log.debug "lightsJson = $lightsJson"
    try {
+      Map<String,DeviceWrapper> lightsByV1Id // built on first use, see childDevicesByV1Id()
       lightsJson.each { id, val ->
          DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Light/${id}")
-         if (dev == null) dev = parent.getChildDevices().find {
-            it.deviceNetworkId.startsWith("${device.deviceNetworkId}/Light/") && it.getHueDeviceIdV1() == id
+         if (dev == null) {
+            if (lightsByV1Id == null) lightsByV1Id = childDevicesByV1Id("Light")
+            dev = lightsByV1Id[id]
          }
          if (dev) {
             dev.createEventsFromMapV1(val.state, true)
@@ -506,15 +509,33 @@ void parseGroupStatesV2(List groupsJson) {
    }
 }
 
+/** Returns map of V1 ID to child device for the given child type ("Light" or "Group"). Devices set up with the V2 API
+  * have V2 IDs in their DNIs, so V1 IDs from V1 polling can't be looked up by DNI; asking each child for its V1 ID
+  * once per poll avoids asking every child again for each light or group the Bridge reports.
+  */
+Map<String,DeviceWrapper> childDevicesByV1Id(String type) {
+   String prefix = "${device.deviceNetworkId}/${type}/"
+   Map<String,DeviceWrapper> devsByV1Id = [:]
+   parent.getChildDevices().each { DeviceWrapper d ->
+      if (d.deviceNetworkId.startsWith(prefix)) {
+         String v1Id = d.getHueDeviceIdV1()
+         if (v1Id != null && !devsByV1Id.containsKey(v1Id)) devsByV1Id[v1Id] = d
+      }
+   }
+   return devsByV1Id
+}
+
 void parseGroupStatesV1(Map groupsJson) {
    if (logEnable) log.debug "parseGroupStatesV1()"
    // Uncomment this line if asked to for debugging (or you're curious):
    //log.debug "groupsJson = $groupsJson"
    try {
+      Map<String,DeviceWrapper> groupsByV1Id // built on first use, see childDevicesByV1Id()
       groupsJson.each { id, val ->
          DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Group/${id}")
-         if (dev == null) dev = parent.getChildDevices().find {
-            it.deviceNetworkId.startsWith("${device.deviceNetworkId}/Group/") && it.getHueDeviceIdV1() == id
+         if (dev == null) {
+            if (groupsByV1Id == null) groupsByV1Id = childDevicesByV1Id("Group")
+            dev = groupsByV1Id[id]
          }
          if (dev != null) {
             dev.createEventsFromMapV1(val.action, true)
@@ -555,6 +576,23 @@ void parseSceneStatesV2(List scenesJson) {
    }
    catch (Exception ex) {
       log.error "Error parsing group states: ${ex}"
+   }
+}
+
+void parseButtonStatesV2(List buttonJson) {
+   if (logEnable) log.debug "parseButtonStatesV2()"
+   // Only battery (device_power) is parsed here; button presses/rotations come in real time via eventstream
+   try {
+      buttonJson.each { Map data ->
+         String id = data.owner.rid // button devices use owner (device) ID in DNI
+         DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Button/${id}")
+         if (dev != null) {
+            dev.createEventsFromMapV2(data)
+         }
+      }
+   }
+   catch (Exception ex) {
+      log.error "Error parsing button states: ${ex}"
    }
 }
 
