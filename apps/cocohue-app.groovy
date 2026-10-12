@@ -18,11 +18,12 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2026-05-23
+ *  Last modified: 2026-10-11
  *  Changelog:
- *  v5.6.2 - Move to "Integrations" menu introduced in platform 2.5.0, minor connection tweaks
+ *  v5.6.3 - Fix eventstream disconnection check in initialize(); avoid dynamic method calls (for platform 2.5.1+)
+ *           other minor fixes (Bridge ID parsing, upgrade of 4.x log settings, debug logging)
+ *  v5.6.1 - Move to "Integrations" menu introduced in platform 2.5.0
  *  v5.5.1 - Fix error when saving 2-minute polling interval
- *  v5.5   - Add MotionAware (motion area) support
  *  v5.4.1 - Fix discovery time recheck threshold logic
  *  v5.4.0 - Add mDNS for discovery (needed for Bridge Pro, usable on all but V1 and old V2 firmware)
  *  v5.3.4 - Prefer HTTPS by default or if set to use V2 API for SSE (new Pro Bridge does not support HTTP so would fail)
@@ -160,8 +161,8 @@ void updated() {
    if (settings.enableDebug != null) { // name in 4.x and earlier, using as proxy to determine if log settings updated to 5.x standard for all
       Boolean currentAppDebugSetting = settings.enableDebug == true ? true : false
       app.removeSetting("enableDebug")
-      app.updateSetting("enableDebug", [type: "bool", value: currentAppDebugSetting])
-      getChildDevices.each() { DeviceWrapper cd ->
+      app.updateSetting("logEnable", [type: "bool", value: currentAppDebugSetting])
+      getChildDevices().each { DeviceWrapper cd ->
          Boolean dbgLog = cd.getSetting("enableDebug")
          if (dbgLog != null) {
             cd.removeSetting("enableDebug")
@@ -387,8 +388,8 @@ void initialize() {
       runIn(debugAutoDisableMinutes*60, "debugOff")
    }
 
+   DeviceWrapper bridge = getChildDevice("${DNI_PREFIX}/${app.id}")
    if (settings.useEventStream == true) {
-      DeviceWrapper bridge = getChildDevice("${DNI_PREFIX}/${app.id}")
       if (bridge != null) {
          if (state.useV2 == true) bridge.connectEventStream()
          String bridgeSwVersion = bridge.getDataValue("swversion")
@@ -402,7 +403,7 @@ void initialize() {
          }
       }
    }
-   else {
+   else if (state.useV2 != true) {
       // probably not necessary right now but could be if ever re-allow "downgrade" to V1 API:
       bridge?.disconnectEventStream()
    }
@@ -1474,7 +1475,7 @@ void createNewSelectedSceneDevices() {
    state.remove("sceneFullNames")
 }
 
-/** Creates new Hubitat devices for new user-selected motion sensors on sensor-selection
+/** Creates new Hubitat devices for new user-selected motion sensors on motion-selection
  * page (intended to be called after navigating away/using "Done" from that page)
  */
 void createNewSelectedMotionSensorDevices() {
@@ -1579,12 +1580,22 @@ void sendUsernameRequest(String protocol="https", Integer port=null) {
 }
 
 
+/** Returns Hue API key/username with all but last 4 characters obscured
+ */
+private String maskApiKey(String key) {
+   if (!key) return key
+   return "****${key.length() > 4 ? key.substring(key.length() - 4) : ''}"
+}
+
 /** Callback for sendUsernameRequest. Saves username (API key) in app state if Bridge
  *  is successfully authorized, or logs error if unable to do so.
  */
 void parseUsernameResponse(resp, data) {
    def body = resp.json
-   if (logEnable == true) log.debug "Attempting to request Hue Bridge API key/username; result = ${body}"
+   if (logEnable == true) {
+      String username = body?.success?.getAt(0)?.username
+      log.debug "Attempting to request Hue Bridge API key/username; result = ${username ? "success (API key ${maskApiKey(username)})" : body}"
+   }
    if (body.success != null) {
       if (body.success[0] != null) {
          if (body.success[0].username) {
@@ -1674,7 +1685,7 @@ void parseBridgeInfoResponse(resp, Map data) {
    // (Bridge Pro supports Wi-Fi and Ethernet; ID seems to match one and should be stable on all models and connectivity methods)
    String bridgeID
    // Take last 6 characters of ID (would love to use full, but have to keep this way for legacy integration compatibility):
-   bridgeID = (body.bridgeid != null && body.bridgeid.length() > 6) ? body.bridgeid?.drop(body.bridgeid.length() - 6) : nil
+   bridgeID = (body.bridgeid != null && body.bridgeid.length() > 6) ? body.bridgeid?.drop(body.bridgeid.length() - 6) : null
     // Last-ditch effort if actual ID failed (not sure if ID has always been available?)
     if (bridgeID == null) {
         bridgeID = body.mac.replaceAll(':', '').toUpperCase()
@@ -1819,7 +1830,7 @@ Map<String,String> getBridgeData(String protocol=null, Integer port=null) {
  * refresh but could be used if user- or app-initiated (e.g., if SSE-based refresh to handle odd cases)
  */
 private void refreshBridge(Map<String,Boolean> options = [reschedule: false]) {
-   if (logEnable == true) log.debug "refreshBridge(reschedule = $reschedule)"
+   if (logEnable == true) log.debug "refreshBridge(reschedule = ${options?.reschedule})"
    DeviceWrapper bridge = getChildDevice("${DNI_PREFIX}/${app.id}")
    if (!bridge) {
       log.error "No Bridge device found; could not refresh/poll"
@@ -1979,7 +1990,7 @@ Boolean getEventStreamEnabledSetting() {
 Boolean getEventStreamOpenStatus() {
    DeviceWrapper bridge = getChildDevice("${DNI_PREFIX}/${app.id}")
    Boolean open = bridge.getEventStreamOpenStatus()
-   if (logEnable == true) "getEventStreamOpenStatus (returning ${open})"
+   if (logEnable == true) log.debug "getEventStreamOpenStatus (returning ${open})"
    return (state.eventStreamOpenStatus == true) ? true : false
 }
 
@@ -2018,17 +2029,25 @@ void bridgeAsyncPutV2(String deviceCallbackMethod = null, DeviceWrapper deviceFo
 void bridgeAsyncPutV2Callback(AsyncResponse resp, Map data=null) {
    if (logEnable) log.debug "bridgeAsyncPutV2Callback()"
    if (data.deviceCallbackMethod && data.deviceForCallbackMethod) {
-      if (logEnable) "Passing bridgeAsyncPutV2Callback() responsibility to child ${data.deviceForCallbackMethod.displayName}.${deviceCallBackMethod}()..."
+      DeviceWrapper callbackDev = getChildDevice(data.deviceForCallbackMethod.deviceNetworkId)
+      if (logEnable) log.debug "Passing bridgeAsyncPutV2Callback() responsibility to child ${callbackDev?.displayName}.${data.deviceCallbackMethod}()..."
       Map dataForCallback = [:]
       data.keySet().each { String keyName ->
          if (!(keyName == "deviceCallbackMethod" || keyName == "deviceForCallbackMethod")) {
             dataForCallback[keyName] = data[keyName]
          }
       }
-      getChildDevice(data.deviceForCallbackMethod.deviceNetworkId)?."${data.deviceCallbackMethod}"(resp, dataForCallback)
+      // Platform 2.5.1+ does not allow calling methods by (dynamic) name, so must list each callback method child devices use:
+      switch (data.deviceCallbackMethod) {
+         case "parseSendCommandResponseV2":
+            callbackDev?.parseSendCommandResponseV2(resp, dataForCallback)
+            break
+         default:
+            log.warn "Unknown callback method ${data.deviceCallbackMethod}() for ${callbackDev?.displayName}; not called"
+      }
    }
    else {
-      if (logEnable) "No child device and/or child callback method specified; handling here "
+      if (logEnable) log.debug "No child device and/or child callback method specified; handling here"
       if (checkIfValidPUTResponse(resp)) {
          if (logEnable == true) log.debug "  Bridge response valid; no further processing since none specified"
       }

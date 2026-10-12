@@ -1,7 +1,7 @@
 /*
  * =============================  CoCoHue Motion Sensor (Driver) ===============================
  *
- *  Copyright 2020-2025 Robert Morris
+ *  Copyright 2020-2026 Robert Morris
  * 
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2025-09-27
+ *  Last modified: 2026-10-11
  *
  *  Changelog:
+ *  v5.5.2  - Use "lx" unit for illuminance
  *  v5.5.1  - Fix error parsing light level reports
  *  v5.5    - Use new motion_report and light_level_report objects instead of deprecated motion and light objects in V2 API
  *  v5.2.2  - Populate initial states from V2 cache if available
@@ -115,7 +116,7 @@ void createEventsFromMapV1(Map bridgeCmd) {
          case "lightlevel":
             eventName = "illuminance"
             eventValue = Math.round(10 ** (((it.value as Integer)-1)/10000))
-            eventUnit = "lux"
+            eventUnit = "lx"
             if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue as Integer, eventUnit)
             break
          case "temperature":
@@ -163,7 +164,7 @@ void createEventsFromMapV2(Map data) {
             if (lightLevel != null) {
                eventValue = Math.round(10 ** ((lightLevel-1)/10000))
                if (eventValue < 0) eventValue = 0
-               eventUnit = "lux"
+               eventUnit = "lx"
                if (device.currentValue(eventName) != eventValue) doSendEvent(eventName, eventValue as Integer, eventUnit)
             }
             break
@@ -304,7 +305,6 @@ void bridgeAsyncGetV2(String callbackMethod, String clipV2Path, Map<String,Strin
 @Field static final String DRIVER_NAME_DIMMABLE_BULB  = "CoCoHue Dimmable Bulb"
 @Field static final String DRIVER_NAME_GROUP          = "CoCoHue Group"
 @Field static final String DRIVER_NAME_MOTION         = "CoCoHue Motion Sensor"
-@Field static final String DRIVER_NAME_CONTACT        = "CoCoHue Contact Sensor"
 @Field static final String DRIVER_NAME_PLUG           = "CoCoHue Plug"
 @Field static final String DRIVER_NAME_RGBW_BULB      = "CoCoHue RGBW Bulb"
 @Field static final String DRIVER_NAME_RGB_BULB       = "CoCoHue RGB Bulb"

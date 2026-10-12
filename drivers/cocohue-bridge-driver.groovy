@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2026-08-09
+ *  Last modified: 2026-10-11
  *
  *  Changelog:
+ *  v5.6.4  - Fixes for: battery events for buttons, extra logging, eventstream reconnection; more efficient V1 refresh; avoid dynamic method calls (for platform 2.5.1+)
  *  v5.6.3  - Fix for parsing of EventStream messages (newline separation)
  *  v5.6.2  - Add battery events for button devices
  *  v5.3.4  - Changes to accommodate HTTPS by default
@@ -64,6 +65,8 @@ import groovy.transform.Field
 @Field static final Integer eventStreamDisconnectGracePeriod = 8
 // For readTimeout value in eventstream connection:
 @Field static final Integer eventStreamReadTimeout = 0  // in seconds, zero disables timeout (was trying 3600)
+// Number of seconds to wait for START (or data) after connecting before considering the attempt failed and retrying:
+@Field static final Integer eventStreamConnectTimeout = 30
 
 @Field static final Integer debugAutoDisableMinutes = 30
 
@@ -117,7 +120,7 @@ void initialize() {
       log.debug "Debug logging will be automatically disabled in ${debugAutoDisableMinutes} minutes"
       runIn(debugAutoDisableMinutes*60, "debugOff")
    }
-   disconnectEventStream()
+   interfaces.eventStream.close()
    doSendEvent("eventStreamStatus", "disconnected")
    if (parent.getEventStreamEnabledSetting() == true) runIn(3, "connectEventStream")
 
@@ -133,19 +136,30 @@ void connectEventStream() {
    if (parent.getEventStreamEnabledSetting() != true) {
       log.warn "Parent app is configured not to use EventStream. To reliably use this interface, enable this option in the app."
    }
-   Map<String,String> data = parent.getBridgeData()
-   if (logEnable) {
-      log.debug "Connecting to event stream at 'https://${data.ip}/eventstream/clip/v2' with Hue API key '${data.username}'"
+   state.eventStreamWanted = true
+   try {
+      Map<String,String> data = parent.getBridgeData()
+      if (logEnable) {
+         log.debug "Connecting to event stream at 'https://${data.ip}/eventstream/clip/v2' with Hue API key '${maskApiKey(data.username)}'"
+      }
+      // If neither START nor STOP/ERROR is received, treat as failed (START will unschedule; STOP/ERROR will overwrite with grace period).
+      // Moved this before connect() to avoid fast START arriving before gets scheduled:
+      runIn(eventStreamConnectTimeout, "setEventStreamStatusToDisconnected")
+      interfaces.eventStream.close()
+      interfaces.eventStream.connect(
+         "https://${data.ip}/eventstream/clip/v2", [
+         headers: ["Accept": "text/event-stream", "hue-application-key": data.username],
+         rawData: true,
+         pingInterval: 10,
+         readTimeout: eventStreamReadTimeout,
+         ignoreSSLIssues: true
+      ])
    }
-   interfaces.eventStream.close()
-   interfaces.eventStream.connect(
-      "https://${data.ip}/eventstream/clip/v2", [
-      headers: ["Accept": "text/event-stream", "hue-application-key": data.username],
-      rawData: true,
-      pingInterval: 10,
-      readTimeout: eventStreamReadTimeout,
-      ignoreSSLIssues: true
-   ])
+   catch (Exception ex) {
+      log.warn "Error connecting to event stream: $ex"
+      unschedule("setEventStreamStatusToDisconnected")
+      setEventStreamStatusToDisconnected()
+   }
 }
 
 void reconnectEventStream(Boolean notIfAlreadyConnected = true) {
@@ -161,7 +175,20 @@ void reconnectEventStream(Boolean notIfAlreadyConnected = true) {
    }
 }
 
+/** Returns Hue API key/username with all but last 4 characters obscured
+*/
+private String maskApiKey(String key) {
+   if (!key) return key
+   return "****${key.length() > 4 ? key.substring(key.length() - 4) : ''}"
+}
+
+/** Intended for user-initiated disconnection (or parent app disabling EventStream); will not automatically reconnect
+  * until connectEventStream() is called again (including by initialize() if enabled in app)
+*/
 void disconnectEventStream() {
+   if (logEnable) log.debug "disconnectEventStream()"
+   state.eventStreamWanted = false
+   unschedule("reconnectEventStream")
    interfaces.eventStream.close()
 }
 
@@ -170,7 +197,8 @@ void eventStreamStatus(String message) {
    if (message.startsWith("START:")) {
       setEventStreamStatusToConnected()
    }
-   else if (message.startsWith("STOP:")) {
+   else if (message.startsWith("STOP:") || message.startsWith("ERROR:")) {
+      // Failed connection attempts may report only ERROR (no STOP), so handle both the same way:
       runIn(eventStreamDisconnectGracePeriod, "setEventStreamStatusToDisconnected")
    }
    else {
@@ -180,7 +208,7 @@ void eventStreamStatus(String message) {
 
 void setEventStreamStatusToConnected() {
    synchronized(eventStreamStatusLock) {
-      if (logEnable) "set eventStreamOpenStatus[${device.idAsLong}] to true (connected)"
+      if (logEnable) log.debug "set eventStreamOpenStatus[${device.idAsLong}] to true (connected)"
       eventStreamOpenStatus[device.idAsLong] = true
    }
    unschedule("setEventStreamStatusToDisconnected")
@@ -190,10 +218,14 @@ void setEventStreamStatusToConnected() {
 
 void setEventStreamStatusToDisconnected() {
    synchronized(eventStreamStatusLock) {
-      if (logEnable) "set eventStreamOpenStatus[${device.idAsLong}] to false (disconnected)"
+      if (logEnable) log.debug "set eventStreamOpenStatus[${device.idAsLong}] to false (disconnected)"
       eventStreamOpenStatus[device.idAsLong] = false
    }
    doSendEvent("eventStreamStatus", "disconnected")
+   if (state.eventStreamWanted == false) {
+      if (logEnable) log.debug "Not attempting eventstream reconnection because disconnected by request"
+      return
+   }
    if (state.connectionRetryTime) {
       state.connectionRetryTime *= 2
       if (state.connectionRetryTime > 900) {
@@ -211,7 +243,7 @@ void setEventStreamStatusToDisconnected() {
   * app if needed
 */
 Boolean getEventStreamOpenStatus() {
-   if (logEnable) "getEventStreamOpenStatus()"
+   if (logEnable) log.debug "getEventStreamOpenStatus()"
    synchronized(eventStreamStatusLock) {
       return eventStreamOpenStatus[device.idAsLong] == true
    }
@@ -297,7 +329,7 @@ void parse(String description) {
                               case "device_power": // battery level, could be motion sensor or button
                                  String ownerId = updateEntryMap.owner?.rid
                                  dev = parent.getChildDevice("${device.deviceNetworkId}/Sensor/${ownerId}")
-                                 if (dev == null) parent.getChildDevice("${device.deviceNetworkId}/Button/${ownerId}")
+                                 if (dev == null) dev = parent.getChildDevice("${device.deviceNetworkId}/Button/${ownerId}")
                                  break
                               case "zigbee_connectivity": // for most devices: connected, disconnected, etc.
                                  String ownerId = updateEntryMap.owner?.rid // find owner for zigbee_connectivity service, then...
@@ -405,20 +437,20 @@ void parseStatesV2(AsyncResponse resp, Map data) {
       List<Map> temperatureData = resp.json.data.findAll { it.type == "temperature" }
       List<Map> illuminanceData = resp.json.data.findAll { it.type == "light_level" }
       List<Map> batteryData = resp.json.data.findAll { it.type == "device_power" }
-      log.warn batteryData
       //log.trace "batt = $batteryData"
-      // TODO: batteryData could also be useful for buttons/remotes? But should also come in real time with V2.
-      // Probably does not make sense to parse other button events now (only in real time)
+      // batteryData also used for buttons/remotes (below), but probably does not make sense to parse other button events now (only in real time)
       // Check if anything else
       if (lightsData) parseLightStatesV2(lightsData)
       if (groupsData) parseGroupStatesV2(groupsData)
       if (scenesData) parseSceneStatesV2(scenesData)
       if (batteryData) parseButtonStatesV2(batteryData)
+      // For any V1 ID lookups needed (devices not converted to V2 DNI format), shared for this refresh; see findChildDeviceByV1Id():
+      Map<String,Map<String,DeviceWrapper>> v1IdCache = [:]
       // TODO: see if can combine this data into one instead of calling 4x total:
-      if (motionData) parseMotionSensorStatesV2(motionData)
-      if (temperatureData) parseMotionSensorStatesV2(temperatureData)
-      if (illuminanceData) parseMotionSensorStatesV2(illuminanceData)
-      if (batteryData) parseMotionSensorStatesV2(batteryData)
+      if (motionData) parseMotionSensorStatesV2(motionData, v1IdCache)
+      if (temperatureData) parseMotionSensorStatesV2(temperatureData, v1IdCache)
+      if (illuminanceData) parseMotionSensorStatesV2(illuminanceData, v1IdCache)
+      if (batteryData) parseMotionSensorStatesV2(batteryData, v1IdCache)
       // TODO: see if can combine this data into one instead of calling 2x, similar to above:
       if (contactData) parseContactSensorStatesV2(contactData)
       if (batteryData) parseContactSensorStatesV2(batteryData)
@@ -431,9 +463,11 @@ void parseStatesV2(AsyncResponse resp, Map data) {
 void parseStatesV1(AsyncResponse resp, Map data) { 
    if (logEnable) log.debug "parseStatesV1() - States from Bridge received. Now parsing..."
    if (checkIfValidResponse(resp)) {
-      parseLightStatesV1(resp.json.lights)
-      parseGroupStatesV1(resp.json.groups)
-      parseMotionSensorStatesV1(resp.json.sensors)
+      // For V1 ID lookups not found directly by DNI, shared for this refresh; see findChildDeviceByV1Id():
+      Map<String,Map<String,DeviceWrapper>> v1IdCache = [:]
+      parseLightStatesV1(resp.json.lights, v1IdCache)
+      parseGroupStatesV1(resp.json.groups, v1IdCache)
+      parseMotionSensorStatesV1(resp.json.sensors, v1IdCache)
    }
 }
 
@@ -461,16 +495,14 @@ void parseLightStatesV2(List lightsJson) {
    }
 }
 
-void parseLightStatesV1(Map lightsJson) {
+void parseLightStatesV1(Map lightsJson, Map<String,Map<String,DeviceWrapper>> v1IdCache = [:]) {
    if (logEnable) log.debug "parseLightStatesV1()"
    // Uncomment this line if asked to for debugging (or you're curious):
    //log.debug "lightsJson = $lightsJson"
    try {
       lightsJson.each { id, val ->
          DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Light/${id}")
-         if (dev == null) dev = parent.getChildDevices().find {
-            it.deviceNetworkId.startsWith("${device.deviceNetworkId}/Light/") && it.getHueDeviceIdV1() == id
-         }
+         if (dev == null) dev = findChildDeviceByV1Id("Light", id, v1IdCache)
          if (dev) {
             dev.createEventsFromMapV1(val.state, true)
          }
@@ -506,16 +538,14 @@ void parseGroupStatesV2(List groupsJson) {
    }
 }
 
-void parseGroupStatesV1(Map groupsJson) {
+void parseGroupStatesV1(Map groupsJson, Map<String,Map<String,DeviceWrapper>> v1IdCache = [:]) {
    if (logEnable) log.debug "parseGroupStatesV1()"
    // Uncomment this line if asked to for debugging (or you're curious):
    //log.debug "groupsJson = $groupsJson"
    try {
       groupsJson.each { id, val ->
          DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Group/${id}")
-         if (dev == null) dev = parent.getChildDevices().find {
-            it.deviceNetworkId.startsWith("${device.deviceNetworkId}/Group/") && it.getHueDeviceIdV1() == id
-         }
+         if (dev == null) dev = findChildDeviceByV1Id("Group", id, v1IdCache)
          if (dev != null) {
             dev.createEventsFromMapV1(val.action, true)
             dev.createEventsFromMapV1(val.state, true)
@@ -532,6 +562,44 @@ void parseGroupStatesV1(Map groupsJson) {
    catch (Exception ex) {
       log.error "Error parsing group states: ${ex}"
    }
+}
+
+/** Returns child device of the specified type with the specified Hue V1 ID, for use when not found directly by DNI (e.g., child
+  * DNI in V2 format, or V1-format motion sensor DNI with multiple IDs). On first use for each device type, builds Map of V1 ID to
+  * child device and saves in v1IdCache, so children are checked once per refresh instead of once per light, group, or sensor
+  * the Bridge reports (with any API version). If more than one child has the same V1 ID, the first one found is used.
+  * @param deviceType Device type as used in DNI: "Light", "Group", or "Sensor"
+  * @param v1Id Hue V1 ID to find
+  * @param v1IdCache Map to save V1 ID lookups in, by device type; should be new for each new refresh (just re-used for similar call within same refresh))
+  */
+DeviceWrapper findChildDeviceByV1Id(String deviceType, String v1Id, Map<String,Map<String,DeviceWrapper>> v1IdCache) {
+   if (v1IdCache[deviceType] == null) {
+      String dniPrefix = "${device.deviceNetworkId}/${deviceType}/"
+      Map<String,DeviceWrapper> devsByV1Id = [:]
+      parent.getChildDevices().each { DeviceWrapper d ->
+         if (d.deviceNetworkId.startsWith(dniPrefix)) {
+            String dniId = d.deviceNetworkId.split("/").last()
+            List<String> v1Ids
+            if (deviceType == "Sensor") {
+               // Motion sensors: V1-format DNIs may have multiple IDs, e.g., "5|6|7"
+               v1Ids = dniId.tokenize("|")
+            }
+            else if (dniId.length() > 32) {
+               // V2-format DNI, so ask child (slow with many devices, hence doing only once per refresh here)
+               v1Ids = [d.getHueDeviceIdV1()]
+            }
+            else {
+               // V1-format DNI already is V1 ID (same as child getHueDeviceIdV1() would return), so no need to ask child
+               v1Ids = [dniId]
+            }
+            v1Ids.each { String id ->
+               if (id != null && devsByV1Id[id] == null) devsByV1Id[id] = d
+            }
+         }
+      }
+      v1IdCache[deviceType] = devsByV1Id
+   }
+   return v1IdCache[deviceType][v1Id]
 }
 
 void parseSceneStatesV2(List scenesJson) {
@@ -578,20 +646,35 @@ void parseContactSensorStatesV2(List sensorJson) {
    }
 }
 
-void parseMotionSensorStatesV2(List sensorJson) {
+void parseButtonStatesV2(List deviceJson) {
+   if (logEnable) log.debug "parseButtonStatesV2()"
+   // Uncomment this line if asked to for debugging (or you're curious):
+   //log.debug "deviceJson = $deviceJson"
+   try {
+      deviceJson.each { Map data ->
+         String id = data.owner.rid // use owner ID for button to keep same physical devices together more easily
+         DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Button/${id}")
+         if (dev != null) {
+            dev.createEventsFromMapV2(data)
+         }
+      }
+   }
+   catch (Exception ex) {
+      log.error "Error parsing button states: ${ex}"
+   }
+}
+
+void parseMotionSensorStatesV2(List sensorJson, Map<String,Map<String,DeviceWrapper>> v1IdCache = [:]) {
    if (logEnable) log.debug "parseMotionSensorStatesV2()"
    // Uncomment this line if asked to for debugging (or you're curious):
    //log.debug "sensorJson = $sensorJson"
    try {
       sensorJson.each { Map data ->
-         String id = data.owner.rid // use owner ID for sensor to keep same physical devices together more easily 
+         String id = data.owner.rid // use owner ID for sensor to keep same physical devices together more easily
          String id_v1 = data.id_v1 != null ? data.id_v1 - "/sensors/" : null
          DeviceWrapper dev = parent.getChildDevice("${device.deviceNetworkId}/Sensor/${id}")
          if (dev == null && id_v1 != null) {
-               dev = parent.getChildDevices().find { DeviceWrapper d ->
-                  d.deviceNetworkId.startsWith("${device.deviceNetworkId}/Sensor/") &&
-                  id_v1 in d.deviceNetworkId.tokenize('/')[-1].tokenize('|')
-               }
+            dev = findChildDeviceByV1Id("Sensor", id_v1, v1IdCache)
             if (dev != null) log.warn "Device ${dev.displayName} with Hue V1 ID $id_v1 and V2 ID $id never converted to V2 DNI format. Try selecting \"Done\" in the parent app to retry conversion. Found and using V1 device for now."
          }
          if (dev != null) {
@@ -607,7 +690,7 @@ void parseMotionSensorStatesV2(List sensorJson) {
 
 // Not used for new installs, but existing may have V1 IDs for sensors from CoCoHue 3.x/4.x, so keeping this V1
 // method around for now just in case:
-void parseMotionSensorStatesV1(Map sensorsJson) {
+void parseMotionSensorStatesV1(Map sensorsJson, Map<String,Map<String,DeviceWrapper>> v1IdCache = [:]) {
    if (logEnable) log.debug "Parsing sensor states from Bridge..."
    // Uncomment this line if asked to for debugging (or you're curious):
    // log.trace "sensorsJson = ${groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(sensorsJson))}"
@@ -615,10 +698,7 @@ void parseMotionSensorStatesV1(Map sensorsJson) {
       sensorsJson.each { key, val ->
          if (val.type == "ZLLPresence" || val.type == "ZLLLightLevel" || val.type == "ZLLTemperature" ||
           val.type == "ZHAPresence" || val.type == "ZHALightLevel" || val.type == "ZHATemperature") {
-            DeviceWrapper sensorDev = parent.getChildDevices().findAll { DeviceWrapper it ->
-               it.deviceNetworkId.startsWith("${device.deviceNetworkId}/Sensor/") &&
-               (key as String) in it.deviceNetworkId.tokenize('/')[-1].tokenize('|')
-            }[0]
+            DeviceWrapper sensorDev = findChildDeviceByV1Id("Sensor", key as String, v1IdCache)
             if (sensorDev != null) {
                sensorDev.createEventsFromMapV1(val.state)
                // All entries have config.battery, so just picking one to parse here to avoid redundancy:
@@ -964,6 +1044,7 @@ void clearMotionSensorsCache() {
    state.remove("allMotionSensors")
 }
 
+
 // ------------ CONTACT SENSORS ------------
 // No V1 for these
 
@@ -1097,7 +1178,29 @@ void handleUpdateBridgeCacheResponseV2(resp, Map data=null) {
       }
       state.lastBridgeCache = now()
       if (data?.additionalCallback) {
-         this."${data.additionalCallback}"(resp, data)
+         // Platform 2.5.1+ does not allow calling methods by (dynamic) name, so must list each possible callback method here:
+         switch (data.additionalCallback) {
+            case "parseGetAllBulbsResponseV2":
+               parseGetAllBulbsResponseV2(resp, data)
+               break
+            case "parseGetAllGroupsResponseV2":
+               parseGetAllGroupsResponseV2(resp, data)
+               break
+            case "parseGetAllScenesResponseV2":
+               parseGetAllScenesResponseV2(resp, data)
+               break
+            case "parseGetAllMotionSensorsResponseV2":
+               parseGetAllMotionSensorsResponseV2(resp, data)
+               break
+            case "parseGetAllContactSensorsResponseV2":
+               parseGetAllContactSensorsResponseV2(resp, data)
+               break
+            case "parseGetAllButtonsResponseV2":
+               parseGetAllButtonsResponseV2(resp, data)
+               break
+            default:
+               log.warn "Unknown callback method ${data.additionalCallback}(); not called"
+         }
       }
    }
 }
@@ -1217,7 +1320,6 @@ void bridgeAsyncGetV2(String callbackMethod, String clipV2Path, Map<String,Strin
 @Field static final String DRIVER_NAME_DIMMABLE_BULB  = "CoCoHue Dimmable Bulb"
 @Field static final String DRIVER_NAME_GROUP          = "CoCoHue Group"
 @Field static final String DRIVER_NAME_MOTION         = "CoCoHue Motion Sensor"
-@Field static final String DRIVER_NAME_CONTACT        = "CoCoHue Contact Sensor"
 @Field static final String DRIVER_NAME_PLUG           = "CoCoHue Plug"
 @Field static final String DRIVER_NAME_RGBW_BULB      = "CoCoHue RGBW Bulb"
 @Field static final String DRIVER_NAME_RGB_BULB       = "CoCoHue RGB Bulb"

@@ -1,7 +1,7 @@
 /*
  * =============================  CoCoHue Group (Driver) ===============================
  *
- *  Copyright 2019-2025 Robert Morris
+ *  Copyright 2019-2026 Robert Morris
  * 
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2025-11-10
+ *  Last modified: 2026-10-11
  *
  *  Changelog:
+ *  v5.6.2  - Fix initial state population for groups with V1-format IDs; debug logging fixes
  *  v5.6.1  - Fix error with flashOnce() command and others where [on: ...] not in command map
  *  v5.6    - Remove "reachable" (only applicable to individual devices)
  *  v5.5    - Adjust for new, wider CT ranges
@@ -132,7 +133,7 @@ void installed() {
       // Populate initial device data if available in V2 API data:
       List bridgeCacheData = parent.getBridgeCacheV2()?.data ?: []
       Map devCache = bridgeCacheData.find { it.type == "grouped_light" && it.id == device.deviceNetworkId.split("/").last() }
-      if (devCache == null) devCache == bridgeCacheData.find { it.type == "grouped_light" && it.id_v1 == device.deviceNetworkId.split("/").last() }
+      if (devCache == null) devCache = bridgeCacheData.find { it.type == "grouped_light" && it.id_v1 == "/groups/${device.deviceNetworkId.split("/").last()}" }
       if (devCache != null) {
          createEventsFromMapV2(devCache)
       }
@@ -411,7 +412,7 @@ void createEventsFromMapV2(Map data) {
             break
          case "color_temperature":
             if (!hasCT) {
-               if (logEnable == true) "ignoring color_temperature because mirek null"
+               if (logEnable == true) log.debug "ignoring color_temperature because mirek null"
                return
             }
             eventName = "colorTemperature"
@@ -429,7 +430,7 @@ void createEventsFromMapV2(Map data) {
             if (state.id_v1 != value) state.id_v1 = value
             break
          default:
-            if (logEnable == true) "not handling: $key: $value"
+            if (logEnable == true) log.debug "not handling: $key: $value"
       }
    }
 }
@@ -741,7 +742,6 @@ void bridgeAsyncGetV2(String callbackMethod, String clipV2Path, Map<String,Strin
 @Field static final String DRIVER_NAME_DIMMABLE_BULB  = "CoCoHue Dimmable Bulb"
 @Field static final String DRIVER_NAME_GROUP          = "CoCoHue Group"
 @Field static final String DRIVER_NAME_MOTION         = "CoCoHue Motion Sensor"
-@Field static final String DRIVER_NAME_CONTACT        = "CoCoHue Contact Sensor"
 @Field static final String DRIVER_NAME_PLUG           = "CoCoHue Plug"
 @Field static final String DRIVER_NAME_RGBW_BULB      = "CoCoHue RGBW Bulb"
 @Field static final String DRIVER_NAME_RGB_BULB       = "CoCoHue RGB Bulb"

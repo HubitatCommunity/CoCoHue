@@ -1,7 +1,7 @@
 /*
  * =============================  CoCoHue Scene ===============================
  *
- *  Copyright 2019-2025 Robert Morris
+ *  Copyright 2019-2026 Robert Morris
  * 
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2025-10-27
+ *  Last modified: 2026-10-11
  *
  *  Changelog:
+ *  v5.6.2  - Fix default custom transition duration for buttons 4-5 and 8-9
  *  v5.6.1  - Fix for state.id_v1 being inadvertendly overwritten in some cases
  *  v5.3.4  - Changes to accommodate HTTPS by default
  *  v5.3.1  - Implement async HTTP call queueing from child drivers through parent app
@@ -153,11 +154,11 @@ void push(Number btnNum) {
          break
       case 4:
          activate(activationType: sACTIVATION_TYPE_DYNAMIC_PALETTE,
-                  duration: settings.customDuration != null ? settings.customDuration : 400)
+                  duration: settings.customDuration != null ? settings.customDuration : 0.4)
          break
       case 5:
          activate(activationType: sACTIVATION_TYPE_STATIC,
-                  duration: settings.customDuration != null ? settings.customDuration : 400)
+                  duration: settings.customDuration != null ? settings.customDuration : 0.4)
          break
       case 6:
          activate(activationType: sACTIVATION_TYPE_DYNAMIC_PALETTE,
@@ -169,12 +170,12 @@ void push(Number btnNum) {
          break
       case 8:
          activate(activationType: sACTIVATION_TYPE_DYNAMIC_PALETTE,
-                  duration: settings.customDuration != null ? settings.customDuration : 400,
+                  duration: settings.customDuration != null ? settings.customDuration : 0.4,
                   brightness: settings.customBrightness != null ? settings.customBrightness : 100)
          break
       case 9:
          activate(activationType: sACTIVATION_TYPE_STATIC,
-                  duration: settings.customDuration != null ? settings.customDuration : 400,
+                  duration: settings.customDuration != null ? settings.customDuration : 0.4,
                   brightness: settings.customBrightness != null ? settings.customBrightness : 100)
          break
       default:
@@ -698,7 +699,6 @@ void bridgeAsyncGetV2(String callbackMethod, String clipV2Path, Map<String,Strin
 @Field static final String DRIVER_NAME_DIMMABLE_BULB  = "CoCoHue Dimmable Bulb"
 @Field static final String DRIVER_NAME_GROUP          = "CoCoHue Group"
 @Field static final String DRIVER_NAME_MOTION         = "CoCoHue Motion Sensor"
-@Field static final String DRIVER_NAME_CONTACT        = "CoCoHue Contact Sensor"
 @Field static final String DRIVER_NAME_PLUG           = "CoCoHue Plug"
 @Field static final String DRIVER_NAME_RGBW_BULB      = "CoCoHue RGBW Bulb"
 @Field static final String DRIVER_NAME_RGB_BULB       = "CoCoHue RGB Bulb"

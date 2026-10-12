@@ -1,7 +1,7 @@
 /*
  * =============================  CoCoHue Plug (On/Off Light) (Driver) ===============================
  *
- *  Copyright 2019-2025 Robert Morris
+ *  Copyright 2019-2026 Robert Morris
  * 
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
@@ -14,9 +14,10 @@
  *
  * =======================================================================================
  *
- *  Last modified: 2025-10-27
+ *  Last modified: 2026-10-11
  *
  *  Changelog:
+ *  v5.6.2  - Fix initial state population for devices with V1-format IDs; debug logging fixes
  *  v5.6.1  - Fix for state.id_v1 being inadvertendly overwritten in some cases
  *  v5.6    - Fix for V2 "reachable" and rename to "networkStatus"
  *  v5.3.4  - Changes to accommodate HTTPS by default
@@ -81,7 +82,7 @@ void installed() {
       // Populate initial device data (if V2 available; V1 users would need manual refresh)
       List bridgeCacheData = parent.getBridgeCacheV2()?.data ?: []
       Map devCache = bridgeCacheData.find { it.type == "light" && it.id == device.deviceNetworkId.split("/").last() }
-      if (devCache == null) devCache == bridgeCacheData.find { it.type == "light" && it.id_v1 == device.deviceNetworkId.split("/").last() }
+      if (devCache == null) devCache = bridgeCacheData.find { it.type == "light" && it.id_v1 == "/lights/${device.deviceNetworkId.split("/").last()}" }
       if (devCache != null) {
          createEventsFromMapV2(devCache)
          // Also fetch Zigbee connectivity status from other data if available:
@@ -236,7 +237,7 @@ void createEventsFromMapV2(Map data) {
             if (state.id_v1 != value) state.id_v1 = value
             break
          default:
-            if (logEnable == true) "not handling: $key: $value"
+            if (logEnable == true) log.debug "not handling: $key: $value"
       }
    }
 }
@@ -434,7 +435,6 @@ void bridgeAsyncGetV2(String callbackMethod, String clipV2Path, Map<String,Strin
 @Field static final String DRIVER_NAME_DIMMABLE_BULB  = "CoCoHue Dimmable Bulb"
 @Field static final String DRIVER_NAME_GROUP          = "CoCoHue Group"
 @Field static final String DRIVER_NAME_MOTION         = "CoCoHue Motion Sensor"
-@Field static final String DRIVER_NAME_CONTACT        = "CoCoHue Contact Sensor"
 @Field static final String DRIVER_NAME_PLUG           = "CoCoHue Plug"
 @Field static final String DRIVER_NAME_RGBW_BULB      = "CoCoHue RGBW Bulb"
 @Field static final String DRIVER_NAME_RGB_BULB       = "CoCoHue RGB Bulb"
